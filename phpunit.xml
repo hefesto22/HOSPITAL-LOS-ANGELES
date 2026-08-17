@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    SIHLA — configuración de PHPUnit / Pest.
+
+    A PROPÓSITO ESTÁ CASI VACÍO (§7.4).
+
+    La configuración de tests vive ENTERA en .env.testing, que se genera
+    con `cp env.testing.example .env.testing` y es idéntico en la Mac y
+    en CI. Acá solo va APP_ENV, porque es lo que hace que Laravel cargue
+    .env.testing durante el bootstrap.
+
+    Duplicar variables entre este archivo y .env.testing garantiza que un
+    día se desincronicen y que la suite pruebe algo distinto de lo que
+    creemos que prueba.
+-->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/pestphp/pest/preset/phpunit.xsd"
          bootstrap="vendor/autoload.php"
@@ -6,6 +20,13 @@
          processIsolation="false"
          stopOnFailure="false"
          cacheDirectory=".phpunit.cache"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         failOnDeprecation="false"
+         failOnNotice="true"
+         failOnWarning="true"
 >
     <testsuites>
         <testsuite name="Unit">
@@ -26,30 +47,7 @@
     </source>
 
     <php>
+        <!-- Lo único que va acá: dispara la carga de .env.testing. -->
         <env name="APP_ENV" value="testing"/>
-        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
-        <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
-        <env name="CACHE_STORE" value="array"/>
-
-        <!--
-            DB de testing en PostgreSQL — algunos tests dependen de
-            features específicas de Postgres (CTE recursivo, JSONB).
-            Crear una DB dedicada antes de correr los tests:
-                createdb plantilla_olympo_test
-            O usa la variable DB_DATABASE_TEST para apuntar a otra.
-        -->
-        <env name="DB_CONNECTION" value="pgsql"/>
-        <env name="DB_DATABASE" value="plantilla_olympo_test"/>
-        <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_PORT" value="5432"/>
-
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
-        <env name="REDIS_CLIENT" value="predis"/>
-
-        <env name="SENTRY_LARAVEL_DSN" value=""/>
-        <env name="HORIZON_PATH" value="horizon"/>
     </php>
 </phpunit>

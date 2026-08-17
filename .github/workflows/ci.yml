@@ -9,25 +9,40 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-24.04
-    name: PHP ${{ matrix.php }} · ${{ matrix.dependency-version }}
+    name: PHP ${{ matrix.php }} · PostgreSQL 18
     strategy:
       fail-fast: true
       matrix:
-        php: ['8.4']
-        dependency-version: [prefer-stable]
+        php: ['8.5']
 
     services:
+      # PARIDAD EXACTA CON LA MAC (§7.1). Misma imagen, misma versión
+      # mayor, MISMO PUERTO (5444) y MISMO locale ICU es-HN. Los puertos
+      # se mapean a 5444/6391 a propósito: así el .env.testing commiteado
+      # sirve tal cual en los dos lados y no hay un `sed` en el medio que
+      # se pueda desincronizar.
+      #
+      # El locale NO es cosmético: con otro provider, un ORDER BY sobre
+      # nombres de paciente ordena distinto en CI que en la Mac, y un
+      # test de orden pasaría en un lado y fallaría en el otro.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: plantilla_olympo_test
+          POSTGRES_DB: hospital_los_angeles_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=icu --icu-locale=es-HN"
+          TZ: UTC
+          PGTZ: UTC
         ports:
-          - 5432:5432
+          - 5444:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -35,9 +50,9 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
-          - 6379:6379
+          - 6391:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -52,10 +67,15 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          # `redis` = extensión phpredis. REDIS_CLIENT=phpredis en el .env,
+          # así que sin ella la sesión y la cache revientan solo en CI.
           extensions: bcmath, ctype, curl, dom, fileinfo, gd, intl, mbstring, openssl, pcre, pdo, pdo_pgsql, redis, tokenizer, xml, zip
           ini-values: error_reporting=E_ALL, memory_limit=512M
           coverage: none
           tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-publish
 
       - name: Get composer cache directory
         id: composer-cache
@@ -69,52 +89,36 @@ jobs:
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php }}-
 
       - name: Install dependencies
-        # Nota: composer install NO acepta --prefer-stable (solo composer update lo hace).
-        # La matrix dependency-version queda como label informativo de qué resolución
-        # de versiones espera el composer.lock que se commiteó.
+        # `composer install`, NUNCA `update` (§6.4). El composer.lock
+        # commiteado es la única fuente de qué versión corre.
         run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Security audit
+        # Rompe el build ante una CVE conocida en cualquier dependencia.
+        # --abandoned=report: un paquete abandonado avisa pero no bloquea.
+        run: composer audit --abandoned=report
 
       - name: Prepare environment
         run: |
           cp .env.example .env
+          cp env.testing.example .env.testing
           php artisan key:generate
-          # Sobreescribimos password de Postgres para CI
-          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=postgres/' .env
-          # Aseguramos directorios de storage y cache writable (sin esto Filament/Livewire fallan)
           mkdir -p storage/framework/{cache/data,sessions,views,testing}
-          mkdir -p storage/logs
-          mkdir -p bootstrap/cache
+          mkdir -p storage/logs bootstrap/cache
           chmod -R 0777 storage bootstrap/cache
-          # Symlink al disco public — necesario si algún test toca BrandingSetting
           php artisan storage:link
 
       - name: Lint (Pint)
-        # --test: no escribe, solo verifica
-        # -v: muestra qué archivos cambiarían y por qué (útil para diagnosticar
-        # diferencias entre vendor/ local y vendor/ del runner CI).
         run: vendor/bin/pint --test -v
 
-      - name: Static analysis (PHPStan)
+      - name: Static analysis (PHPStan nivel 7)
         run: vendor/bin/phpstan analyse --memory-limit=2G --error-format=github
 
       - name: Run migrations
-        env:
-          DB_CONNECTION: pgsql
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_DATABASE: plantilla_olympo_test
-          DB_USERNAME: postgres
-          DB_PASSWORD: postgres
-        run: php artisan migrate --force
+        # Humo aparte de la suite: verifica que las migraciones corran
+        # limpias de cero contra una base vacía, que es como se instala
+        # cada sede nueva y cada clínica nueva (§1.1).
+        run: php artisan migrate --force --env=testing
 
       - name: Run Pest test suite
-        env:
-          DB_CONNECTION: pgsql
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_DATABASE: plantilla_olympo_test
-          DB_USERNAME: postgres
-          DB_PASSWORD: postgres
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: 6379
         run: vendor/bin/pest --parallel --ci

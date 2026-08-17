@@ -53,6 +53,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Session Serialization
+    |--------------------------------------------------------------------------
+    |
+    | Cómo se serializa la sesión antes de guardarla en Redis.
+    |
+    | EXPLÍCITO A PROPÓSITO. Laravel 13 cambió este default de "php" a
+    | "json", y en un sistema con sesiones vivas ese cambio DESLOGUEA a
+    | todo el mundo en el deploy — en un hospital, al turno completo a
+    | mitad de un ingreso (§6.3.1).
+    |
+    | Acá lo fijamos en "json" desde el día 1, cuando todavía no existe
+    | ninguna sesión que invalidar. Además json no deserializa objetos
+    | PHP desde el store, lo que elimina toda una familia de ataques por
+    | deserialización sobre datos clínicos (§14). Migrar esto después,
+    | con usuarios reales, sí cuesta una ventana de mantenimiento.
+    |
+    | Supported: "php", "json"
+    |
+    */
+
+    'serialization' => env('SESSION_SERIALIZATION', 'json'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Session File Location
     |--------------------------------------------------------------------------
     |

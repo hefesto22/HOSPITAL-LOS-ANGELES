@@ -1,149 +1,107 @@
-# Plantilla Grupo Olympo — Laravel 12 + Filament v4
+# SIHLA — Sistema Integral Hospital Los Ángeles
 
-Plantilla base para los proyectos de Grupo Olympo / Inversiones Olympo. Diseñada para arrancar sistemas de gestión empresariales en Honduras con stack listo para producción y reglas fiscales del país preconfiguradas.
+Sistema de información hospitalario construido desde el día uno como **producto replicable** a otras clínicas y **multi-sede**. No es un desarrollo a la medida que después "se adapta".
+
+> **La regla que ordena todo el diseño:** adaptar el sistema a otro hospital, a otra sede o a otro convenio es trabajo de **configuración**, no de programación. Si para abrir la sede 2 o para firmar con una aseguradora nueva hay que escribir una migración, el diseño falló.
+
+El contrato de trabajo completo — reglas de dominio, catálogo anti-errores, normativa hondureña verificada y orden de construcción — está en **[`CLAUDE.md`](CLAUDE.md)**. Este README solo explica cómo levantar el proyecto.
+
+---
 
 ## Stack
 
-| Capa | Tecnología | Versión |
-|---|---|---|
-| Lenguaje | PHP | 8.4+ |
-| Framework | Laravel | 12 |
-| Panel admin | Filament | v4 (Schemas) |
-| Base de datos | PostgreSQL | 16 |
-| Cache / Sesión / Queue | Redis | 7 |
-| Procesamiento de colas | Laravel Horizon | última estable |
-| PDFs | spatie/browsershot (Chromium headless) | 5.x |
-| Excel | maatwebsite/excel | 3.1 |
-| Permisos | bezhansalleh/filament-shield + spatie/laravel-permission | — |
-| Auditoría | spatie/laravel-activitylog | 4.11 |
-| Backups | spatie/laravel-backup | 9.3 |
-| Health checks | spatie/laravel-health | 1.34 |
-| Observabilidad | sentry/sentry-laravel | 4.13 |
-| Tests | Pest 3 | — |
-| Análisis estático | Larastan (PHPStan + Laravel) | nivel 7 |
-| Code style | Laravel Pint | 1.24 |
-| Modernización | Rector | 2.0 |
+| Capa | Versión |
+|---|---|
+| PHP | 8.5 |
+| Laravel | 13.x |
+| Panel | Filament v5 (Livewire 4 · Tailwind 4) |
+| Base de datos | PostgreSQL 18 |
+| Cache / colas | Redis 8 + Horizon |
+| Tests | Pest 5 sobre PHPUnit 13 |
+| Calidad | Larastan 3 (PHPStan 2) nivel 7 · Pint · Rector 2 |
 
-## Características incluidas
+**El runtime PHP corre nativo en Herd. Solo los datos van en Docker** — Herd evita la penalización de I/O de montar código en un contenedor en macOS, y Docker da paridad exacta de versión de motor.
 
-**Dominio Honduras:**
-- `config/honduras.php`: ISV, ISR, RTN, CAI, departamentos, monedas
-- Value Objects inmutables: `Monto`, `RTN`, `CAI` con validación en constructor
-- `BaseFormRequest` con reglas reutilizables: `rtnRule()`, `montoRule()`, `telefonoHondurasRule()`, `fechaHistoricaRule()`
-- Componentes Filament reutilizables: `MontoField`, `RTNField`, `TelefonoHondurasField`
+---
 
-**Multi-tenant opcional:**
-- Trait `BelongsToEmpresa` listo para activar en proyectos multi-empresa
-- No activo por defecto (la plantilla es single-tenant)
+## Puertos y bases
 
-**Seguridad:**
-- Rate limiters preconfigurados: `api`, `login`, `exports`, `pdfs`
-- Filtro de PII en logs (`FilterSensitiveData`) — redacta RTN, tarjetas, passwords, tokens
-- Headers de seguridad listos para activar en Nginx
-- Bloqueo de usuarios inactivos al panel admin
-- Super-admin parametrizable por `.env` (no hardcoded)
+Esta máquina ya tiene 5432/6379, 5442/6389 y 5443/6390 ocupados por otros proyectos. SIHLA usa los suyos:
 
-**Observabilidad:**
-- Sentry integrado (DSN vía `.env`)
-- Stack de logs `daily,sentry` con filtro de PII
-- Horizon con supervisores diferenciados por tipo de carga (default, pdfs, exports, notifications)
-- Activity Log de Spatie configurado en User
+| Servicio | Host:Puerto | Contenedor | Base |
+|---|---|---|---|
+| PostgreSQL 18 | `127.0.0.1:5444` | `hla_postgres` | `hospital_los_angeles` |
+| PostgreSQL 18 (tests) | `127.0.0.1:5444` | mismo contenedor | `hospital_los_angeles_test` (+ `_test_1..N` en paralelo) |
+| Redis 8 | `127.0.0.1:6391` | `hla_redis` | db 0 / 1 (cache) / 2 (queue) |
 
-**Performance:**
-- Cache, sesiones y colas en Redis
-- Índices compuestos en `users` para queries comunes
-- `getDescendantIds()` resuelto con CTE recursivo de Postgres (1 query vs N anteriores)
+Nombres **con guion bajo**: con guiones habría que escribir comillas dobles en todo `psql`, `pg_dump`, script de respaldo y variable de CI, y un olvido rompe el backup de producción en silencio.
 
-**Calidad:**
-- Suite de tests Pest 3 con cobertura de Value Objects, modelos y rutas
-- CI en GitHub Actions: Pint + PHPStan + Pest sobre Postgres + Redis reales
-- Larastan nivel 7
-- Rector con sets de PHP 8.4, dead code, code quality, type declarations
+> ⚠️ **Antes de cualquier comando destructivo se verifica puerto Y nombre de base.**
+> `5444` + `hospital_los_angeles` = local. Cualquier otra cosa = alto.
 
-## Setup local con Herd + Docker
+---
 
-Ver [docs/SETUP.md](docs/SETUP.md) para el flujo completo. Resumen:
+## Arranque desde cero
 
 ```bash
-git clone https://github.com/grupo-olympo/plantilla-laravel-filament.git mi-proyecto
-cd mi-proyecto
 cp .env.example .env
-# Edita .env: APP_NAME, APP_SLUG, DB_DATABASE, ADMIN_EMAIL, ADMIN_PASSWORD
+cp env.testing.example .env.testing
+docker compose up -d
+docker compose ps
+docker compose exec postgres psql -U postgres -c "CREATE DATABASE hospital_los_angeles_test;"
+
 composer install
 npm install
-docker compose up -d        # SOLO si no tienes Postgres/Redis ya corriendo
 php artisan key:generate
+php artisan storage:link
 php artisan migrate --seed
 npm run build
+
+herd link hospital-los-angeles
+herd secure hospital-los-angeles
 ```
 
-Accede a `http://localhost:8000/admin` con las credenciales definidas en `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
+`herd secure` no es opcional: sin HTTPS no hay acceso a cámara (lectura de códigos de barras) ni acceso remoto seguro.
 
-## Estructura del proyecto
+Las extensiones `pg_trgm` y `btree_gist` **no se crean a mano**: van en la migración `0000_01_01_000000_create_postgres_extensions.php`, para que existan también en las bases que crea `pest --parallel` y en cada sede o clínica nueva.
 
-```
-app/
-├── Domain/                  # Value Objects, excepciones, contratos
-│   ├── Exceptions/
-│   └── ValueObjects/
-├── Filament/
-│   ├── Resources/
-│   └── Schemas/Components/  # Campos reutilizables (MontoField, RTNField...)
-├── Http/Requests/
-│   └── BaseFormRequest.php
-├── Logging/
-│   └── FilterSensitiveData.php
-├── Models/
-│   ├── Concerns/            # Traits para modelos (BelongsToEmpresa)
-│   └── User.php
-├── Providers/
-│   ├── DomainServiceProvider.php
-│   └── Filament/AdminPanelProvider.php
-└── Traits/                  # HasAuditFields
+---
 
-config/
-└── honduras.php             # Origen único de verdad fiscal
-
-docs/
-├── SETUP.md
-├── adr/
-│   └── 0001-arquitectura.md
-└── vps-state.template.md
-
-tests/
-├── Pest.php                 # Hooks y custom expectations
-├── Unit/Domain/             # Tests de Value Objects (sin DB)
-└── Feature/                 # Tests con DB real (Postgres testing)
-```
-
-## Comandos útiles
+## El día a día
 
 ```bash
-composer dev                 # Inicia servidor + Horizon + Pail + Vite
-composer test                # Pest paralelo
-composer lint                # Pint (fix)
-composer lint:check          # Pint (verifica sin modificar)
-composer stan                # PHPStan nivel 7
-composer rector              # Rector dry-run (sin aplicar)
-composer rector:fix          # Rector aplica cambios
-composer ci                  # Lint + Stan + Test (lo que corre CI)
+composer dev          # servidor + Horizon + Pail + Vite
+composer test         # Pest en paralelo
+composer lint         # Pint (corrige)
+composer lint:check   # Pint (solo verifica — es lo que corre CI)
+composer stan         # PHPStan nivel 7
+composer rector       # Rector dry-run
+composer ci           # audit + lint + stan + test
 ```
 
-## Decisiones arquitectónicas
+---
 
-Ver [docs/adr/0001-arquitectura.md](docs/adr/0001-arquitectura.md) — la plantilla nace con **Laravel tradicional** (Services + Models). Cada proyecto que la consuma decide en su propio ADR si necesita migrar a Clean Architecture (§6 del documento de instrucciones de Grupo Olympo).
+## Tres decisiones de infraestructura que no se cambian sin dump/restore
 
-## Compatibilidad con VPS compartido
+Están comentadas en `docker-compose.yml`. Se resumen acá porque las tres fallan **sin dar error**:
 
-Si despliegas a un VPS donde ya conviven otros proyectos de Olympo:
-1. Ejecuta primero la auditoría de §19 del documento de instrucciones
-2. Reutiliza Postgres y Redis existentes — crea DB y user dedicados
-3. Asigna `REDIS_DB` único al proyecto (db0..db15)
-4. Usa `REDIS_PREFIX` y `CACHE_PREFIX` con el `APP_SLUG` para aislar keys
-5. Crea pool PHP-FPM dedicado y vhost Nginx separado
+1. **El volumen de Postgres se monta en `/var/lib/postgresql`**, no en `/var/lib/postgresql/data`. PostgreSQL 18 movió `PGDATA` a `/var/lib/postgresql/18/docker`; con el mount viejo la base escribe en un volumen anónimo y un `down -v` o un recreate del contenedor la deja en cero, sin log.
+   Verificación: `SHOW data_directory;` debe decir `/var/lib/postgresql/18/docker`.
 
-Ver `docs/vps-state.template.md` para documentar el estado del VPS al iniciar.
+2. **Collation ICU `es-HN`, fijada en `initdb`.** Con el proveedor glibc, una actualización de la imagen base cambia la versión de collation y corrompe los índices de texto en silencio. ICU está versionado y PostgreSQL avisa. Además ordena "Ángel" antes que "Bravo", que es lo que espera quien busca un paciente.
+   Verificación: `\l` debe mostrar Locale Provider `icu` y Locale `es-HN`.
 
-## Licencia
+3. **Redis con `maxmemory-policy noeviction`.** Redis carga cache, colas (Horizon) y sesiones. Con `allkeys-lru`, bajo presión de memoria descarta jobs encolados sin avisar — se pierde la notificación de un valor crítico de laboratorio y nadie se entera. Con `noeviction` la escritura falla y el error se ve.
+   Verificación: `redis-cli CONFIG GET maxmemory-policy` debe decir `noeviction`.
 
-MIT — uso interno de Grupo Olympo / Inversiones Olympo.
+---
+
+## Tests
+
+**Nunca SQLite.** Un test verde en SQLite que falla en Postgres es peor que no tener test: da confianza falsa sobre CHECK constraints, índices parciales, únicos con `COALESCE`, JSONB, CTE, `FOR UPDATE` y `EXCLUDE USING gist`. `tests/Feature/EntornoTest.php` revienta la suite entera si alguien cambia el driver, la versión mayor, las extensiones o la zona horaria.
+
+La configuración de tests vive **entera** en `.env.testing` (generado desde `env.testing.example`). `phpunit.xml` solo lleva `APP_ENV`, que es lo que dispara su carga. El runner de CI publica Postgres en 5444 y Redis en 6391 justo para que ese mismo archivo sirva en la Mac y en CI sin un `sed` en el medio.
+
+---
+
+© Inversiones Olympo — software propietario.

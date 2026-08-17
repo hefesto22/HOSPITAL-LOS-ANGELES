@@ -1,51 +1,86 @@
 # ─────────────────────────────────────────────────────────────────
-# docker-compose.yml — Plantilla Grupo Olympo
+# docker-compose.yml — SIHLA · Hospital Los Ángeles
 #
-# Este archivo es OPCIONAL. Cuándo usarlo:
+# Solo DATOS. El runtime PHP corre nativo en Herd (§7.3).
 #
-#  1. Desarrollo local SIN Postgres/Redis ya instalados (Herd no
-#     incluye estos servicios) → ejecutar: docker compose up -d
+# Todos los nombres y puertos se derivan del .env — ningún valor
+# del proyecto hardcoded. Otra clínica cambia COMPOSE_PROJECT_NAME
+# y los dos puertos, y todo se renombra solo (§1.1).
 #
-#  2. Si compartes VPS con otros proyectos que ya tienen Postgres y
-#     Redis corriendo en Docker, NO uses este archivo. En su lugar
-#     conecta el .env al contenedor existente y crea una DB nueva
-#     dentro de él (ver §19.4 del documento de instrucciones).
+# ⚠️ TRES DECISIONES QUE NO SE PUEDEN CAMBIAR DESPUÉS SIN DUMP/RESTORE
 #
-# Todos los nombres se derivan de variables del .env — ningún valor
-# hardcoded del proyecto. Cambia COMPOSE_PROJECT_NAME y APP_SLUG
-# en .env y todo se renombra automáticamente.
+#  1. VOLUMEN EN /var/lib/postgresql (NO en /var/lib/postgresql/data).
+#     La imagen oficial cambió en PG 18: PGDATA pasó a
+#     /var/lib/postgresql/18/docker y el VOLUME declarado a
+#     /var/lib/postgresql. Con el mount viejo, Postgres arranca sin
+#     un solo error y escribe en un volumen ANÓNIMO: el named volume
+#     queda vacío y un `docker compose down -v` o un recreate del
+#     contenedor deja la base en cero, sin log y sin aviso.
+#
+#  2. COLLATION ICU es-HN, fijada en initdb.
+#     Con el proveedor glibc por defecto, una actualización de la
+#     imagen base cambia la versión de collation y CORROMPE los
+#     índices de texto en silencio (nombres de paciente, búsquedas).
+#     ICU está versionado y PostgreSQL avisa si cambia. Además ordena
+#     "Ángel" antes que "Bravo", que es lo que espera quien busca un
+#     paciente. Cambiar esto después = dump/restore del hospital.
+#
+#  3. REDIS CON maxmemory-policy noeviction.
+#     La plantilla traía allkeys-lru. Con Redis cargando cache Y COLAS
+#     (Horizon, db 2) Y sesiones, bajo presión de memoria LRU descarta
+#     jobs encolados en silencio: se pierde la notificación de un valor
+#     crítico de laboratorio y nadie se entera. Con noeviction, Redis
+#     FALLA la escritura y el error se ve. Ese es el modo de falla
+#     correcto para un hospital (§13.6).
 # ─────────────────────────────────────────────────────────────────
 
 services:
 
   postgres:
-    image: postgres:16-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-plantilla_olympo}_postgres
+    image: postgres:18-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-hla}_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-plantilla_olympo}
+      POSTGRES_DB: ${DB_DATABASE:-hospital_los_angeles}
       POSTGRES_USER: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${COMPOSE_POSTGRES_PASSWORD:-}
-      POSTGRES_HOST_AUTH_METHOD: ${COMPOSE_POSTGRES_PASSWORD:+md5}
-      # Si COMPOSE_POSTGRES_PASSWORD está vacío, Postgres acepta
-      # conexiones sin password (solo desarrollo local).
+      # Explícito, NO derivado del password. La forma ${VAR:+valor}
+      # expande a cadena VACÍA cuando el password está vacío, y la
+      # imagen aborta el init con "you must specify POSTGRES_PASSWORD".
+      # En producción: COMPOSE_POSTGRES_AUTH=scram-sha-256 + password.
+      POSTGRES_HOST_AUTH_METHOD: ${COMPOSE_POSTGRES_AUTH:-trust}
+      # Ver nota 2 del encabezado. Solo aplica en el PRIMER arranque.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale-provider=icu --icu-locale=es-HN"
+      # La base guarda UTC; la app convierte a Tegucigalpa (§7.5.2).
+      TZ: UTC
+      PGTZ: UTC
     ports:
-      - "${COMPOSE_POSTGRES_PORT:-5432}:5432"
+      - "${COMPOSE_POSTGRES_PORT:-5444}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # ⚠️ Ver nota 1 del encabezado. NO agregar /data al final.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_DATABASE:-plantilla_olympo}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_DATABASE:-hospital_los_angeles}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   redis:
-    image: redis:7-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-plantilla_olympo}_redis
+    image: redis:8-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-hla}_redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    # Ver nota 3 del encabezado.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "1gb"
+      - --maxmemory-policy
+      - "noeviction"
     ports:
-      - "${COMPOSE_REDIS_PORT:-6379}:6379"
+      - "${COMPOSE_REDIS_PORT:-6391}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -56,6 +91,6 @@ services:
 
 volumes:
   postgres_data:
-    name: ${COMPOSE_PROJECT_NAME:-plantilla_olympo}_postgres_data
+    name: ${COMPOSE_PROJECT_NAME:-hla}_postgres_data
   redis_data:
-    name: ${COMPOSE_PROJECT_NAME:-plantilla_olympo}_redis_data
+    name: ${COMPOSE_PROJECT_NAME:-hla}_redis_data

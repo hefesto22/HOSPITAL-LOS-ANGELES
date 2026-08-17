@@ -146,22 +146,40 @@ class ActivityLogResource extends Resource
                         ]),
                     ]),
 
+                // activitylog 5 sacó el diff de atributos de `properties` y lo
+                // movió a su propia columna `attribute_changes`. `properties`
+                // ahora guarda SOLO lo que uno agrega a mano con
+                // withProperty()/withProperties(). Leer de properties.old acá
+                // habría dejado esta sección vacía para siempre, sin error.
                 Section::make('Cambios Realizados')
                     ->icon('heroicon-o-document-magnifying-glass')
                     ->collapsible()
                     ->schema([
                         Grid::make(2)->schema([
-                            TextEntry::make('properties.old')
+                            TextEntry::make('attribute_changes.old')
                                 ->label('Valores anteriores')
                                 ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
                                 ->markdown()
                                 ->placeholder('Sin datos anteriores'),
-                            TextEntry::make('properties.attributes')
+                            TextEntry::make('attribute_changes.attributes')
                                 ->label('Valores nuevos')
                                 ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
                                 ->markdown()
                                 ->placeholder('Sin datos nuevos'),
                         ]),
+                    ]),
+
+                Section::make('Propiedades Adicionales')
+                    ->icon('heroicon-o-tag')
+                    ->collapsible()
+                    ->collapsed()
+                    ->schema([
+                        TextEntry::make('properties')
+                            ->label('Contexto extra registrado')
+                            ->formatStateUsing(fn ($state) => filled($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
+                            ->markdown()
+                            ->placeholder('Sin propiedades adicionales')
+                            ->columnSpanFull(),
                     ]),
             ]);
     }
