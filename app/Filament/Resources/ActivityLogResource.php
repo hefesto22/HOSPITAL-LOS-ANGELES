@@ -20,6 +20,7 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Spatie\Activitylog\Models\Activity;
 
 class ActivityLogResource extends Resource
@@ -149,21 +150,20 @@ class ActivityLogResource extends Resource
                 // activitylog 5 sacó el diff de atributos de `properties` y lo
                 // movió a su propia columna `attribute_changes`. `properties`
                 // ahora guarda SOLO lo que uno agrega a mano con
-                // withProperty()/withProperties(). Leer de properties.old acá
-                // habría dejado esta sección vacía para siempre, sin error.
+                // withProperty()/withProperties().
                 Section::make('Cambios Realizados')
                     ->icon('heroicon-o-document-magnifying-glass')
                     ->collapsible()
                     ->schema([
                         Grid::make(2)->schema([
-                            TextEntry::make('attribute_changes.old')
+                            TextEntry::make('valores_anteriores')
                                 ->label('Valores anteriores')
-                                ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
+                                ->state(fn (Activity $record): string => self::formatearJson(data_get($record, 'attribute_changes.old')))
                                 ->markdown()
                                 ->placeholder('Sin datos anteriores'),
-                            TextEntry::make('attribute_changes.attributes')
+                            TextEntry::make('valores_nuevos')
                                 ->label('Valores nuevos')
-                                ->formatStateUsing(fn ($state) => is_array($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
+                                ->state(fn (Activity $record): string => self::formatearJson(data_get($record, 'attribute_changes.attributes')))
                                 ->markdown()
                                 ->placeholder('Sin datos nuevos'),
                         ]),
@@ -174,11 +174,10 @@ class ActivityLogResource extends Resource
                     ->collapsible()
                     ->collapsed()
                     ->schema([
-                        TextEntry::make('properties')
+                        TextEntry::make('contexto_extra')
                             ->label('Contexto extra registrado')
-                            ->formatStateUsing(fn ($state) => filled($state) ? json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : '—')
+                            ->state(fn (Activity $record): string => self::formatearJson(data_get($record, 'properties')))
                             ->markdown()
-                            ->placeholder('Sin propiedades adicionales')
                             ->columnSpanFull(),
                     ]),
             ]);
@@ -190,5 +189,35 @@ class ActivityLogResource extends Resource
             'index' => ListActivityLogs::route('/'),
             'view'  => ViewActivityLog::route('/{record}'),
         ];
+    }
+
+    /**
+     * Formatea un bloque de cambios de activitylog como JSON legible.
+     *
+     * ⚠️ Por qué se resuelve con ->state() y NO con notación de punto en
+     * TextEntry::make('attribute_changes.old'):
+     *
+     * Cuando el punto apunta dentro de un array, Filament trata el estado
+     * como una LISTA y renderiza un elemento por valor, pasando cada uno
+     * por separado a formatStateUsing(). El resultado en pantalla es una
+     * columna de guiones separados por comas — que es exactamente lo que
+     * se veía en la verificación del 17-ago-2026.
+     *
+     * Con ->state() el callback recibe el registro completo y devuelve un
+     * solo string ya formateado.
+     */
+    private static function formatearJson(mixed $valores): string
+    {
+        if ($valores instanceof Collection) {
+            $valores = $valores->all();
+        }
+
+        if (! is_array($valores) || $valores === []) {
+            return '—';
+        }
+
+        $json = json_encode($valores, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return $json === false ? '—' : "```json\n".$json."\n```";
     }
 }
