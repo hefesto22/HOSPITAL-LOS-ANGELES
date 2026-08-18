@@ -59,6 +59,8 @@ class MatrizDePermisosSeeder extends Seeder
             'activity' => ['view_any', 'view'],
             'user'     => ['view_any', 'view'],
             'fusion'   => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
         /*
@@ -102,44 +104,78 @@ class MatrizDePermisosSeeder extends Seeder
          * aprueban entre si. Si solo direccion pudiera, a las 3 de la
          * manana no habria quien apruebe y el duplicado seguiria vivo.
          */
+        /*
+         * CATALOGO — lo lee todo el mundo, lo escribe direccion.
+         *
+         * Farmacia, laboratorio, imagenes, quirofano y caja cobran contra
+         * el mismo catalogo, asi que todos necesitan verlo. Crearlo es
+         * otra cosa: al dar de alta un item se fija su regimen de ISV y
+         * bajo que numeral del Art. 30 cae su descuento de adulto mayor.
+         * Equivocarse en cualquiera de los dos es un hallazgo del SAR o
+         * una denuncia a la linea 115, no un dato que se corrige despues.
+         */
         'admision' => [
             'paciente' => ['view_any', 'view', 'create', 'update'],
             'persona'  => ['view_any', 'view', 'create', 'update'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
             'fusion'   => ['view_any', 'view', 'create', 'update'],
         ],
 
         'enfermeria' => [
             'paciente' => ['view_any', 'view', 'create', 'update'],
             'persona'  => ['view_any', 'view', 'create', 'update'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
             'fusion'   => ['view_any', 'view', 'create'],
         ],
 
         'medico' => [
             'paciente' => ['view_any', 'view'],
             'persona'  => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
         'caja' => [
             'paciente' => ['view_any', 'view'],
             'persona'  => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
         'farmacia' => [
             'paciente' => ['view_any', 'view'],
             'persona'  => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
         'laboratorio' => [
             'paciente' => ['view_any', 'view'],
             'persona'  => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
         'imagenes' => [
             'paciente' => ['view_any', 'view'],
             'persona'  => ['view_any', 'view'],
+            'item'     => ['view_any', 'view'],
+            'unidad'   => ['view_any', 'view'],
         ],
 
-        'bodega' => [],
+        /*
+         * Bodega LEE el catalogo pero no lo escribe. Dar de alta un item
+         * fija su regimen de ISV y su categoria legal de descuento: son
+         * decisiones con consecuencia fiscal y sancionable, no de quien
+         * recibe la mercaderia. Cuando el hospital designe quien mantiene
+         * el catalogo, se le agrega create y update aca.
+         */
+        'bodega' => [
+            'item'   => ['view_any', 'view'],
+            'unidad' => ['view_any', 'view'],
+        ],
     ];
 
     public function run(): void

@@ -14,9 +14,11 @@ namespace App\Domain\Enums;
  * imposible la pregunta que el hospital hace cada mes: qué se le cobró a
  * este paciente y cuánto costó.
  *
- * El tipo determina, entre otras cosas, QUÉ PORCENTAJE de descuento legal
- * de adulto mayor le corresponde: un medicamento y un honorario de
- * especialista no llevan el mismo, y conviven en la misma cuenta.
+ * ⚠️ El tipo NO determina el descuento de adulto mayor. Eso lo decide
+ * `CategoriaLegalDeDescuento`, que es un eje propio porque sigue el texto
+ * de la ley y no la taxonomía del catálogo: consulta general y consulta
+ * especializada son las dos `Honorario` y llevan 25 % y 30 %. El tipo
+ * solo PROPONE una categoría en el formulario.
  */
 enum TipoItem: string
 {

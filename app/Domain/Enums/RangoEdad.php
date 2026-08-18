@@ -9,11 +9,32 @@ use Carbon\CarbonInterface;
 /**
  * Rango de edad del paciente para efectos de descuento legal.
  *
- * ⚠️ Los descuentos de tercera y cuarta edad son OBLIGACIÓN LEGAL en
- * Honduras, no política comercial. Ley Integral de Protección al Adulto
- * Mayor y Jubilados, reformada por el Decreto 45-2025 (Art. 31), vigente
- * desde el 19-ene-2026. El incumplimiento se sanciona con 1 a 10,000
- * salarios mínimos vía Protección al Consumidor.
+ * ⚠️ El descuento al adulto mayor es OBLIGACIÓN LEGAL en Honduras, no
+ * política comercial. Ley Integral de Protección al Adulto Mayor y
+ * Jubilados, Decreto Legislativo 199-2006. El incumplimiento se denuncia
+ * ante Protección al Consumidor.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * EN SALUD HAY UN SOLO UMBRAL: 60 AÑOS
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Corregido el 18-ago-2026 contra la fuente primaria. El Decreto 45-2025
+ * (La Gaceta 37,047, 19-ene-2026) reformó el **Artículo 31**, que es la
+ * Sección II — Descuento al Pago de Servicios: energía, agua,
+ * telecomunicaciones, cable, bienes inmuebles y salida aeroportuaria. Ahí
+ * es donde vive la cuarta edad con 35 %.
+ *
+ * El **Artículo 30**, que es el de salud, quedó intacto: 25 % en
+ * hospitales y clínicas privadas, medicamentos y consulta general; 30 %
+ * en consulta especializada, cirugía, odontología, oftalmología,
+ * radiología, laboratorio y medicina computarizada. **Sin cuarta edad.**
+ *
+ * `Cuarta` se conserva de todos modos, y es deliberado: el día que el
+ * Congreso la extienda a servicios médicos —que es lo que la prensa ya
+ * daba por hecho en enero— tiene que ser una fila de configuración, no un
+ * despliegue.
+ *
+ * Detalle y fuentes: `docs/dominio-inventario-y-precios.md` §4.4.
  *
  * Dos reglas que este enum hace cumplir:
  *
@@ -27,9 +48,10 @@ use Carbon\CarbonInterface;
  *     durante la hospitalización cambia de rango a mitad de la cuenta, y
  *     cada cargo tiene que llevar el rango vigente el día que se generó.
  *
- * El PORCENTAJE de descuento NO vive acá: depende del tipo de ítem
- * (medicamento, honorario de especialista, habitación) y tiene vigencia,
- * así que es dato en base de datos (ADR-0003).
+ * El PORCENTAJE de descuento NO vive acá: depende de la categoría legal
+ * del ítem —el numeral del Art. 30 bajo el que cae, ver
+ * `CategoriaLegalDeDescuento`— y tiene vigencia, así que es dato en base
+ * de datos (ADR-0003).
  */
 enum RangoEdad: string
 {

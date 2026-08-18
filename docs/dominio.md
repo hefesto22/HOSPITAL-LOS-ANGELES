@@ -1,6 +1,6 @@
 # Preguntas abiertas de dominio — SIHLA
 
-**Última actualización:** 17 de agosto de 2026
+**Última actualización:** 18 de agosto de 2026
 **Responsable de conseguir las respuestas:** Mauricio Cruz
 
 Este documento existe porque el `CLAUDE.md` §8.11 exige responder por escrito, **antes de codificar el módulo correspondiente**, quince preguntas que hoy no tienen respuesta verificada.
@@ -128,16 +128,38 @@ Estado de la habilitación del establecimiento y **qué reportes exige hoy en pa
 Expediente a 20 años, imágenes en el PACS, PDFs generados con expiración. Definir dónde vive cada cosa y por cuánto tiempo, y quién paga ese almacenamiento.
 **Respuesta:** _pendiente_
 
+### 16. 🚧 ¿El descuento legal de tercera edad aplica cuando paga un seguro?
+
+**A quién:** abogado del hospital, o consulta escrita a la Dirección General de Protección al Consumidor.
+**Qué preguntar exactamente:** cuando un paciente de 60+ es atendido bajo póliza o convenio, (a) ¿el prestador debe aplicar el descuento del Artículo 30?, y (b) ¿sobre el total de la cuenta o solo sobre la porción que paga el paciente (deducible, coaseguro y copago)?
+**Por qué importa:** **cambia el orden de operaciones del motor de facturación completo.** Aplicarlo sobre el total cuando correspondía solo a la porción del paciente le regala dinero a la aseguradora; al revés, incumple una obligación legal sancionable.
+**Lo que se verificó el 18-ago-2026:** el Artículo 30 del Decreto 199-2006 **no menciona seguros, aseguradoras ni pólizas**. La regla de "no acumulable con otras rebajas" que sí existe está en la Sección II (servicios básicos), que es otro artículo y otro decreto — extenderla a salud es interpretación, no lectura.
+**Estado asumido hoy:** ninguno. El convenio lleva un campo explícito `base_del_descuento_legal` (total · porción del paciente · no aplica) y el cargo guarda cuál se usó, así que la respuesta se aplica sin migración.
+**Bloquea:** el motor de cobertura de Facturación (bloque 7). **No bloquea la estructura del bloque 3.**
+**Respuesta:** _pendiente_
+
+---
+
+## Respuestas ya conseguidas
+
+### ✅ Porcentajes del descuento de tercera edad en salud — verificado 18-ago-2026
+
+Los porcentajes que definen el precio de lista de todo el catálogo (§4.5 de `dominio-inventario-y-precios.md`) están verificados contra el **Artículo 30 del Decreto Legislativo 199-2006**: 25 % en hospitales y clínicas privadas, 25 % en medicamentos y material quirúrgico (con receta, Art. 34), 25 % en consulta general, 30 % en consulta especializada, 30 % en cirugía, odontología, optometría, oftalmología, radiología, laboratorio y medicina computarizada.
+
+**Hallazgo que corrigió el diseño:** el Decreto 45-2025 (La Gaceta 37,047, 19-ene-2026) reforma el **Artículo 31 — Sección II, Descuento al Pago de Servicios**, no el Artículo 30. La "cuarta edad" con 35 %/40 % existe, pero **solo para energía, agua, telecomunicaciones, cable, bienes inmuebles y salida aeroportuaria**. En salud el único umbral es 60 años y el descuento máximo es 30 %.
+
+Detalle, cifras y consecuencia sobre el precio de lista en `docs/dominio-inventario-y-precios.md` §4.4.
+
 ---
 
 ## Resumen de bloqueos por módulo
 
 | Bloque | Módulo | Bloqueado por |
 |---|---|---|
-| 3 | Catálogos y convenios | #9 |
+| 3 | Catálogos y convenios | #9 (solo la **carga inicial** de tarifarios; la estructura no está bloqueada) |
 | 5 | Inventario y compras | #4 |
 | 6 | Farmacia | #8 |
-| 7 | Facturación y caja | #1, #2 |
+| 7 | Facturación y caja | #1, #2, **#16** |
 | 8 | Laboratorio | #5, #7 |
 | 9 | Imágenes | #6 |
 | 10 | Expediente clínico | #3 |

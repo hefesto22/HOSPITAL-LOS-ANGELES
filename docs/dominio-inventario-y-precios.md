@@ -3,6 +3,10 @@
 **Estado:** refleja lo que Mauricio explicó y decidió el 17-ago-2026.
 **§4.5 (política de precio) está DECIDIDO.** Queda pendiente su confirmación en §2.6 (costo por producto vs por lote).
 
+> **Corrección del 18-ago-2026 — §4.3 y §4.4 se reescribieron contra la fuente primaria.**
+> Las cifras anteriores venían de prensa y estaban mal en dos puntos que movían dinero.
+> El precio de lista de todo el catálogo bajó ~20 % como consecuencia. Ver §4.4.1.
+
 Este documento es la especificación de los bloques **3 (catálogos y convenios)**, **5 (inventario)**, **6 (farmacia)** y la parte de precios del **7 (facturación)** del Apéndice B.
 
 ---
@@ -123,37 +127,68 @@ Sin ese congelado, cada compra nueva le cambiaría el precio a las facturas ya e
 
 ### 4.3 Rangos de edad — detección automática
 
-| Rango | Edad | Fuente |
+| Rango | Edad | Aplica a |
 |---|---|---|
 | Normal | < 60 | — |
-| **Tercera edad** | **60+** | Ley Integral de Protección al Adulto Mayor y Jubilados |
-| **Cuarta edad** | **80+** | Decreto 45-2025, reforma del Art. 31, vigente 19-ene-2026 |
+| **Tercera edad** | **60+** | **Todos los descuentos en salud** (Art. 30, Decreto 199-2006) |
+| Cuarta edad | 80+ | **Solo servicios básicos**, NO salud (Art. 31 reformado, Decreto 45-2025) |
+
+**En salud hay un solo umbral: 60 años.** La cuarta edad existe en la ley, pero vive en otra sección — ver §4.4.
 
 **El rango se calcula de la fecha de nacimiento del paciente, contra la FECHA DEL SERVICIO** — nunca contra la fecha de facturación ni contra "hoy". Un paciente que cumple 60 durante la hospitalización cambia de rango a mitad de la cuenta, y cada cargo debe llevar el rango vigente el día que se generó.
 
 **El rango se guarda en el snapshot del cargo.** Recalcularlo al reimprimir daría otro resultado.
 
-Los rangos y sus edades son **configuración con vigencia**, no constantes (§1.1). La ley cambió en enero de 2026 y volverá a cambiar.
+Los rangos, sus edades y sus porcentajes son **configuración con vigencia**, no constantes (§1.1). La ley se reformó en enero de 2026 y volverá a reformarse. **La cuarta edad se modela desde ya aunque hoy no aplique a salud**: el día que el Congreso la extienda a servicios médicos —que es exactamente lo que la prensa ya daba por hecho— es una fila de configuración, no un despliegue.
 
 ### 4.4 ⚠️ Los descuentos son OBLIGACIÓN LEGAL, no política comercial
 
-Verificado en prensa hondureña y en fuentes legales secundarias, 17-ago-2026:
+**Fuente:** Ley Integral de Protección al Adulto Mayor y Jubilados, **Decreto Legislativo 199-2006**, Capítulo VI, Sección I, **Artículo 30**. Verificado el 18-ago-2026 contra el texto de la ley publicado por la Biblioteca Virtual en Salud de Honduras.
 
-| Descuento | Aplica a |
-|---|---|
-| 30 % | consulta de especialista · cirugías · odontología · oftalmología |
-| 25 % | consulta de médico general · **medicamentos** · **material quirúrgico** |
-| 20 % | **hospitales y clínicas privadas** |
-| hasta 40 % | **cuarta edad** (80+), Decreto 45-2025 |
+| Numeral | Concepto | Descuento |
+|---|---|---:|
+| 30.5 | Servicios de salud en **hospitales y clínicas privadas** | **25 %** |
+| 30.6 | **Medicamentos y material quirúrgico** (con receta) | **25 %** |
+| 30.7 | Honorarios por **consulta médica general** | **25 %** |
+| 30.7 | Honorarios por **consulta médica especializada** | **30 %** |
+| 30.8 | **Intervención quirúrgica** | **30 %** |
+| 30.8 | **Odontología, optometría y oftalmología** | **30 %** |
+| 30.8 / 30.9 | **Radiología y laboratorio** | **30 %** |
+| 30.9 | **Medicina computarizada** (TAC y similares) | **30 %** |
 
-**El incumplimiento se denuncia ante Protección al Consumidor (línea 115) y la sanción va de 1 a 10,000 salarios mínimos.**
+**Requisito del numeral 6, confirmado en el Artículo 34:** el descuento en medicamentos exige **receta original firmada y sellada** por médico colegiado o en servicio social autorizado. No es opcional y el sistema tiene que poder demostrar que existía — ver §4.4.2.
 
-Consecuencias de diseño:
+**El incumplimiento se denuncia ante Protección al Consumidor (línea 115).**
 
-1. **El porcentaje depende del TIPO de ítem, no del paciente.** Un paciente de 65 años lleva, en la misma cuenta, 25 % en el medicamento, 30 % en el honorario del especialista y 20 % en la habitación. **Se resuelve por línea, exactamente igual que el ISV.**
-2. Va como atributo del catálogo, `descuento_adulto_mayor`, **por tipo de ítem y por rango de edad, con vigencia**.
-3. **Prohibido dejarlo como constante en código.** Es el §1.1 aplicado: el día que la ley cambie, se edita configuración, no se despliega.
-4. El paciente acredita la condición con **tarjeta de identidad**; los jubilados, con carné del IPM o INJUPEMP. El expediente ya exige documento de identidad (§8.2), así que la detección es automática — pero el documento debe estar verificado, no digitado a ojo.
+#### 4.4.1 🔴 Qué cambió respecto de la versión anterior de este documento
+
+La versión del 17-ago decía «30 % consulta de especialista · 25 % medicamentos · **20 % hospitales y clínicas privadas** · **hasta 40 % cuarta edad (80+)**». Dos errores, los dos con consecuencia en dinero:
+
+1. **Hospitales y clínicas privadas es 25 %, no 20 %** (numeral 30.5).
+2. **El Decreto 45-2025 NO toca salud.** Reforma el **Artículo 31**, que es la *Sección II — Descuento al Pago de Servicios*: energía eléctrica, agua, telecomunicaciones, cable, bienes inmuebles y salida aeroportuaria. Ahí sí existe la cuarta edad con 35 % (40 % en cable). **El Artículo 30, que es el de salud, quedó intacto.** El título oficial del decreto lo dice literalmente: *"Reformar el Artículo 31 … Sección II, Descuento al Pago de Servicios; y adicionar los artículos 31-A y 31-B"*.
+
+**Consecuencia:** el descuento máximo que puede recibir un ítem de salud es **30 %**, no 40 %. Y para medicamentos es **25 %**.
+
+Con el costo de L 10.00 y el margen objetivo de 120 % del §4.5:
+
+| | Antes (dato de prensa) | **Ahora (Art. 30)** |
+|---|---:|---:|
+| Descuento máximo del medicamento | 40 % | **25 %** |
+| Precio de lista | 22.00 ÷ 0.60 = L 36.67 | **22.00 ÷ 0.75 = L 29.33** |
+| Paga el paciente < 60 | L 36.67 | **L 29.33** |
+| Paga el adulto mayor | L 22.00 (a los 80) | **L 22.00 (a los 60)** |
+
+**El adulto mayor paga lo mismo; el paciente común paga 20 % menos.** El precio de lista anterior le cobraba de más a todo el que no tiene descuento, para protegerse de un descuento que no existe en salud. La preocupación de competitividad frente a las farmacias de barrio que quedó anotada en la versión anterior se resuelve sola con el dato correcto.
+
+Y hay un cambio de fondo: antes el piso de 120 % se tocaba solo con pacientes de 80+, que son pocos. **Ahora se toca con todos los de 60+**, que en un hospital son muchos. El piso dejó de ser un caso raro y pasó a ser el precio real de una parte grande de la venta — razón de más para que `margen_objetivo` sea afinable por categoría.
+
+#### 4.4.2 Consecuencias de diseño
+
+1. **El porcentaje depende del TIPO de ítem, no del paciente.** Un paciente de 65 años lleva, en la misma cuenta, 25 % en el medicamento, 30 % en el honorario del especialista y 25 % en la habitación. **Se resuelve por línea, exactamente igual que el ISV.**
+2. **El eje del descuento no es `TipoItem`, es una categoría legal propia.** Consulta general (25 %) y consulta especializada (30 %) son el mismo tipo de ítem —honorario— con porcentajes distintos. Por eso cada ítem lleva una **`categoria_legal_de_descuento`** nombrada por el numeral del Artículo 30 que la sustenta. Así el sistema puede responder *"este ítem lleva 30 % porque cae en el numeral 8"*, que es lo que hay que contestar cuando llega una denuncia a la línea 115.
+3. **Los porcentajes van como configuración con vigencia**, por categoría legal y rango de edad. **Prohibido dejarlos como constante en código** (§1.1): el día que la ley cambie, se edita configuración, no se despliega.
+4. **El descuento en medicamentos exige receta (Art. 34).** El cargo guarda si hubo receta y cuál. En dispensación a paciente internado sale de la orden médica y es automático; **en venta de mostrador al público hay que capturarla**, y si no la hay, el descuento no procede y el sistema debe decir por qué en vez de aplicarlo en silencio.
+5. El paciente acredita la condición con **tarjeta de identidad**; los jubilados, con carné del IPM o INJUPEMP. El MPI ya exige documento de identidad (§8.2) y ya distingue el carné de jubilado como tipo propio, así que la detección es automática — pero el documento debe estar **verificado**, no digitado a ojo.
 
 ### 4.5 Política de precio — DECIDIDA
 
@@ -168,41 +203,36 @@ precio_lista  =  ─────────────────────
                     1 − descuento_maximo_del_item
 ```
 
-### Resultado con costo L 10.00, margen objetivo 120 %, descuentos 30 % / 40 %
+### Resultado con costo L 10.00, margen objetivo 120 %, descuento máximo 25 %
 
-`precio_lista = 22.00 / 0.60 = ` **L 36.67 para todos**
+`precio_lista = 22.00 / 0.75 = ` **L 29.33 para todos**
 
 | Rango | Precio de lista | Descuento legal | **Paciente paga** | Margen |
 |---|---:|---:|---:|---:|
-| Normal | 36.67 | — | **36.67** | 267 % |
-| Tercera edad (60+) | 36.67 | 30 % | **25.67** | 157 % |
-| Cuarta edad (80+) | 36.67 | 40 % | **22.00** | **120 % ← el piso** |
+| Normal (< 60) | 29.33 | — | **29.33** | 193 % |
+| Tercera edad (60+) | 29.33 | 25 % | **22.00** | **120 % ← el piso** |
 
 **El piso se cumple siempre**, y se toca exactamente en el caso de mayor descuento. Nadie recibe un precio de lista distinto por su edad: el descuento cae sobre el mismo precio que ve cualquiera, así que el adulto mayor **sí paga menos** que el paciente que va detrás en la fila.
 
 ### Por qué se calcula desde el peor caso y no desde el rango normal
 
-Si la lista se fijara en L 22.00 (el margen objetivo sobre el rango sin descuento), la cuarta edad pagaría L 13.20 y el margen caería a 32 %. Fijarla desde el descuento máximo es lo que convierte el 120 % en **piso garantizado** en lugar de en objetivo que se incumple con cada paciente mayor.
-
-### Consecuencia comercial a vigilar
-
-El paciente sin descuento paga más que antes. **Es el costo de la ley y lo carga todo el que vende medicamentos en Honduras**, así que no es una desventaja relativa frente a la competencia — pero sí hay que revisar el efecto en los productos donde el hospital compite de frente con farmacias de barrio. El sistema debe permitir **margen objetivo distinto por categoría de producto** para poder afinar eso sin tocar código.
+Si la lista se fijara en L 22.00 (el margen objetivo sobre el rango sin descuento), el adulto mayor pagaría L 16.50 y el margen caería a 65 %. Fijarla desde el descuento máximo es lo que convierte el 120 % en **piso garantizado** en lugar de en objetivo que se incumple con cada paciente mayor.
 
 ### Reglas de implementación
 
 - **`margen_objetivo` es configuración por categoría de producto, con vigencia.** No es una constante ni un valor único global (§1.1).
-- **`descuento_maximo_del_item`** sale de la tabla de descuentos legales `(tipo de ítem × rango de edad)`, también con vigencia. Un medicamento y una habitación tienen máximos distintos.
-- **Antes de confirmar un precio, la pantalla muestra el margen resultante en CADA rango de edad**, ya con el descuento aplicado. La decisión se toma con los tres números a la vista, no a ojo.
+- **`descuento_maximo_del_item`** sale de la tabla de descuentos legales `(categoría legal × rango de edad)`, también con vigencia. Un medicamento (25 %) y una radiografía (30 %) tienen máximos distintos.
+- **Antes de confirmar un precio, la pantalla muestra el margen resultante en CADA rango de edad**, ya con el descuento aplicado. La decisión se toma con los números a la vista, no a ojo.
 - **Alerta si algún rango cae bajo el piso configurado**, y alerta también cuando una entrada mueva el costo promedio más de un umbral (§4.2).
 - **Redondeo:** se redondea una sola vez, sobre el precio de lista. El descuento se aplica sobre la lista ya redondeada. El snapshot del cargo guarda **los tres valores** — lista, descuento aplicado y neto — porque recalcular cualquiera de ellos después da diferencias de centavos que en una auditoría hay que explicar.
 
 ### ⚠️ Dependencia directa con la normativa
 
-**El precio de lista de TODO el catálogo depende del descuento máximo legal.** Si el porcentaje real para medicamentos es 25 % y no 30 %, o si la cuarta edad es 35 % y no 40 %, la lista de cada producto cambia.
+**El precio de lista de TODO el catálogo depende del descuento máximo legal**, como acaba de quedar demostrado: corregir un dato movió el precio de cada medicamento un 20 %.
 
-Por eso los porcentajes van como **configuración con vigencia y jamás hardcoded**: el día que se confirmen contra La Gaceta —o que la ley vuelva a cambiar, como cambió en enero de 2026— se recalcula el catálogo desde configuración, sin desplegar código.
+Por eso los porcentajes van como **configuración con vigencia y jamás hardcoded**: el día que se confirmen contra el ejemplar físico de La Gaceta —o que la ley vuelva a reformarse, como se reformó en enero de 2026— se recalcula el catálogo desde configuración, sin desplegar código.
 
-Ver pendiente #1 de la tabla del §7.
+**Lo que todavía conviene hacer:** un abogado debería leer el ejemplar de La Gaceta No. 31,361 del 21-jul-2007 y confirmar que el Artículo 30 no fue reformado por ningún decreto posterior al 45-2025. La verificación de este documento se hizo contra el texto de la ley publicado por la Biblioteca Virtual en Salud y contra el título oficial del Decreto 45-2025 en el portal del SAR; es sólido, pero no reemplaza a un abogado revisando la consolidación completa.
 
 ---
 
@@ -218,11 +248,16 @@ Eso es exactamente el tarifario por convenio del **ADR-0003**, sin excepciones: 
 
 ### 5.1 Pregunta abierta que quedó sin responder
 
-**¿El descuento legal de tercera y cuarta edad aplica cuando paga un seguro, y sobre qué base?** Es la pregunta más cara que queda abierta: cambia el orden de operaciones del motor de facturación completo.
+**¿El descuento legal de tercera edad aplica cuando paga un seguro, y sobre qué base?** Sigue siendo la pregunta más cara que queda abierta: cambia el orden de operaciones del motor de facturación completo.
 
-Hay un indicio, no una respuesta: en el descuento de energía eléctrica la ley dice que **no se combina con otras rebajas especiales**. Si ese principio se extiende a salud, el descuento aplicaría solo a la porción del paciente. **Hay que confirmarlo** — va como pregunta #16 en `dominio.md`.
+Lo que se pudo verificar el 18-ago-2026:
 
-Mientras no haya respuesta, la estructura se diseña para soportar las tres variantes (sobre el total, sobre la porción del paciente, o configurable por convenio) **sin migración**.
+- **El Artículo 30 no menciona seguros, aseguradoras ni pólizas.** El silencio no es permiso para no aplicarlo: la obligación está redactada sobre el prestador del servicio, no sobre quién paga.
+- **La regla de "no acumulable" que sí existe está en la Sección II** (servicios básicos), que es otra sección y otro decreto. Extenderla a salud por analogía es una interpretación, no una lectura.
+
+Por eso el diseño soporta las tres variantes **sin migración**, con un campo por convenio (`base_del_descuento_legal`: sobre el total · sobre la porción del paciente · no aplica) y sin valor por defecto silencioso: mientras no haya respuesta jurídica, el convenio se configura explícitamente y el cargo guarda cuál se usó.
+
+Va como pregunta **#16** en `dominio.md`.
 
 ---
 
@@ -242,14 +277,22 @@ Anotado para el bloque 1 (Cimientos), pendiente de detallar:
 
 ## 7. Qué falta para poder codificar
 
-| # | Falta | Bloquea |
-|---|---|---|
-| 1 | Confirmar los porcentajes de descuento contra **La Gaceta** (§4.4). Definen el precio de lista de todo el catálogo (§4.5) | Motor de precios |
-| 2 | Definir el **margen objetivo por categoría** de producto — 120 % es el de medicamentos | Carga inicial |
-| 3 | ¿El descuento legal aplica con seguro? (§5.1) | Facturación |
-| 4 | ISV en compras exentas → costo (pendiente #4) | Costeo |
-| 5 | Tarifarios reales de las aseguradoras (pendiente #9) | Carga inicial |
-| 6 | Confirmar §2.6: costo por producto, no por lote | Kardex |
-| 7 | Reparto del honorario médico: ¿qué porcentaje y sobre qué base? | Honorarios |
+| # | Falta | Bloquea | Estado |
+|---|---|---|---|
+| 1 | Confirmar los porcentajes de descuento (§4.4). Definen el precio de lista de todo el catálogo (§4.5) | Motor de precios | ✅ **Verificado 18-ago-2026** contra el Art. 30 del Decreto 199-2006. Queda la revisión de un abogado sobre la consolidación completa |
+| 2 | Definir el **margen objetivo por categoría** de producto — 120 % es el de medicamentos | Carga inicial | Abierto |
+| 3 | ¿El descuento legal aplica con seguro? (§5.1) | Facturación | Abierto — la ley calla; requiere criterio jurídico |
+| 4 | ISV en compras exentas → costo (pendiente #4 de `dominio.md`) | Costeo | Abierto — contador |
+| 5 | Tarifarios reales de las aseguradoras (pendiente #10 de `dominio.md`) | Carga inicial | Abierto |
+| 6 | Confirmar §2.6: costo por producto, no por lote | Kardex | Abierto |
+| 7 | Reparto del honorario médico: ¿qué porcentaje y sobre qué base? | Honorarios | Abierto |
 
-**Nada de esto bloquea el bloque 1 (Cimientos) ni el 2 (Identidad del paciente).** Se puede construir mientras llegan las respuestas.
+**Nada de esto bloquea la ESTRUCTURA del bloque 3.** Los porcentajes, los márgenes y la base del descuento son filas de configuración con vigencia; el esquema se construye ahora y los valores se corrigen sin desplegar.
+
+---
+
+## 8. Fuentes de la verificación legal (18-ago-2026)
+
+- **Ley Integral de Protección al Adulto Mayor y Jubilados, Decreto 199-2006** — texto de la ley publicado por la Biblioteca Virtual en Salud de Honduras: `https://www.bvs.hn/Honduras/salud/ley.integral.de.proteccion.al.adulto.mayor.y.jubilados.pdf`
+- **Decreto 45-2025**, La Gaceta No. 37,047 del 19-ene-2026 — ficha oficial en el portal del SAR, cuyo título delimita el alcance de la reforma al Artículo 31 y la Sección II: `https://www.sar.gob.hn/`
+- Cobertura de prensa del 23-ene-2026 usada solo para contrastar, **no como fuente**: El País HN, Televicentro, Contexto HN, El Heraldo.

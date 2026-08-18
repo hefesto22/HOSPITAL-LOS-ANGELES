@@ -51,9 +51,15 @@ return [
     |--------------------------------------------------------------------------
     |
     | ⚠️ Estos son los valores con los que se SIEMBRA la tabla de rangos.
-    | Los vigentes se leen de base de datos, porque la ley cambia: el
-    | Decreto 45-2025 reformó el Art. 31 de la Ley Integral de Protección
-    | al Adulto Mayor y Jubilados con vigencia desde el 19-ene-2026.
+    | Los vigentes se leen de base de datos, porque la ley cambia.
+    |
+    | EN SALUD EL ÚNICO UMBRAL ES 60 (Art. 30 del Decreto 199-2006). La
+    | cuarta edad existe —Decreto 45-2025, La Gaceta 37,047— pero reforma
+    | el Art. 31, que es la Sección II de servicios básicos: energía, agua,
+    | telecomunicaciones y cable. NO aplica a servicios médicos.
+    |
+    | Se siembra igual, para que extenderla a salud sea una fila y no un
+    | despliegue. Ver docs/dominio-inventario-y-precios.md §4.4.
     |
     | El rango se calcula SIEMPRE contra la fecha del servicio, nunca
     | contra "hoy" ni contra la fecha de facturación (§4.3 de

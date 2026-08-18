@@ -26,6 +26,11 @@ class DatabaseSeeder extends Seeder
             // 4. Recién ahora se puede aplicar la matriz de permisos.
             MatrizDePermisosSeeder::class,
 
+            // 5. Vocabulario del catálogo. Va antes que cualquier ítem:
+            //    un medicamento sin unidad de dispensación lo rechaza la
+            //    base, no el formulario.
+            UnidadesSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }
