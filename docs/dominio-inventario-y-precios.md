@@ -1,7 +1,7 @@
 # Dominio — Inventario, costeo y motor de precios
 
-**Estado:** 🚧 BORRADOR — refleja lo que Mauricio explicó el 17-ago-2026 y cómo lo entendí yo.
-**Falta su visto bueno.** Nada de esto se codifica hasta que confirme el §2.6 y el §4.5.
+**Estado:** refleja lo que Mauricio explicó y decidió el 17-ago-2026.
+**§4.5 (política de precio) está DECIDIDO.** Queda pendiente su confirmación en §2.6 (costo por producto vs por lote).
 
 Este documento es la especificación de los bloques **3 (catálogos y convenios)**, **5 (inventario)**, **6 (farmacia)** y la parte de precios del **7 (facturación)** del Apéndice B.
 
@@ -155,30 +155,54 @@ Consecuencias de diseño:
 3. **Prohibido dejarlo como constante en código.** Es el §1.1 aplicado: el día que la ley cambie, se edita configuración, no se despliega.
 4. El paciente acredita la condición con **tarjeta de identidad**; los jubilados, con carné del IPM o INJUPEMP. El expediente ya exige documento de identidad (§8.2), así que la detección es automática — pero el documento debe estar verificado, no digitado a ojo.
 
-### 4.5 ⚠️ El ejemplo del acetaminofén — necesito que confirmes esto
+### 4.5 Política de precio — DECIDIDA
 
-Así entendí lo que explicaste:
+> **Decisión de Mauricio, 17-ago-2026:**
+> **el margen nunca baja del 120 % en medicamentos, sin importar la edad del paciente ni el descuento legal que le corresponda.**
 
-| Rango | Margen configurado | Precio de lista | Descuento legal | **Paciente paga** | Margen real |
-|---|---:|---:|---:|---:|---:|
-| Normal | 120 % | L 22.00 | — | **L 22.00** | 120 % |
-| Tercera edad | 150 % | L 25.00 | 30 % | **L 17.50** | 75 % |
-| Cuarta edad | 160 % | L 26.00 | 40 % | **L 15.60** | 56 % |
+Se implementa con **un solo precio de lista, igual para todos**, calculado desde el **peor caso** de descuento que ese ítem puede recibir:
 
-Sobre un costo promedio de L 10.00. **Si la lectura es correcta, el margen se configura POR RANGO DE EDAD**, precisamente para que el descuento obligatorio no se coma toda la utilidad.
+```
+                   costo_promedio × (1 + margen_objetivo)
+precio_lista  =  ─────────────────────────────────────────
+                    1 − descuento_maximo_del_item
+```
 
-**Dos cosas que hay que resolver antes de codificar esto:**
+### Resultado con costo L 10.00, margen objetivo 120 %, descuentos 30 % / 40 %
 
-**(a) Los porcentajes no coinciden con lo que encontré.** Vos dijiste 30 % tercera edad y 40 % cuarta. Las fuentes dan **25 % para medicamentos** en tercera edad y **hasta 40 %** en cuarta. La diferencia entre 25 y 30 en cada caja de medicina, multiplicada por un año, es dinero real — y equivocarse hacia abajo es la multa. **Hay que confirmar contra el texto de La Gaceta antes de cargar un solo porcentaje.**
+`precio_lista = 22.00 / 0.60 = ` **L 36.67 para todos**
 
-**(b) Subir el precio de lista solo para el adulto mayor es un riesgo legal que no me corresponde evaluar a mí.** Funcionalmente, cobrarle L 25 de lista a un paciente de 60 lo que a otro se le cobra L 22, para que el descuento obligatorio quede neutralizado, puede leerse como evasión del beneficio. No estoy diciendo que lo sea — **estoy diciendo que esa decisión la tenés que tomar con tu abogado, no conmigo, y que el sistema va a dejar rastro de ella.**
+| Rango | Precio de lista | Descuento legal | **Paciente paga** | Margen |
+|---|---:|---:|---:|---:|
+| Normal | 36.67 | — | **36.67** | 267 % |
+| Tercera edad (60+) | 36.67 | 30 % | **25.67** | 157 % |
+| Cuarta edad (80+) | 36.67 | 40 % | **22.00** | **120 % ← el piso** |
 
-El sistema puede soportar cualquiera de los dos modelos sin cambiar de diseño:
+**El piso se cumple siempre**, y se toca exactamente en el caso de mayor descuento. Nadie recibe un precio de lista distinto por su edad: el descuento cae sobre el mismo precio que ve cualquiera, así que el adulto mayor **sí paga menos** que el paciente que va detrás en la fila.
 
-- **Margen único** con el descuento saliendo del margen del hospital.
-- **Margen por rango de edad**, como lo describiste.
+### Por qué se calcula desde el peor caso y no desde el rango normal
 
-En los dos casos el sistema debe **mostrarte el margen después del descuento legal**, por rango, antes de que fijes el precio. Esa pantalla es la que hace que la decisión sea informada.
+Si la lista se fijara en L 22.00 (el margen objetivo sobre el rango sin descuento), la cuarta edad pagaría L 13.20 y el margen caería a 32 %. Fijarla desde el descuento máximo es lo que convierte el 120 % en **piso garantizado** en lugar de en objetivo que se incumple con cada paciente mayor.
+
+### Consecuencia comercial a vigilar
+
+El paciente sin descuento paga más que antes. **Es el costo de la ley y lo carga todo el que vende medicamentos en Honduras**, así que no es una desventaja relativa frente a la competencia — pero sí hay que revisar el efecto en los productos donde el hospital compite de frente con farmacias de barrio. El sistema debe permitir **margen objetivo distinto por categoría de producto** para poder afinar eso sin tocar código.
+
+### Reglas de implementación
+
+- **`margen_objetivo` es configuración por categoría de producto, con vigencia.** No es una constante ni un valor único global (§1.1).
+- **`descuento_maximo_del_item`** sale de la tabla de descuentos legales `(tipo de ítem × rango de edad)`, también con vigencia. Un medicamento y una habitación tienen máximos distintos.
+- **Antes de confirmar un precio, la pantalla muestra el margen resultante en CADA rango de edad**, ya con el descuento aplicado. La decisión se toma con los tres números a la vista, no a ojo.
+- **Alerta si algún rango cae bajo el piso configurado**, y alerta también cuando una entrada mueva el costo promedio más de un umbral (§4.2).
+- **Redondeo:** se redondea una sola vez, sobre el precio de lista. El descuento se aplica sobre la lista ya redondeada. El snapshot del cargo guarda **los tres valores** — lista, descuento aplicado y neto — porque recalcular cualquiera de ellos después da diferencias de centavos que en una auditoría hay que explicar.
+
+### ⚠️ Dependencia directa con la normativa
+
+**El precio de lista de TODO el catálogo depende del descuento máximo legal.** Si el porcentaje real para medicamentos es 25 % y no 30 %, o si la cuarta edad es 35 % y no 40 %, la lista de cada producto cambia.
+
+Por eso los porcentajes van como **configuración con vigencia y jamás hardcoded**: el día que se confirmen contra La Gaceta —o que la ley vuelva a cambiar, como cambió en enero de 2026— se recalcula el catálogo desde configuración, sin desplegar código.
+
+Ver pendiente #1 de la tabla del §7.
 
 ---
 
@@ -220,8 +244,8 @@ Anotado para el bloque 1 (Cimientos), pendiente de detallar:
 
 | # | Falta | Bloquea |
 |---|---|---|
-| 1 | Confirmar los porcentajes de descuento contra **La Gaceta** (§4.4) | Motor de precios |
-| 2 | Decidir §4.5(a) y §4.5(b) — margen por rango de edad, con tu abogado | Motor de precios |
+| 1 | Confirmar los porcentajes de descuento contra **La Gaceta** (§4.4). Definen el precio de lista de todo el catálogo (§4.5) | Motor de precios |
+| 2 | Definir el **margen objetivo por categoría** de producto — 120 % es el de medicamentos | Carga inicial |
 | 3 | ¿El descuento legal aplica con seguro? (§5.1) | Facturación |
 | 4 | ISV en compras exentas → costo (pendiente #4) | Costeo |
 | 5 | Tarifarios reales de las aseguradoras (pendiente #9) | Carga inicial |
