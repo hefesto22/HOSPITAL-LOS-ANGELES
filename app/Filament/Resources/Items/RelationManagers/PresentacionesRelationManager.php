@@ -181,7 +181,8 @@ class PresentacionesRelationManager extends RelationManager
                 TextColumn::make('unidades_por_presentacion')
                     ->label('Contiene')
                     ->formatStateUsing(fn (string $state): string => rtrim(rtrim($state, '0'), '.'))
-                    ->suffix(fn (): string => ' '.$this->unidadDeDispensacion()),
+                    ->suffix(fn (): string => ' '.$this->codigoDeDispensacion())
+                    ->tooltip(fn (): string => 'En '.$this->unidadDeDispensacion()),
 
                 IconColumn::make('es_predeterminada')
                     ->label('Habitual')
@@ -250,15 +251,37 @@ class PresentacionesRelationManager extends RelationManager
         return $unidad instanceof Unidad ? $unidad->nombre : 'unidades';
     }
 
+    /**
+     * El CÓDIGO de la unidad, no su nombre.
+     *
+     * Se usa en la etiqueta y en la columna a propósito: un código es un
+     * símbolo y no se declina. Con el nombre salía «Cuántas tableta
+     * trae» y «100 TABLETA», y pluralizar en español no se resuelve
+     * agregando una ese — UNIDAD INTERNACIONAL, MILILITRO y VIAL hacen
+     * cada uno lo suyo.
+     */
+    private function codigoDeDispensacion(): string
+    {
+        $duenio = $this->getOwnerRecord();
+
+        if (! $duenio instanceof Item) {
+            return 'unidades';
+        }
+
+        $unidad = $duenio->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $unidad->codigo : 'unidades';
+    }
+
     private function etiquetaDelContenido(): string
     {
-        return 'Cuántas '.mb_strtolower($this->unidadDeDispensacion()).' trae';
+        return 'Cuánto trae, en '.$this->codigoDeDispensacion();
     }
 
     private function ayudaDelContenido(): string
     {
-        return 'Una caja de 100 ampollas lleva 100. El kardex se lleva SIEMPRE en '
-            .mb_strtolower($this->unidadDeDispensacion()).', nunca en cajas.';
+        return 'Una caja de 100 ampollas lleva 100. El kardex se lleva SIEMPRE en la unidad de '
+            .'dispensación del ítem —acá '.$this->unidadDeDispensacion().'—, nunca en cajas.';
     }
 
     // ── Validación ────────────────────────────────────────────────────

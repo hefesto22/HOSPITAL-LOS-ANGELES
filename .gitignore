@@ -46,3 +46,6 @@ nbproject
 # Sistemas operativos
 ehthumbs.db
 Desktop.ini
+
+# Entregas de Claude — no se versionan
+*.tgz
