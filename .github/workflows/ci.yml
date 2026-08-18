@@ -98,6 +98,42 @@ jobs:
         # --abandoned=report: un paquete abandonado avisa pero no bloquea.
         run: composer audit --abandoned=report
 
+      # ── Front-end ────────────────────────────────────────────────────
+      #
+      # Hasta el 18-ago-2026 CI no tocaba npm en absoluto. El resultado
+      # previsible: diez advisories acumuladas —dos críticas— que nadie
+      # vio hasta que se corrió `npm audit` a mano.
+      #
+      # No alcanza con decir "son dependencias de desarrollo". Vite y
+      # PostCSS COMPILAN los assets que después sirve el panel: una de
+      # ellas comprometida inyecta JavaScript en la pantalla donde se
+      # escriben recetas y se cobra. El riesgo no es que corran en
+      # producción, es lo que producen.
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install front-end dependencies
+        # `npm ci`, NUNCA `install` — mismo criterio que composer install
+        # (§6.4): el package-lock.json commiteado es la única fuente de
+        # qué versión corre.
+        run: npm ci
+
+      - name: Front-end security audit
+        # Umbral en `high`: rompe el build ante alta o crítica. Las
+        # moderadas y bajas avisan en el log sin bloquear, porque en una
+        # cadena de herramientas de compilación aparecen seguido y una
+        # alarma que suena todos los días deja de leerse.
+        run: npm audit --audit-level=high
+
+      - name: Build assets
+        # Humo del front-end. Sin esto, un build roto se descubre recién
+        # en el deploy — de noche, con el hospital abierto.
+        run: npm run build
+
       - name: Prepare environment
         run: |
           cp .env.example .env
