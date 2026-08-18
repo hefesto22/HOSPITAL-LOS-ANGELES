@@ -383,6 +383,20 @@ class Persona extends Model
     }
 
     /**
+     * Las carpetas que las sedes le abrieron.
+     *
+     * Una persona puede no tener ninguna: el responsable de pago, el
+     * contacto de emergencia y el acompanante son personas y no pacientes.
+     * Lo que convierte a alguien en paciente de una sede es el expediente.
+     *
+     * @return HasMany<Expediente, $this>
+     */
+    public function expedientes(): HasMany
+    {
+        return $this->hasMany(Expediente::class);
+    }
+
+    /**
      * @return HasMany<PersonaVersion, $this>
      */
     public function versiones(): HasMany
