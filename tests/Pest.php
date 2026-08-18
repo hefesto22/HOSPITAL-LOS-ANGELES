@@ -30,12 +30,18 @@ pest()->extend(TestCase::class)
 | Custom expectations específicas del dominio Olympo.
 */
 
-expect()->extend('toBeMonto', function (float $valor, string $moneda = 'HNL'): Expectation {
+/*
+ * Se compara contra un STRING, no contra un float: `Monto` guarda el
+ * valor en bcmath y expone el redondeado a dos decimales. Escribir
+ * `toBeMonto('150.75')` en vez de `toBeMonto(150.75)` deja a la vista
+ * que acá no hay punto flotante en ningún lado.
+ */
+expect()->extend('toBeMonto', function (string $valor, string $moneda = 'HNL'): Expectation {
     /** @var Monto $monto */
     $monto = $this->value;
 
     expect($monto)->toBeInstanceOf(Monto::class);
-    expect($monto->valor)->toBe($valor);
+    expect($monto->valor())->toBe($valor);
     expect($monto->moneda)->toBe($moneda);
 
     return $this;

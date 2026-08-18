@@ -25,11 +25,15 @@ if (! function_exists('lempiras')) {
      *
      *   lempiras(1234.56)               => "L. 1,234.56"
      *   lempiras(1234.5, decimales: 0)  => "L. 1,235"
-     *   lempiras(new Monto(99.99))      => "L. 99.99"
+     *   lempiras(Monto::de('99.99'))    => "L. 99.99"
+     *
+     * ⚠️ Estas dos funciones son de PRESENTACIÓN y por eso pueden usar
+     * float: reciben un valor ya redondeado y solo le ponen las comas de
+     * los miles. Ningún cálculo pasa por acá.
      */
-    function lempiras(float|int|Monto $monto, int $decimales = 2): string
+    function lempiras(float|int|string|Monto $monto, int $decimales = 2): string
     {
-        $valor = $monto instanceof Monto ? $monto->valor : (float) $monto;
+        $valor = $monto instanceof Monto ? (float) $monto->valor() : (float) $monto;
         $simbolo = (string) config('honduras.moneda.simbolo', 'L.');
 
         return $simbolo.' '.number_format($valor, $decimales, '.', ',');
@@ -43,9 +47,9 @@ if (! function_exists('moneda')) {
      *   moneda(1234.56, 'USD')   => "USD 1,234.56"
      *   moneda(1234.56, '$')     => "$ 1,234.56"
      */
-    function moneda(float|int|Monto $monto, string $simbolo = 'L.', int $decimales = 2): string
+    function moneda(float|int|string|Monto $monto, string $simbolo = 'L.', int $decimales = 2): string
     {
-        $valor = $monto instanceof Monto ? $monto->valor : (float) $monto;
+        $valor = $monto instanceof Monto ? (float) $monto->valor() : (float) $monto;
 
         return $simbolo.' '.number_format($valor, $decimales, '.', ',');
     }
