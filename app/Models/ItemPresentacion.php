@@ -68,6 +68,51 @@ class ItemPresentacion extends Model
     }
 
     /**
+     * Una sola presentación habitual por ítem.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ SE DESMARCA LA ANTERIOR EN VEZ DE RECHAZAR
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La base tiene un índice único parcial que impide dos marcadas a la
+     * vez, y tiene que quedarse: con dos, la que gana depende del ORDER
+     * BY. Pero sin esto, marcar una segunda termina en un error de SQL
+     * crudo en la cara de quien carga el catálogo, cuando lo que quiso
+     * decir es evidente — «ahora compramos en caja de 50».
+     *
+     * Va en el modelo y no en el formulario por lo de siempre: la
+     * pantalla no es la única puerta. Un import del catálogo del sistema
+     * anterior escribe directo.
+     *
+     * ⚠️ El desmarcado ocurre ANTES del guardado, así que si el guardado
+     * falla después, el ítem queda sin presentación habitual. Es un
+     * estado que el sistema tolera —el formulario de compra simplemente
+     * no propone ninguna— y que el siguiente guardado corrige. La
+     * alternativa era el error de SQL, que es peor.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (ItemPresentacion $presentacion): void {
+            if (! $presentacion->es_predeterminada) {
+                return;
+            }
+
+            /*
+             * `update()` masivo a propósito: no dispara eventos de
+             * modelo, así que no se llama a sí mismo.
+             */
+            static::query()
+                ->where('item_id', $presentacion->item_id)
+                ->where('es_predeterminada', true)
+                ->when(
+                    $presentacion->exists,
+                    fn (Builder $consulta): Builder => $consulta->whereKeyNot($presentacion->getKey()),
+                )
+                ->update(['es_predeterminada' => false]);
+        });
+    }
+
+    /**
      * @return array<string, string>
      */
     protected function casts(): array

@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Items;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Pages\ListItems;
+use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
 use App\Filament\Resources\Items\Tables\ItemsTable;
 use App\Models\Item;
@@ -105,6 +106,26 @@ class ItemResource extends Resource
     public static function canDeleteAny(): bool
     {
         return false;
+    }
+
+    /**
+     * Las presentaciones de compra se cargan DENTRO de la ficha del ítem.
+     *
+     * Una presentación sin su ítem no significa nada, y una pantalla
+     * aparte obligaría a elegir el ítem de un selector — que es como se
+     * termina cargando "CAJA X 100" en el producto equivocado.
+     *
+     * El panel se oculta solo en los ítems que no son físicos: una
+     * consulta médica no viene en caja. Ver
+     * `PresentacionesRelationManager::canViewForRecord()`.
+     *
+     * @return array<int, class-string>
+     */
+    public static function getRelations(): array
+    {
+        return [
+            PresentacionesRelationManager::class,
+        ];
     }
 
     /**

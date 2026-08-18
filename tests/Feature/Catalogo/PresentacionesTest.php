@@ -7,6 +7,7 @@ use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Unidad;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
@@ -52,18 +53,69 @@ it('no deja cargar dos veces la misma presentacion', function (): void {
 })->throws(QueryException::class)
     ->note('Dos filas idénticas son la misma presentación cargada dos veces, y quien recibe la compra elige a ciegas.');
 
-it('no deja dos presentaciones predeterminadas', function (): void {
+it('al marcar una habitual se desmarca la anterior', function (): void {
     $item = Item::factory()->medicamento()->create();
 
-    ItemPresentacion::factory()->for($item)->predeterminada()->create([
+    $primera = ItemPresentacion::factory()->for($item)->predeterminada()->create([
+        'nombre'                    => 'CAJA X 100',
         'unidades_por_presentacion' => '100.0000',
     ]);
 
-    ItemPresentacion::factory()->for($item)->predeterminada()->create([
+    $segunda = ItemPresentacion::factory()->for($item)->predeterminada()->create([
+        'nombre'                    => 'CAJA X 50',
         'unidades_por_presentacion' => '50.0000',
     ]);
+
+    expect($primera->fresh()?->es_predeterminada)->toBeFalse()
+        ->and($segunda->fresh()?->es_predeterminada)->toBeTrue()
+        ->and($item->presentacionPredeterminada()?->getKey())->toBe($segunda->getKey());
+})->note('Lo que quiso decir quien la marcó es evidente: «ahora compramos en caja de 50». Rechazarlo con un error de SQL sería castigar la intención correcta.');
+
+it('desmarcar la habitual no toca a las demas', function (): void {
+    $item = Item::factory()->medicamento()->create();
+
+    $otra = ItemPresentacion::factory()->for($item)->predeterminada()->create([
+        'unidades_por_presentacion' => '100.0000',
+    ]);
+
+    ItemPresentacion::factory()->for($item)->create([
+        'unidades_por_presentacion' => '50.0000',
+    ]);
+
+    expect($otra->fresh()?->es_predeterminada)->toBeTrue()
+        ->and($item->presentaciones()->where('es_predeterminada', true)->count())->toBe(1);
+})->note('Guardar una presentación cualquiera no puede robarle la marca a la habitual.');
+
+it('cada item tiene su propia habitual', function (): void {
+    $unItem = Item::factory()->medicamento()->create();
+    $otroItem = Item::factory()->medicamento()->create();
+
+    $unaDeUno = ItemPresentacion::factory()->for($unItem)->predeterminada()->create();
+    ItemPresentacion::factory()->for($otroItem)->predeterminada()->create();
+
+    expect($unaDeUno->fresh()?->es_predeterminada)->toBeTrue();
+})->note('El desmarcado es por ítem: marcar la de un producto no puede desmarcar la de otro.');
+
+it('la base tambien impide dos habituales aunque se escriba directo', function (): void {
+    $item = Item::factory()->medicamento()->create();
+    $unidad = Unidad::factory()->create();
+
+    $filas = [];
+
+    foreach (['CAJA X 100' => '100.0000', 'CAJA X 50' => '50.0000'] as $nombre => $contenido) {
+        $filas[] = [
+            'item_id'                   => $item->getKey(),
+            'unidad_id'                 => $unidad->getKey(),
+            'nombre'                    => $nombre,
+            'unidades_por_presentacion' => $contenido,
+            'es_predeterminada'         => true,
+            'vigencia_desde'            => '2026-01-01',
+        ];
+    }
+
+    DB::table('item_presentaciones')->insert($filas);
 })->throws(QueryException::class)
-    ->note('Con dos por defecto, la que gana depende del ORDER BY.');
+    ->note('El modelo desmarca la anterior; la base rechaza el par aunque el modelo no exista. Con dos marcadas, la que gana depende del ORDER BY.');
 
 it('el codigo de barras es unico en todo el catalogo', function (): void {
     ItemPresentacion::factory()->create(['codigo_barras' => '7501234567890']);
