@@ -9,6 +9,7 @@ use App\Models\Persona;
 use App\Support\NormalizadorDeTexto;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -109,17 +110,61 @@ final class PacientesTable
                             ->autofocus()
                             ->live(debounce: 400)
                             ->columnSpanFull(),
+
+                        /*
+                         * Las bandejas viven DENTRO del mismo filtro y no
+                         * como pestañas ni filtros aparte, por un motivo
+                         * concreto: la regla "sin término no hay filas"
+                         * tiene que poder saber si hay otro criterio
+                         * activo. Con dos filtros separados, cada uno
+                         * ignora al otro y la bandeja saldría vacía.
+                         */
+                        Select::make('bandeja')
+                            ->label('O ver una bandeja de trabajo')
+                            ->placeholder('Ninguna — buscar por nombre o documento')
+                            ->native(false)
+                            ->live()
+                            ->options([
+                                'sin_identificar' => 'Pendientes de identificar (NN)',
+                                'en_conflicto'    => 'Con documento en conflicto',
+                                'sin_expediente'  => 'Sin expediente en ninguna sede',
+                            ])
+                            ->columnSpanFull(),
                     ])
                     ->query(function (Builder $consulta, array $data): void {
                         $termino = trim((string) ($data['termino'] ?? ''));
+                        $bandeja = is_string($data['bandeja'] ?? null) ? $data['bandeja'] : null;
 
                         /*
-                         * Sin término, cero filas. Ver el encabezado: esto
-                         * ES el comportamiento, no una falta de datos.
+                         * Sin término Y sin bandeja, cero filas. Ver el
+                         * encabezado: esto ES el comportamiento, no una
+                         * falta de datos. Una bandeja SÍ es un criterio,
+                         * asi que no exige ademas escribir un nombre: es
+                         * una cola de trabajo, se abre y se ve entera.
                          */
-                        if ($termino === '') {
+                        if ($termino === '' && $bandeja === null) {
                             $consulta->whereRaw('1 = 0');
 
+                            return;
+                        }
+
+                        match ($bandeja) {
+                            'sin_identificar' => $consulta->where('es_nn', true),
+                            'en_conflicto'    => $consulta->whereRaw(
+                                'EXISTS (SELECT 1 FROM persona_identificadores pi '
+                                .'WHERE pi.persona_id = personas.id '
+                                .'AND pi.deleted_at IS NULL '
+                                .'AND pi.en_conflicto = true)'
+                            ),
+                            'sin_expediente' => $consulta->whereRaw(
+                                'NOT EXISTS (SELECT 1 FROM expedientes e '
+                                .'WHERE e.persona_id = personas.id '
+                                .'AND e.deleted_at IS NULL)'
+                            ),
+                            default => null,
+                        };
+
+                        if ($termino === '') {
                             return;
                         }
 
@@ -163,8 +208,20 @@ final class PacientesTable
                     })
                     ->indicateUsing(function (array $data): ?string {
                         $termino = trim((string) ($data['termino'] ?? ''));
+                        $bandeja = is_string($data['bandeja'] ?? null) ? $data['bandeja'] : null;
 
-                        return $termino === '' ? null : "Buscando: {$termino}";
+                        $etiquetas = [
+                            'sin_identificar' => 'Bandeja: pendientes de identificar',
+                            'en_conflicto'    => 'Bandeja: documento en conflicto',
+                            'sin_expediente'  => 'Bandeja: sin expediente',
+                        ];
+
+                        $partes = array_filter([
+                            $termino === '' ? null : "Buscando: {$termino}",
+                            $etiquetas[$bandeja] ?? null,
+                        ]);
+
+                        return $partes === [] ? null : implode(' · ', $partes);
                     }),
             ], layout: FiltersLayout::AboveContent)
             ->deferFilters(false)
