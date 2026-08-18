@@ -79,17 +79,45 @@ final class ActualizadorDePersona
                 return $persona;
             }
 
-            PersonaVersion::query()->create([
+            $this->registrarVersion($persona, $motivo, $diferencias);
+
+            return $persona;
+        });
+    }
+
+    /**
+     * Escribe una version del estado ACTUAL de la persona, siempre.
+     *
+     * Es publica porque la fusion de duplicados tambien versiona, y la
+     * numeracion con lock tiene que vivir en un solo lugar: dos servicios
+     * calculando `max(version) + 1` por su cuenta chocan contra el indice
+     * unico bajo concurrencia.
+     *
+     * A diferencia de `actualizar()`, esta NO decide si hubo cambio: una
+     * fusion es un cambio aunque los datos demograficos queden iguales.
+     *
+     * @param array<string, mixed>|null $cambios
+     */
+    public function registrarVersion(Persona $persona, string $motivo, ?array $cambios = null): PersonaVersion
+    {
+        return DB::transaction(function () use ($persona, $motivo, $cambios): PersonaVersion {
+            Persona::query()
+                ->whereKey($persona->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            /** @var PersonaVersion $version */
+            $version = PersonaVersion::query()->create([
                 'persona_id'     => $persona->getKey(),
                 'version'        => $this->siguienteVersion($persona),
-                'datos'          => $despues,
-                'cambios'        => $diferencias,
+                'datos'          => $this->foto($persona),
+                'cambios'        => $cambios,
                 'motivo'         => $motivo,
                 'registrado_por' => Auth::id(),
                 'registrado_en'  => now(),
             ]);
 
-            return $persona;
+            return $version;
         });
     }
 
