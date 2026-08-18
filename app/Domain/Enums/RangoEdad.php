@@ -112,6 +112,52 @@ enum RangoEdad: string
         return $this !== self::Normal;
     }
 
+    /**
+     * Los rangos a los que este paciente tiene derecho, del más
+     * específico al más general.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * UN PACIENTE DE 80 AÑOS TAMBIÉN TIENE 60
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Hoy la ley no le da nada específico a la cuarta edad en salud, así
+     * que un paciente de 80 tiene que recibir lo de la tercera — **no
+     * cero**. Buscar solo el rango exacto y rendirse al no encontrarlo
+     * sería negarle el descuento a quien más derecho tiene, y con la
+     * lógica pareciendo correcta.
+     *
+     * El resolutor consulta todos estos rangos y se queda con el mayor.
+     * Además de cubrir el caso de hoy, protege contra un dato mal
+     * cargado: la ley no le puede dar menos a alguien por ser más viejo.
+     *
+     * @return list<self>
+     */
+    public function escalera(): array
+    {
+        return match ($this) {
+            self::Normal  => [],
+            self::Tercera => [self::Tercera],
+            self::Cuarta  => [self::Cuarta, self::Tercera],
+        };
+    }
+
+    /**
+     * Todos los rangos que pueden llevar descuento.
+     *
+     * Lo usa el cálculo del precio de lista, que necesita el PEOR caso:
+     * el descuento más alto que un ítem puede llegar a recibir de
+     * cualquier edad (§4.5).
+     *
+     * @return list<self>
+     */
+    public static function conDerechoADescuento(): array
+    {
+        return array_values(array_filter(
+            self::cases(),
+            static fn (self $rango): bool => $rango->tieneDescuentoLegal(),
+        ));
+    }
+
     public function color(): string
     {
         return match ($this) {

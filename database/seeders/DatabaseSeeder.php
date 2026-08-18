@@ -31,6 +31,11 @@ class DatabaseSeeder extends Seeder
             //    base, no el formulario.
             UnidadesSeeder::class,
 
+            // 6. Los porcentajes del Art. 30. De estos ocho numeros sale
+            //    el precio de lista de todo el catalogo, asi que se
+            //    siembran antes de que exista cualquier tarifario.
+            DescuentosLegalesSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }
