@@ -76,6 +76,21 @@ class User extends Authenticatable implements FilamentUser
 
     /**
      * Bloquea el acceso al panel para usuarios inactivos o sin rol.
+     *
+     * ⚠️ Esto CAMBIÓ respecto de la plantilla Olympo, y el cambio importa.
+     *
+     * Antes exigía el rol `super_admin` o `panel_user`. En SIHLA eso deja
+     * afuera a los once roles reales del §1.4: un `medico` o una `caja`
+     * quedaban sin poder entrar, y el síntoma —pantalla de acceso denegado
+     * después de un login correcto— parece un problema de permisos de
+     * Filament y no lo es.
+     *
+     * SIHLA no tiene frontend público: es 100 % panel. Todo usuario con un
+     * rol asignado pertenece al panel. La restricción real no es la puerta
+     * de entrada, es lo que cada rol ve una vez adentro (§9.L5).
+     *
+     * Sin rol NO entra: un usuario recién creado al que nadie le asignó
+     * función no debe ver nada, y eso sí sigue igual.
      */
     public function canAccessPanel(Panel $panel): bool
     {
@@ -83,8 +98,11 @@ class User extends Authenticatable implements FilamentUser
             return false;
         }
 
-        return $this->hasRole(ShieldUtils::getSuperAdminName())
-            || $this->hasRole(ShieldUtils::getPanelUserRoleName());
+        if ($this->hasRole(ShieldUtils::getSuperAdminName())) {
+            return true;
+        }
+
+        return $this->roles()->exists();
     }
 
     /**

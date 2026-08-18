@@ -46,6 +46,7 @@ parameters:
         # ── Eloquent magic ──────────────────────────────────────────────────
         - '#Access to an undefined property App\\Models\\.*::\$.*#'
 
+
         # ── Pest 5 magic ────────────────────────────────────────────────────
         # $this, test(), pest()->extend() y expect() son globals mágicos que
         # PHPStan no resuelve sin el plugin de Pest.

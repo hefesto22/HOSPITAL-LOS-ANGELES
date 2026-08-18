@@ -8,8 +8,10 @@ use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\SedeFactory;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -106,6 +108,50 @@ class Sede extends Model
 
         return $this->vigencia_hasta === null
             || $this->vigencia_hasta->greaterThanOrEqualTo($fecha);
+    }
+
+    /**
+     * Tercera capa de la defensa del §10.4.
+     *
+     * El macro `->mayusculas()` cubre el formulario. Este mutator cubre
+     * todo lo demás: seeders, imports de catálogo, comandos de consola y
+     * cualquier código que escriba directo al modelo. El formulario no es
+     * la única puerta.
+     *
+     * mb_strtoupper con UTF-8 explícito, no strtoupper: "peña" quedaría
+     * "PEñA" y el catálogo se ve roto.
+     *
+     * @return Attribute<string, string>
+     */
+    protected function codigo(): Attribute
+    {
+        return Attribute::make(
+            set: fn (string $value): string => mb_strtoupper(trim($value), 'UTF-8'),
+        );
+    }
+
+    /**
+     * @return HasMany<Servicio, $this>
+     */
+    public function servicios(): HasMany
+    {
+        return $this->hasMany(Servicio::class);
+    }
+
+    /**
+     * @return HasMany<Almacen, $this>
+     */
+    public function almacenes(): HasMany
+    {
+        return $this->hasMany(Almacen::class);
+    }
+
+    /**
+     * @return HasMany<User, $this>
+     */
+    public function usuarios(): HasMany
+    {
+        return $this->hasMany(User::class);
     }
 
     /**
