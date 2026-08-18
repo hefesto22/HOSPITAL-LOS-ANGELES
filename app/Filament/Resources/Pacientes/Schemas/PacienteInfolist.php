@@ -88,6 +88,7 @@ final class PacienteInfolist
                     ->label('Rango legal')
                     ->badge()
                     ->state(fn (Persona $record): ?RangoEdad => $record->rangoDeEdadEn(now()))
+                    ->placeholder('Sin fecha de nacimiento')
                     ->formatStateUsing(fn (?RangoEdad $state): string => $state?->etiqueta() ?? 'Sin fecha de nacimiento')
                     ->color(fn (?RangoEdad $state): string => $state?->color() ?? 'gray'),
 

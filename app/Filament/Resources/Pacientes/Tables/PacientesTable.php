@@ -126,23 +126,38 @@ final class PacientesTable
                         $clave = NormalizadorDeTexto::clave($termino);
                         $digitos = preg_replace('/\D+/', '', $termino) ?? '';
 
-                        $consulta->where(function (Builder $q) use ($clave, $digitos): void {
-                            /*
-                             * `%>` compara contra la MEJOR PALABRA del
-                             * nombre y `%` contra el nombre completo. Los
-                             * dos hacen falta: con `%` solo, un término
-                             * corto contra un nombre largo da similitud
-                             * baja y el paciente no aparece.
-                             */
-                            $q->whereRaw('nombre_busqueda %> ?', [$clave])
-                                ->orWhereRaw('nombre_busqueda % ?', [$clave]);
+                        /*
+                         * Un solo whereRaw con los parentesis escritos a
+                         * mano, y NO un where(Closure) anidado.
+                         *
+                         * El cierre anidado revienta acá: Filament ya
+                         * envuelve los filtros en su propio grupo y el
+                         * builder que llega no siempre trae el modelo
+                         * asociado, asi que Eloquent falla al abrir un
+                         * segundo nivel ("newQueryWithoutRelationships()
+                         * on null"). Se vio en el navegador, no en las
+                         * pruebas: el filtro solo se arma dentro de una
+                         * peticion Livewire.
+                         *
+                         * `%>` compara contra la MEJOR PALABRA del nombre
+                         * y `%` contra el nombre completo. Los dos hacen
+                         * falta: con `%` solo, un termino corto contra un
+                         * nombre largo da similitud baja y el paciente no
+                         * aparece.
+                         */
+                        $condiciones = 'nombre_busqueda %> ? OR nombre_busqueda % ?';
+                        $valores = [$clave, $clave];
 
-                            if ($digitos !== '') {
-                                $q->orWhereHas('identificadores', function (Builder $i) use ($digitos): void {
-                                    $i->where('valor', 'like', $digitos.'%');
-                                });
-                            }
-                        });
+                        if ($digitos !== '') {
+                            $condiciones .= ' OR EXISTS ('
+                                .'SELECT 1 FROM persona_identificadores pi '
+                                .'WHERE pi.persona_id = personas.id '
+                                .'AND pi.deleted_at IS NULL '
+                                .'AND pi.valor LIKE ?)';
+                            $valores[] = $digitos.'%';
+                        }
+
+                        $consulta->whereRaw('('.$condiciones.')', $valores);
 
                         $consulta->orderByRaw('similarity(nombre_busqueda, ?) desc', [$clave]);
                     })

@@ -87,9 +87,9 @@ class CreatePaciente extends CreateRecord
                 ->title('Este paciente ya parece estar registrado')
                 ->body(
                     $e->coincidencias
-                        ->map(fn (Coincidencia $c): string => '• '.$c->resumen())
-                        ->implode("\n")
-                    ."\n\nBuscalo en el listado y abrí su expediente en vez de crear otro."
+                        ->map(fn (Coincidencia $c): string => $c->resumen())
+                        ->implode(' | ')
+                    .'  ·  Buscalo en el listado y abrí su expediente en vez de crear otro.'
                 )
                 ->send();
 

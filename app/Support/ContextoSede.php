@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use App\Models\Sede;
 use App\Models\User;
 use BezhanSalleh\FilamentShield\Support\Utils as ShieldUtils;
 use Illuminate\Support\Facades\Auth;
@@ -56,7 +57,38 @@ final class ContextoSede
         /** @var int|null $propia */
         $propia = $usuario->getAttribute('sede_id');
 
-        return $propia;
+        if (is_int($propia)) {
+            return $propia;
+        }
+
+        return self::unicaSedeVigente();
+    }
+
+    /**
+     * Ultimo recurso: si el hospital tiene UNA sola sede vigente, es esa.
+     *
+     * Existe por un caso que aparecio apenas se uso el panel: direccion y
+     * soporte pueden ver TODAS las sedes, asi que no tienen `sede_id`
+     * propio, y mientras no exista el selector de sede en el panel no hay
+     * forma de que elijan una. El resultado era que el unico usuario que
+     * puede hacer todo no podia registrar un paciente.
+     *
+     * ⚠️ Solo devuelve algo cuando hay EXACTAMENTE una sede vigente. Con
+     * dos, esto deja de responder a proposito: ahi ya no hay un default
+     * obvio, y adivinar es como se termina con el expediente de un
+     * paciente colgando de la sede equivocada. El dia que se abra la
+     * segunda sede, este metodo devuelve null y el sistema exige elegir.
+     */
+    private static function unicaSedeVigente(): ?int
+    {
+        /** @var list<int> $vigentes */
+        $vigentes = Sede::query()
+            ->vigentesEn(now())
+            ->limit(2)
+            ->pluck('id')
+            ->all();
+
+        return count($vigentes) === 1 ? $vigentes[0] : null;
     }
 
     /**
