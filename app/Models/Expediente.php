@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Domain\Enums\EstadoExpediente;
 use App\Models\Concerns\BelongsToSede;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\ExpedienteFactory;
@@ -42,6 +43,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class Expediente extends Model
 {
     use BelongsToSede;
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<ExpedienteFactory> */
@@ -59,6 +61,14 @@ class Expediente extends Model
         'ultima_atencion_el',
         'ubicacion_fisica',
     ];
+
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['numero', 'ubicacion_fisica'];
+    }
 
     /**
      * @return array<string, string>

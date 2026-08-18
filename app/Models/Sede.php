@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\SedeFactory;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -46,6 +46,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Sede extends Model
 {
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<SedeFactory> */
@@ -67,6 +68,27 @@ class Sede extends Model
         'vigencia_desde',
         'vigencia_hasta',
     ];
+
+    /**
+     * Reemplaza al mutator `codigo()` que vivia aca.
+     *
+     * Eran dos mecanismos para la misma regla; ahora es uno solo y cubre
+     * ademas nombre, razon social y direccion. Fuera de la lista quedan
+     * email, telefono, rtn y codigo_establecimiento: son numeros o
+     * identificadores de un tercero, no texto nuestro.
+     *
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return [
+            'codigo',
+            'nombre',
+            'razon_social',
+            'registro_sesal',
+            'direccion',
+        ];
+    }
 
     /**
      * @return array<string, string>
@@ -108,26 +130,6 @@ class Sede extends Model
 
         return $this->vigencia_hasta === null
             || $this->vigencia_hasta->greaterThanOrEqualTo($fecha);
-    }
-
-    /**
-     * Tercera capa de la defensa del §10.4.
-     *
-     * El macro `->mayusculas()` cubre el formulario. Este mutator cubre
-     * todo lo demás: seeders, imports de catálogo, comandos de consola y
-     * cualquier código que escriba directo al modelo. El formulario no es
-     * la única puerta.
-     *
-     * mb_strtoupper con UTF-8 explícito, no strtoupper: "peña" quedaría
-     * "PEñA" y el catálogo se ve roto.
-     *
-     * @return Attribute<string, string>
-     */
-    protected function codigo(): Attribute
-    {
-        return Attribute::make(
-            set: fn (string $value): string => mb_strtoupper(trim($value), 'UTF-8'),
-        );
     }
 
     /**

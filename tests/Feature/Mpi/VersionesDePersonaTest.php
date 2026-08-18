@@ -30,7 +30,7 @@ it('guarda la foto completa de los datos, no solo el cambio', function (): void 
     $version = versionDe($persona, 1);
 
     expect($version->datos)->toHaveKey('primer_apellido')
-        ->and($version->datos['primer_apellido'])->toBe('Fuentes')
+        ->and($version->datos['primer_apellido'])->toBe('FUENTES')
         ->and($version->datos)->toHaveKey('fecha_nacimiento');
 })->note('Solo el diff obliga a reconstruir el estado sumando todas las versiones anteriores; basta con que una se haya guardado mal para que la reconstrucción mienta sin avisar.');
 
@@ -49,7 +49,7 @@ it('reconstruye el apellido que llevaba la factura de hace dos anios', function 
         ->first();
 
     expect($alMomentoDeFacturar?->datos['apellido_casada'])->toBeNull()
-        ->and($persona->fresh()?->apellido_casada)->toBe('Villatoro');
+        ->and($persona->fresh()?->apellido_casada)->toBe('VILLATORO');
 })->note('La factura del año pasado salió con el apellido de soltera y el SAR la puede auditar: tiene que reimprimirse exactamente igual que se emitió.');
 
 it('la base impide modificar una version historica', function (): void {

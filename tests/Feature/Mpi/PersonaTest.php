@@ -78,8 +78,8 @@ it('encuentra por apellido aunque se escriba sin la enie', function (): void {
 
     $encontradas = Persona::buscar('pena')->pluck('primer_apellido')->all();
 
-    expect($encontradas)->toContain('Peña')
-        ->and($encontradas)->not->toContain('López');
+    expect($encontradas)->toContain('PEÑA')
+        ->and($encontradas)->not->toContain('LÓPEZ');
 })->note('Un LIKE no resuelve esto: el teclado de admisión no siempre tiene ñ y nadie escribe los acentos.');
 
 it('encuentra con el nombre completo mal digitado', function (): void {

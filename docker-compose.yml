@@ -40,6 +40,24 @@ services:
     image: postgres:18-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-hla}_postgres
     restart: unless-stopped
+    # ⚠️ max_locks_per_transaction NO es una optimización: es un requisito
+    # de un esquema particionado.
+    #
+    # El valor por defecto (64) dimensiona una tabla de locks compartida
+    # que alcanza para un esquema plano. Acá cada tabla particionada
+    # —accesos_expediente hoy; kardex, encuentros y cargos mañana— aporta
+    # una relación por partición y otras tantas por sus índices, y
+    # cualquier operación que las toque todas a la vez (un DROP en
+    # cascada, un VACUUM FULL, un pg_dump con muchas tablas) agota la
+    # tabla y devuelve "out of shared memory".
+    #
+    # Se cambia acá y no con ALTER SYSTEM porque exige reiniciar el
+    # servidor: dejarlo en el compose es lo que garantiza que producción
+    # arranque con el mismo valor que desarrollo.
+    command:
+      - postgres
+      - -c
+      - max_locks_per_transaction=512
     environment:
       POSTGRES_DB: ${DB_DATABASE:-hospital_los_angeles}
       POSTGRES_USER: ${DB_USERNAME:-postgres}

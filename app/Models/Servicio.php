@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Domain\Enums\TipoServicio;
 use App\Models\Concerns\BelongsToSede;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\ServicioFactory;
@@ -35,6 +36,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class Servicio extends Model
 {
     use BelongsToSede;
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<ServicioFactory> */
@@ -52,6 +54,14 @@ class Servicio extends Model
         'vigencia_desde',
         'vigencia_hasta',
     ];
+
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['codigo', 'nombre', 'centro_costo'];
+    }
 
     /**
      * @return array<string, string>

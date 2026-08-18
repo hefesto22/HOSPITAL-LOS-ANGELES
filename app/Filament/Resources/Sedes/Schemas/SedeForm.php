@@ -51,7 +51,7 @@ final class SedeForm
                         .'documento, porque quedaría un histórico con dos prefijos distintos.'
                     ),
 
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->maxLength(255)
@@ -72,7 +72,7 @@ final class SedeForm
                     )
                     ->icon('heroicon-o-receipt-percent')
                     ->schema([
-                        TextInput::make('razon_social')
+                        CampoMayusculas::make('razon_social')
                             ->label('Razón social')
                             ->required()
                             ->maxLength(255)
@@ -86,7 +86,7 @@ final class SedeForm
                             ->mask('999')
                             ->helperText('Los 3 primeros dígitos del correlativo: NNN-NNN-NN-NNNNNNNN.'),
 
-                        TextInput::make('registro_sesal')
+                        CampoMayusculas::make('registro_sesal')
                             ->label('Registro / habilitación SESAL')
                             ->maxLength(255),
                     ])
@@ -95,7 +95,7 @@ final class SedeForm
                 Section::make('Contacto')
                     ->icon('heroicon-o-map-pin')
                     ->schema([
-                        TextInput::make('direccion')
+                        CampoMayusculas::make('direccion')
                             ->label('Dirección')
                             ->maxLength(255)
                             ->columnSpanFull(),

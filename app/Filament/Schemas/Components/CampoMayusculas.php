@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Schemas\Components;
 
+use App\Support\TextoCanonico;
 use Filament\Forms\Components\TextInput;
 
 /**
@@ -17,10 +18,10 @@ use Filament\Forms\Components\TextInput;
  *
  * Devuelve un TextInput, así que se encadena igual que cualquier campo:
  *
- *   CampoMayusculas::make('codigo')
- *       ->label('Código')
+ *   CampoMayusculas::make('nombre')
+ *       ->label('Nombre')
  *       ->required()
- *       ->maxLength(10)
+ *       ->maxLength(60)
  *
  * ─────────────────────────────────────────────────────────────────────
  * TRIPLE DEFENSA — cada capa tapa un hueco de la anterior
@@ -28,14 +29,17 @@ use Filament\Forms\Components\TextInput;
  *
  *  1. **CSS `text-transform`** — el usuario ve mayúsculas mientras
  *     escribe. Es SOLO visual: el valor enviado sigue siendo el tecleado.
- *  2. **`dehydrateStateUsing` con `mb_strtoupper`** — convierte de verdad
- *     antes de guardar, con UTF-8 explícito. `strtoupper()` a secas NO
- *     convierte "ñ" ni las vocales acentuadas: "peña" quedaría "PEñA".
- *  3. **Mutator en el modelo** — el formulario no es la única puerta. Un
- *     import de catálogo, un seeder o un comando escriben directo.
+ *  2. **`dehydrateStateUsing`** — convierte de verdad antes de guardar,
+ *     y de paso colapsa espacios y manda el vacío a nulo.
+ *  3. **`GuardaEnMayusculas` en el modelo** — el formulario no es la
+ *     única puerta. Un import de catálogo, un seeder o un comando
+ *     escriben directo, y ahí la capa 2 no existe.
  *
- * ⚠️ NO USAR en nombres de personas, correos, contraseñas, códigos de
- * barras, ni códigos LOINC / ATC / CIE-10.
+ * Las tres delegan en `App\Support\TextoCanonico`, que es donde vive la
+ * regla. Tres copias de la misma lógica es cómo empiezan a diferir.
+ *
+ * ⚠️ NO USAR en correos, contraseñas, notas clínicas, códigos de barras,
+ * ni códigos LOINC / ATC / CIE-10.
  *
  * Y sobre todo NO en unidades de dosis: **`mg` y `Mg` no son lo mismo, y
  * en una dosis esa diferencia mata.**
@@ -47,9 +51,7 @@ final class CampoMayusculas
         return TextInput::make($name)
             ->extraInputAttributes(['style' => 'text-transform: uppercase'])
             ->dehydrateStateUsing(
-                fn (?string $state): ?string => $state === null
-                    ? null
-                    : mb_strtoupper(trim($state), 'UTF-8')
+                fn (?string $state): ?string => TextoCanonico::mayusculas($state)
             );
     }
 }

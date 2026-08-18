@@ -56,7 +56,7 @@ it('la version 1 guarda lo que quedo en la base, no lo que se intento guardar', 
 
     $version = PersonaVersion::query()->where('version', 1)->first();
 
-    expect($version?->datos['primer_apellido'])->toBe('Peña')
+    expect($version?->datos['primer_apellido'])->toBe('PEÑA')
         ->and($version?->motivo)->toBe('Registro inicial del paciente');
 });
 
@@ -107,7 +107,7 @@ it('la excepcion trae los candidatos para no tener que volver a buscar', functio
         expect(false)->toBeTrue();
     } catch (PosibleDuplicadoException $e) {
         expect($e->coincidencias)->toHaveCount(1)
-            ->and($e->coincidencias->first()?->resumen())->toContain('Peña Cruz, José Antonio');
+            ->and($e->coincidencias->first()?->resumen())->toContain('PEÑA CRUZ, JOSÉ ANTONIO');
     }
 })->note('Una excepción que solo dice "duplicado" obliga a buscar otra vez para saber contra quién chocó, con el paciente esperando en el mostrador.');
 

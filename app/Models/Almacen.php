@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Domain\Enums\TipoAlmacen;
 use App\Models\Concerns\BelongsToSede;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\AlmacenFactory;
@@ -34,6 +35,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class Almacen extends Model
 {
     use BelongsToSede;
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<AlmacenFactory> */
@@ -54,6 +56,14 @@ class Almacen extends Model
         'vigencia_desde',
         'vigencia_hasta',
     ];
+
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['codigo', 'nombre'];
+    }
 
     /**
      * @return array<string, string>

@@ -10,7 +10,6 @@ use App\Filament\Schemas\Components\SedeField;
 use App\Models\Servicio;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
@@ -49,7 +48,7 @@ final class ServicioForm
                     ->disabledOn('edit')
                     ->helperText('Único dentro de la sede. Dos sedes pueden tener cada una su EMERG.'),
 
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->maxLength(255),

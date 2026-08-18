@@ -9,7 +9,6 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\SedeField;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
@@ -50,7 +49,7 @@ final class AlmacenForm
                     ->disabledOn('edit')
                     ->helperText('Único dentro de la sede.'),
 
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->maxLength(255),

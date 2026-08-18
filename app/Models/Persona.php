@@ -8,6 +8,7 @@ use App\Domain\Enums\Genero;
 use App\Domain\Enums\PrecisionFechaNacimiento;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Enums\SexoBiologico;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Support\NormalizadorDeTexto;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
@@ -65,6 +66,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
  */
 class Persona extends Model
 {
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<PersonaFactory> */
@@ -95,6 +97,33 @@ class Persona extends Model
         'telefono_alterno',
         'email',
     ];
+
+    /**
+     * Campos que se guardan en MAYUSCULAS (App\Support\TextoCanonico).
+     *
+     * Fuera de la lista quedan, a proposito:
+     *   - email y telefono, que no son texto libre sino identificadores
+     *     de un tercero;
+     *   - nota_identificacion, que es texto libre descriptivo ("varon,
+     *     ~40 anios, tatuaje en antebrazo") y en mayusculas se vuelve
+     *     ilegible, igual que una nota clinica.
+     *
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return [
+            'primer_nombre',
+            'segundo_nombre',
+            'primer_apellido',
+            'segundo_apellido',
+            'apellido_casada',
+            'nacionalidad',
+            'departamento',
+            'municipio',
+            'direccion',
+        ];
+    }
 
     /**
      * El UUID va en su propia columna; la llave primaria sigue siendo el

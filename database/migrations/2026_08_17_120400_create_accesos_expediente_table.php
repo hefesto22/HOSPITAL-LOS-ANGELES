@@ -124,11 +124,33 @@ return new class extends Migration
             WHERE es_break_the_glass = true AND revisado_en IS NULL
         SQL);
 
-        // ── Particiones ─────────────────────────────────────────────────
-        // Del inicio del año en curso hasta 12 meses adelante, más DEFAULT.
-        $inicio = now()->startOfYear()->startOfMonth();
+        /*
+         * ── Particiones ────────────────────────────────────────────────
+         *
+         * Ventana corta —el mes actual y seis hacia adelante— y no dos
+         * años, aunque crearlas todas de una vez parezca más seguro.
+         *
+         * CADA PARTICIÓN ES UNA TABLA, con su índice primario, su BRIN y
+         * su índice parcial: unas cuatro relaciones cada una. Veinticinco
+         * particiones son cien relaciones que `migrate:fresh` borra en UN
+         * SOLO statement, tomando un ACCESS EXCLUSIVE lock por cada una.
+         * Con `pest --parallel` eso lo hacen catorce procesos a la vez
+         * contra la misma instancia, y la tabla de locks de PostgreSQL
+         * —que es compartida y se dimensiona al arrancar— se agota:
+         *
+         *   SQLSTATE[53200]: out of shared memory
+         *   HINT: You might need to increase "max_locks_per_transaction"
+         *
+         * Nada se pierde por acortar la ventana: la partición DEFAULT
+         * existe justamente para que un INSERT fuera de rango no falle
+         * nunca, y el comando `sihla:crear-particiones --meses=6` la
+         * mantiene abierta de ahí en adelante. Esta migración es, ni más
+         * ni menos, la primera corrida de ese comando — por eso usa la
+         * misma ventana que él.
+         */
+        $inicio = now()->startOfMonth();
 
-        for ($i = 0; $i < 24; $i++) {
+        for ($i = 0; $i <= 6; $i++) {
             $desde = $inicio->copy()->addMonths($i);
             $hasta = $desde->copy()->addMonth();
 
