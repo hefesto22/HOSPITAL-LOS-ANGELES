@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Enums\NivelDeCoincidencia;
 use App\Domain\Enums\TipoIdentificador;
+use App\Domain\Exceptions\ValueObjectInvalidoException;
 use App\Domain\ValueObjects\DatosDePaciente;
 use App\Domain\ValueObjects\DocumentoDeIdentidad;
 use App\Models\Persona;
@@ -53,7 +54,9 @@ it('bloquea cuando el DNI ya esta registrado', function (): void {
     ]);
 
     $coincidencias = detector()->buscar(datosDe(
-        'Otro', 'Nombre', null,
+        'Otro',
+        'Nombre',
+        null,
         [new DocumentoDeIdentidad(TipoIdentificador::Dni, '0801-1990-12345')],
     ));
 
@@ -72,9 +75,11 @@ it('no muestra el numero completo del documento en el aviso', function (): void 
     ]);
 
     $razon = detector()->buscar(datosDe(
-        'Otro', 'Nombre', null,
+        'Otro',
+        'Nombre',
+        null,
         [new DocumentoDeIdentidad(TipoIdentificador::Dni, '0801199012345')],
-    ))->first()?->razon ?? '';
+    ))->first()->razon ?? '';
 
     expect($razon)->toContain('2345')
         ->and($razon)->not->toContain('0801199012345');
@@ -82,7 +87,7 @@ it('no muestra el numero completo del documento en el aviso', function (): void 
 
 it('lleva al sobreviviente cuando el documento estaba en una persona fusionada', function (): void {
     $sobreviviente = Persona::factory()->create();
-    $duplicada     = Persona::factory()->create();
+    $duplicada = Persona::factory()->create();
 
     PersonaIdentificador::query()->create([
         'persona_id' => $duplicada->getKey(),
@@ -91,11 +96,13 @@ it('lleva al sobreviviente cuando el documento estaba en una persona fusionada',
     ]);
 
     $duplicada->merged_into = $sobreviviente->getKey();
-    $duplicada->merged_at   = now();
+    $duplicada->merged_at = now();
     $duplicada->save();
 
     $coincidencia = detector()->buscar(datosDe(
-        'Quien', 'Sea', null,
+        'Quien',
+        'Sea',
+        null,
         [new DocumentoDeIdentidad(TipoIdentificador::Dni, '0801199012345')],
     ))->first();
 
@@ -113,7 +120,12 @@ it('avisa sin bloquear cuando solo se parece el nombre', function (): void {
         ->create(['fecha_nacimiento' => '1978-03-03']);
 
     $coincidencias = detector()->buscar(datosDe(
-        'Juan', 'Perez', now()->setDate(1990, 1, 1), [], 'Carlos', 'Lopez',
+        'Juan',
+        'Perez',
+        now()->setDate(1990, 1, 1),
+        [],
+        'Carlos',
+        'Lopez',
     ));
 
     expect($coincidencias)->toHaveCount(1)
@@ -126,7 +138,12 @@ it('sube el nivel cuando ademas coincide la fecha de nacimiento', function (): v
         ->create(['fecha_nacimiento' => '1978-03-03']);
 
     $coincidencias = detector()->buscar(datosDe(
-        'Juan', 'Perez', now()->setDate(1978, 3, 3), [], 'Carlos', 'Lopez',
+        'Juan',
+        'Perez',
+        now()->setDate(1978, 3, 3),
+        [],
+        'Carlos',
+        'Lopez',
     ));
 
     expect($coincidencias->first()?->nivel)->toBe(NivelDeCoincidencia::Alta)
@@ -138,7 +155,12 @@ it('no descarta al candidato porque la fecha no coincida', function (): void {
         ->create(['fecha_nacimiento' => '1978-03-03']);
 
     $coincidencias = detector()->buscar(datosDe(
-        'Juan', 'Perez', now()->setDate(1978, 3, 30), [], 'Carlos', 'Lopez',
+        'Juan',
+        'Perez',
+        now()->setDate(1978, 3, 30),
+        [],
+        'Carlos',
+        'Lopez',
     ));
 
     expect($coincidencias)->toHaveCount(1);
@@ -173,9 +195,12 @@ it('no repite a la misma persona cuando coincide por documento y por nombre', fu
     ]);
 
     $coincidencias = detector()->buscar(datosDe(
-        'José', 'Peña', null,
+        'José',
+        'Peña',
+        null,
         [new DocumentoDeIdentidad(TipoIdentificador::Dni, '0801199012345')],
-        'Antonio', 'Cruz',
+        'Antonio',
+        'Cruz',
     ));
 
     expect($coincidencias)->toHaveCount(1)
@@ -184,9 +209,9 @@ it('no repite a la misma persona cuando coincide por documento y por nombre', fu
 
 it('rechaza un DNI con longitud equivocada antes de llegar a la base', function (): void {
     new DocumentoDeIdentidad(TipoIdentificador::Dni, '08011990123');
-})->throws(App\Domain\Exceptions\ValueObjectInvalidoException::class);
+})->throws(ValueObjectInvalidoException::class);
 
 it('exige el pais de emision de un pasaporte', function (): void {
     new DocumentoDeIdentidad(TipoIdentificador::Pasaporte, 'A1234567');
-})->throws(App\Domain\Exceptions\ValueObjectInvalidoException::class)
+})->throws(ValueObjectInvalidoException::class)
     ->note('El mismo número de pasaporte puede existir en dos países; sin el país, el segundo turista choca contra el primero.');

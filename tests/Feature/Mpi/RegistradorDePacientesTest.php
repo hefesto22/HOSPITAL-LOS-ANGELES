@@ -163,7 +163,7 @@ it('permite registrar dos NN la misma noche', function (): void {
 */
 
 it('abre expediente a una persona que ya existe', function (): void {
-    $sede    = Sede::factory()->create(['codigo' => 'HLA']);
+    $sede = Sede::factory()->create(['codigo' => 'HLA']);
     $persona = Persona::factory()->create();
 
     $expediente = registrador()->abrirExpedienteEn($persona, $sede);
@@ -173,7 +173,7 @@ it('abre expediente a una persona que ya existe', function (): void {
 })->note('Es el camino de quien estaba registrado como acompañante y ahora se enferma.');
 
 it('no abre dos expedientes en la misma sede', function (): void {
-    $sede    = Sede::factory()->create(['codigo' => 'HLA']);
+    $sede = Sede::factory()->create(['codigo' => 'HLA']);
     $persona = Persona::factory()->create();
 
     $primero = registrador()->abrirExpedienteEn($persona, $sede);

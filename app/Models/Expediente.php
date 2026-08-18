@@ -27,14 +27,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * registro a medias que después nadie puede explicar (§11: los Services
  * son la única puerta de escritura).
  *
- * @property int                  $id
- * @property int                  $sede_id
- * @property int                  $persona_id
- * @property string               $numero
- * @property CarbonInterface      $abierto_el
- * @property EstadoExpediente     $estado
+ * @property int $id
+ * @property int $sede_id
+ * @property int $persona_id
+ * @property string $numero
+ * @property CarbonInterface $abierto_el
+ * @property EstadoExpediente $estado
  * @property CarbonInterface|null $ultima_atencion_el
- * @property string|null          $ubicacion_fisica
+ * @property string|null $ubicacion_fisica
  * @property CarbonInterface|null $created_at
  * @property CarbonInterface|null $updated_at
  * @property CarbonInterface|null $deleted_at
@@ -94,7 +94,7 @@ class Expediente extends Model
     public function registrarAtencion(CarbonInterface $momento): void
     {
         $this->ultima_atencion_el = $momento;
-        $this->estado             = EstadoExpediente::resolverPara(
+        $this->estado = EstadoExpediente::resolverPara(
             $momento,
             $this->abierto_el,
             $momento,

@@ -19,8 +19,8 @@ use Carbon\CarbonInterface;
  */
 enum EstadoExpediente: string
 {
-    case Activo    = 'activo';
-    case Pasivo    = 'pasivo';
+    case Activo = 'activo';
+    case Pasivo = 'pasivo';
     case Depurable = 'depurable';
 
     /**

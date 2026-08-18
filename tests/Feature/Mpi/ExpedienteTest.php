@@ -10,7 +10,7 @@ use Illuminate\Database\QueryException;
 
 it('no permite dos expedientes de la misma persona en la misma sede', function (): void {
     $persona = Persona::factory()->create();
-    $sede    = Sede::factory()->create();
+    $sede = Sede::factory()->create();
 
     Expediente::factory()->create(['persona_id' => $persona->getKey(), 'sede_id' => $sede->getKey()]);
     Expediente::factory()->create(['persona_id' => $persona->getKey(), 'sede_id' => $sede->getKey()]);
@@ -34,8 +34,8 @@ it('no permite dos expedientes con el mismo numero', function (): void {
 
 it('resuelve el estado de archivo contra la fecha que se le pasa', function (): void {
     $reciente = Expediente::factory()->create(['ultima_atencion_el' => now()->subYears(2)]);
-    $viejo    = Expediente::factory()->pasivo()->create();
-    $antiguo  = Expediente::factory()->depurable()->create();
+    $viejo = Expediente::factory()->pasivo()->create();
+    $antiguo = Expediente::factory()->depurable()->create();
 
     expect($reciente->estadoEn(now()))->toBe(EstadoExpediente::Activo)
         ->and($viejo->estadoEn(now()))->toBe(EstadoExpediente::Pasivo)

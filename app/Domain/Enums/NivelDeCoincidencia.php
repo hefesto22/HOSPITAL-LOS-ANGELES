@@ -28,8 +28,8 @@ namespace App\Domain\Enums;
 enum NivelDeCoincidencia: string
 {
     case Documento = 'documento';
-    case Alta      = 'alta';
-    case Media     = 'media';
+    case Alta = 'alta';
+    case Media = 'media';
 
     /**
      * ¿Esta coincidencia impide crear una persona nueva?
