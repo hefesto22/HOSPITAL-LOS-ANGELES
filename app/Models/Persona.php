@@ -192,6 +192,23 @@ class Persona extends Model
     }
 
     /**
+     * El documento que se muestra junto al nombre en un listado.
+     *
+     * Prefiere el principal, que es con el que se factura. Si no hay
+     * ninguno devuelve null en vez de una cadena vacia: la diferencia
+     * importa porque "sin documento" es un estado valido y frecuente —el
+     * NN, el recien nacido— y no un dato faltante que alguien deba ir a
+     * completar.
+     */
+    public function identificadorVisible(): ?string
+    {
+        $principal = $this->identificadores->firstWhere('es_principal', true)
+            ?? $this->identificadores->first();
+
+        return $principal?->formateado();
+    }
+
+    /**
      * La misma clave que calculó PostgreSQL, pero desde PHP.
      *
      * Existe para poder comprobar en una prueba que los dos lados no se

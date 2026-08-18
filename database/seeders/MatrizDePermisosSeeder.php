@@ -61,9 +61,9 @@ class MatrizDePermisosSeeder extends Seeder
         ],
 
         /*
-         * Los roles operativos todavía no tienen Resources propios. Sus
-         * permisos aparecen cuando se construya su módulo:
-         *   admision    → pacientes, encuentros, camas
+         * Los módulos que todavía no existen no otorgan nada. Sus
+         * permisos aparecen cuando se construya cada uno:
+         *   admision    → encuentros, camas
          *   caja        → cuentas, facturas, notas de crédito, cierre
          *   medico      → notas, órdenes, prescripción
          *   enfermeria  → signos vitales, MAR, censo
@@ -76,14 +76,60 @@ class MatrizDePermisosSeeder extends Seeder
          * hasta que su módulo exista. Eso es correcto: mejor un panel
          * vacío que un permiso concedido por descuido.
          */
-        'admision'    => [],
-        'caja'        => [],
-        'medico'      => [],
-        'enfermeria'  => [],
-        'farmacia'    => [],
-        'laboratorio' => [],
-        'imagenes'    => [],
-        'bodega'      => [],
+        /*
+         * PACIENTES — primer modulo operativo con Resource propio.
+         *
+         * Registran admision Y enfermeria. La segunda no es una
+         * concesion: si solo admision pudiera, la enfermera de turno que
+         * recibe a un accidentado a las 3 de la manana terminaria usando
+         * la clave de otro, y la bitacora dejaria de servir para lo unico
+         * que existe — saber quien hizo que.
+         *
+         * El resto de los roles clinicos y caja solo LEEN: necesitan
+         * saber a quien atienden o a quien facturan, no crear identidades.
+         * Bodega no aparece: nunca ve expediente (§1.4).
+         *
+         * Se listan dos palabras clave —paciente y persona— porque Shield
+         * deriva el nombre del permiso del Resource o del modelo segun la
+         * version, y atarse a una sola produce un seeder que "corre bien"
+         * dejando al rol sin permisos, en silencio.
+         */
+        'admision' => [
+            'paciente' => ['view_any', 'view', 'create', 'update'],
+            'persona'  => ['view_any', 'view', 'create', 'update'],
+        ],
+
+        'enfermeria' => [
+            'paciente' => ['view_any', 'view', 'create', 'update'],
+            'persona'  => ['view_any', 'view', 'create', 'update'],
+        ],
+
+        'medico' => [
+            'paciente' => ['view_any', 'view'],
+            'persona'  => ['view_any', 'view'],
+        ],
+
+        'caja' => [
+            'paciente' => ['view_any', 'view'],
+            'persona'  => ['view_any', 'view'],
+        ],
+
+        'farmacia' => [
+            'paciente' => ['view_any', 'view'],
+            'persona'  => ['view_any', 'view'],
+        ],
+
+        'laboratorio' => [
+            'paciente' => ['view_any', 'view'],
+            'persona'  => ['view_any', 'view'],
+        ],
+
+        'imagenes' => [
+            'paciente' => ['view_any', 'view'],
+            'persona'  => ['view_any', 'view'],
+        ],
+
+        'bodega' => [],
     ];
 
     public function run(): void
