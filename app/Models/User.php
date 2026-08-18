@@ -37,6 +37,11 @@ class User extends Authenticatable implements FilamentUser
 
     /** @var list<string> */
     protected $fillable = [
+        // Nullable a propósito: super_admin y direccion cruzan sedes y no
+        // pertenecen a una sola (§9.L5). Los roles operativos sí la exigen,
+        // y eso se valida en el formulario, no con un NOT NULL que dejaría
+        // al sistema sin poder crear al primer administrador.
+        'sede_id',
         'name',
         'email',
         'password',
