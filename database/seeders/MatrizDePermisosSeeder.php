@@ -58,6 +58,7 @@ class MatrizDePermisosSeeder extends Seeder
         'auditoria' => [
             'activity' => ['view_any', 'view'],
             'user'     => ['view_any', 'view'],
+            'fusion'   => ['view_any', 'view'],
         ],
 
         /*
@@ -94,14 +95,23 @@ class MatrizDePermisosSeeder extends Seeder
          * version, y atarse a una sola produce un seeder que "corre bien"
          * dejando al rol sin permisos, en silencio.
          */
+        /*
+         * `fusion` incluye aprobar y deshacer, y eso NO es una
+         * contradiccion con el control de cuatro ojos: la base impide que
+         * apruebe quien propuso, asi que dos personas de admision se
+         * aprueban entre si. Si solo direccion pudiera, a las 3 de la
+         * manana no habria quien apruebe y el duplicado seguiria vivo.
+         */
         'admision' => [
             'paciente' => ['view_any', 'view', 'create', 'update'],
             'persona'  => ['view_any', 'view', 'create', 'update'],
+            'fusion'   => ['view_any', 'view', 'create', 'update'],
         ],
 
         'enfermeria' => [
             'paciente' => ['view_any', 'view', 'create', 'update'],
             'persona'  => ['view_any', 'view', 'create', 'update'],
+            'fusion'   => ['view_any', 'view', 'create'],
         ],
 
         'medico' => [

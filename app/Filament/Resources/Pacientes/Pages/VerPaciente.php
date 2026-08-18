@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Pacientes\Pages;
 
 use App\Domain\Enums\AccionDeLectura;
 use App\Domain\Enums\TipoIdentificador;
+use App\Domain\Exceptions\FusionInvalidaException;
 use App\Domain\Exceptions\PosibleDuplicadoException;
 use App\Domain\Exceptions\ValueObjectInvalidoException;
 use App\Domain\ValueObjects\Coincidencia;
@@ -14,6 +15,7 @@ use App\Filament\Resources\Pacientes\PacienteResource;
 use App\Models\Persona;
 use App\Models\PersonaIdentificador;
 use App\Services\AgregadorDeDocumentos;
+use App\Services\FusionadorDePersonas;
 use App\Support\BitacoraDeLectura;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
@@ -72,6 +74,7 @@ class VerPaciente extends ViewRecord
         return [
             $this->accionAgregarDocumento(),
             $this->accionVerificarDocumento(),
+            $this->accionProponerFusion(),
             EditAction::make()->label('Editar datos'),
         ];
     }
@@ -197,6 +200,109 @@ class VerPaciente extends ViewRecord
 
                 Notification::make()->success()->title('Documento agregado')->send();
             });
+    }
+
+    /**
+     * Proponer que este paciente y otro son la misma persona.
+     *
+     * Se propone desde ACÁ y no desde una pantalla de alta con dos
+     * selectores sueltos: quien propone tiene la ficha abierta y está
+     * mirando los datos. Una pantalla suelta invita a fusionar por nombre
+     * parecido sin abrir ninguno de los dos expedientes.
+     *
+     * Proponer no une nada. Lo aplica otra persona desde la bandeja de
+     * fusiones — ese es el control de cuatro ojos del §9.D4.
+     */
+    private function accionProponerFusion(): Action
+    {
+        return Action::make('proponerFusion')
+            ->label('Es un duplicado')
+            ->icon('heroicon-o-arrows-pointing-in')
+            ->color('gray')
+            ->visible(fn (): bool => $this->getRecord() instanceof Persona
+                && ! $this->getRecord()->estaFusionada())
+            ->modalHeading('Proponer que este paciente es un duplicado')
+            ->modalDescription(
+                'Esto NO une nada todavía: queda esperando que OTRA persona lo apruebe. Mientras '
+                .'tanto los dos pacientes siguen atendiéndose por su cuenta.'
+            )
+            ->schema([
+                Select::make('sobreviviente')
+                    ->label('¿Cuál es el expediente que queda vigente?')
+                    ->placeholder('Buscá por nombre o apellido')
+                    ->required()
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => $this->candidatos($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => Persona::query()
+                        ->whereKey($value)
+                        ->first()?->nombreParaListado())
+                    ->helperText('El otro queda apuntando a este. Es reversible.'),
+
+                Textarea::make('motivo')
+                    ->label('Por qué son la misma persona')
+                    ->placeholder('Mismo DNI y misma fecha de nacimiento; el registro de ayer se creó por error de admisión.')
+                    ->required()
+                    ->minLength(10)
+                    ->rows(3)
+                    ->helperText(
+                        'Mínimo 10 caracteres, y la base lo exige. "Duplicado" no sirve: lo que hace '
+                        .'falta dentro de dos años es saber CÓMO se comprobó.'
+                    ),
+            ])
+            ->action(function (array $data): void {
+                $duplicada = $this->getRecord();
+                $sobreviviente = Persona::query()->find($data['sobreviviente'] ?? null);
+
+                if (! $duplicada instanceof Persona || ! $sobreviviente instanceof Persona) {
+                    throw new Halt;
+                }
+
+                try {
+                    app(FusionadorDePersonas::class)->proponer(
+                        $duplicada,
+                        $sobreviviente,
+                        (string) ($data['motivo'] ?? ''),
+                    );
+                } catch (FusionInvalidaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->persistent()
+                        ->title('No se pudo proponer')
+                        ->body($e->getMessage())
+                        ->send();
+
+                    throw new Halt;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Propuesta enviada')
+                    ->body('Queda esperando que otra persona la apruebe desde la bandeja de fusiones.')
+                    ->send();
+            });
+    }
+
+    /**
+     * Candidatos a sobreviviente: se excluye al paciente actual.
+     *
+     * `Persona::buscar()` ya deja fuera a los fusionados, así que no se
+     * ofrece como sobreviviente a alguien que ya apunta a otro.
+     *
+     * @return array<int, string>
+     */
+    private function candidatos(string $termino): array
+    {
+        $actual = $this->getRecord();
+        $actualId = $actual instanceof Persona ? $actual->getKey() : null;
+
+        return Persona::buscar($termino)
+            ->reject(fn (Persona $persona): bool => $persona->getKey() === $actualId)
+            ->mapWithKeys(fn (Persona $persona): array => [
+                $persona->getKey() => $persona->nombreParaListado()
+                    .' — '
+                    .($persona->fecha_nacimiento?->format('d/m/Y') ?? 'sin fecha de nacimiento'),
+            ])
+            ->all();
     }
 
     /**
