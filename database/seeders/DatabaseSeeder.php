@@ -43,6 +43,12 @@ class DatabaseSeeder extends Seeder
             //    incluso con el paciente que menos paga (§4.5).
             MargenesObjetivoSeeder::class,
 
+            // 8. El pagador que siempre existe. Va antes de cualquier
+            //    tarifario porque el precio se resuelve SIEMPRE por
+            //    convenio: si CONTADO no existiera, una cuenta sin seguro
+            //    no tendría a quién cobrarle.
+            ConveniosSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }

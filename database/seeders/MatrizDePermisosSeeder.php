@@ -69,6 +69,12 @@ class MatrizDePermisosSeeder extends Seeder
              * no decisión del hospital.
              */
             'margen' => ['view_any', 'view'],
+            /*
+             * El convenio es la otra mitad de por qué una factura salió
+             * en ese monto: qué pagador era y bajo qué lectura del Art.
+             * 30 se le aplicó —o no— el descuento del adulto mayor.
+             */
+            'convenio' => ['view_any', 'view'],
         ],
 
         /*
@@ -122,11 +128,19 @@ class MatrizDePermisosSeeder extends Seeder
          * Equivocarse en cualquiera de los dos es un hallazgo del SAR o
          * una denuncia a la linea 115, no un dato que se corrige despues.
          */
+        /*
+         * `convenio` se LEE en admisión y en caja: la primera elige el
+         * pagador al ingreso, la segunda factura contra él. Crearlo es
+         * otra cosa — dar de alta un convenio incluye declarar sobre qué
+         * monto se le aplica el descuento del Art. 30, y esa es una
+         * decisión de dirección con respaldo legal, no del turno.
+         */
         'admision' => [
             'paciente' => ['view_any', 'view', 'create', 'update'],
             'persona'  => ['view_any', 'view', 'create', 'update'],
             'item'     => ['view_any', 'view'],
             'unidad'   => ['view_any', 'view'],
+            'convenio' => ['view_any', 'view'],
             'fusion'   => ['view_any', 'view', 'create', 'update'],
         ],
 
@@ -150,6 +164,7 @@ class MatrizDePermisosSeeder extends Seeder
             'persona'  => ['view_any', 'view'],
             'item'     => ['view_any', 'view'],
             'unidad'   => ['view_any', 'view'],
+            'convenio' => ['view_any', 'view'],
         ],
 
         'farmacia' => [
