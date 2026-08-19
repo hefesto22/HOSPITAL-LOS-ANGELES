@@ -36,6 +36,13 @@ class DatabaseSeeder extends Seeder
             //    siembran antes de que exista cualquier tarifario.
             DescuentosLegalesSeeder::class,
 
+            // 7. El margen objetivo. Va después de los descuentos porque
+            //    el precio de lista se deriva de los dos: el margen dice
+            //    cuánto tiene que dejar el ítem y el descuento máximo
+            //    dice desde qué precio hay que partir para que lo deje
+            //    incluso con el paciente que menos paga (§4.5).
+            MargenesObjetivoSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }

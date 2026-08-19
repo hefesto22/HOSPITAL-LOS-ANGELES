@@ -288,6 +288,29 @@ final readonly class Decimal implements Stringable
         return $this->redondeado($decimales);
     }
 
+    /**
+     * La fracción escrita como porcentaje legible: 1.2 → "120 %".
+     *
+     * Sin decimales cuando son cero, porque "120.00 %" en una pantalla de
+     * decisión es ruido. Es solo para mostrar: quien decide lee esto,
+     * quien calcula usa `exacto()`.
+     */
+    public function comoPorcentaje(int $decimales = 1): string
+    {
+        $entero = $this->por('100')->redondeado($decimales);
+
+        if (! str_contains($entero, '.')) {
+            return $entero.' %';
+        }
+
+        /*
+         * El punto se quita en una segunda pasada, no en la misma máscara
+         * que los ceros: con `rtrim($entero, '0.')` el valor "100.0"
+         * perdería los tres ceros de un tirón y quedaría en "1".
+         */
+        return rtrim(rtrim($entero, '0'), '.').' %';
+    }
+
     public function __toString(): string
     {
         return $this->exacto();

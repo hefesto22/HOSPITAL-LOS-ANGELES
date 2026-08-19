@@ -61,6 +61,14 @@ class MatrizDePermisosSeeder extends Seeder
             'fusion'   => ['view_any', 'view'],
             'item'     => ['view_any', 'view'],
             'unidad'   => ['view_any', 'view'],
+            /*
+             * El margen objetivo entra a la lista de lectura porque es
+             * la mitad de la explicación de cada precio: sin verlo, un
+             * hallazgo sobre el precio de un medicamento no se puede
+             * cerrar. La otra mitad —el descuento del Art. 30— es ley,
+             * no decisión del hospital.
+             */
+            'margen' => ['view_any', 'view'],
         ],
 
         /*

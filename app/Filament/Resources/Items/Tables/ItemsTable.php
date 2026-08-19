@@ -8,6 +8,7 @@ use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
+use App\Filament\Resources\Items\Actions\CalcularPrecioAction;
 use App\Models\Item;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\IconColumn;
@@ -176,6 +177,14 @@ final class ItemsTable
                 .'de acá. Es el mismo catálogo para farmacia, laboratorio, imágenes y quirófano.'
             )
             ->recordActions([
+                /*
+                 * Solo en lo que se compra. Un honorario o una estancia
+                 * no tienen costo de entrada, así que el botón abriría un
+                 * modal que solo sabe decir que no (Ruta B del §4.1).
+                 */
+                CalcularPrecioAction::make()
+                    ->visible(fn (Item $record): bool => $record->tipo->precioDerivadoDelCosto()),
+
                 EditAction::make(),
             ])
             ->toolbarActions([]);
