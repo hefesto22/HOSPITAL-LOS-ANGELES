@@ -231,6 +231,29 @@ class Item extends Model
     }
 
     /**
+     * Los lotes de este ítem: mismo producto, distintos vencimientos.
+     *
+     * Veinte cajas que vencen en dos fechas son un ítem con dos lotes, no
+     * dos ítems. Ver el encabezado de la migración de `lotes`.
+     *
+     * @return HasMany<Lote, $this>
+     */
+    public function lotes(): HasMany
+    {
+        return $this->hasMany(Lote::class);
+    }
+
+    /**
+     * Cuánto hay, por lote y por almacén.
+     *
+     * @return HasMany<Existencia, $this>
+     */
+    public function existencias(): HasMany
+    {
+        return $this->hasMany(Existencia::class);
+    }
+
+    /**
      * La presentación que propone el formulario de compra.
      */
     public function presentacionPredeterminada(): ?ItemPresentacion

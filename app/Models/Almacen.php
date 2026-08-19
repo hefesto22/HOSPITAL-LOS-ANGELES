@@ -13,6 +13,7 @@ use Database\Factories\AlmacenFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -87,6 +88,16 @@ class Almacen extends Model
     public function servicio(): BelongsTo
     {
         return $this->belongsTo(Servicio::class);
+    }
+
+    /**
+     * Todo lo que hay guardado acá, lote por lote.
+     *
+     * @return HasMany<Existencia, $this>
+     */
+    public function existencias(): HasMany
+    {
+        return $this->hasMany(Existencia::class);
     }
 
     public function etiqueta(): string

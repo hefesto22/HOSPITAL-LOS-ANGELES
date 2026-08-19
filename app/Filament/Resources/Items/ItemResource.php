@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Items;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Pages\ListItems;
+use App\Filament\Resources\Items\RelationManagers\ExistenciasRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
@@ -132,6 +133,7 @@ class ItemResource extends Resource
         return [
             PresentacionesRelationManager::class,
             PreciosRelationManager::class,
+            ExistenciasRelationManager::class,
         ];
     }
 
