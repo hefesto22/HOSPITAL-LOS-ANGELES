@@ -115,16 +115,42 @@ return [
     | Policies
     |--------------------------------------------------------------------------
     |
-    | Shield can automatically generate Laravel policies for your resources.
-    | When merge is enabled, the methods below will be combined with any
-    | resource-specific methods you define in the resources section.
+    | ⚠️ `generate` VA EN FALSE, Y NO ES PREFERENCIA DE ESTILO.
+    |
+    | Shield genera policies donde CADA método delega en el permiso del
+    | mismo nombre: `delete()` devuelve `$authUser->can('Delete:Item')`.
+    | En este sistema eso es incorrecto por diseño: hay cosas que NO PUEDE
+    | HACER NADIE, ni siquiera dirección, tenga el permiso que tenga.
+    |
+    |   · un ítem no se borra — se le pone fecha de fin de vigencia;
+    |   · un convenio tampoco — borrarlo dejaría facturas apuntando a un
+    |     pagador inexistente, y una factura que no se puede reimprimir es
+    |     un problema ante el SAR;
+    |   · un margen objetivo no se EDITA — se cierra el vigente y se abre
+    |     uno nuevo con fecha, porque un UPDATE borraría la respuesta a
+    |     por qué ese producto se vendía a ese precio en marzo;
+    |   · una entrada de compra confirmada no se borra, y su borrador sí:
+    |     eso depende del REGISTRO, y ninguna plantilla lo puede saber.
+    |
+    | Esas reglas están escritas a mano en `app/Policies/` y son
+    | load-bearing. Con `generate => true`, un `shield:generate --all`
+    | las PISA todas en silencio y el sistema queda permitiendo borrar
+    | catálogo — que es exactamente lo que pasó una vez.
+    |
+    | Con esto en false, `shield:generate` sigue creando los permisos de
+    | los Resources nuevos —que es para lo que se lo necesita— y no toca
+    | `app/Policies/`. La policy de un Resource nuevo se escribe a mano,
+    | copiando una existente y decidiendo qué se niega siempre.
+    |
+    | El guardián de esta regla es `PoliticasDelCatalogoTest`: si alguien
+    | vuelve a poner esto en true y regenera, esos tests fallan.
     |
     */
 
     'policies' => [
         'path'     => app_path('Policies'),
         'merge'    => true,
-        'generate' => true,
+        'generate' => false,
         'methods'  => [
             'viewAny', 'view', 'create', 'update', 'delete', 'restore',
             'forceDelete', 'forceDeleteAny', 'restoreAny', 'replicate', 'reorder',

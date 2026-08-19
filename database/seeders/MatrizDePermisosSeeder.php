@@ -103,6 +103,16 @@ class MatrizDePermisosSeeder extends Seeder
             'Unidad'          => ['ViewAny', 'View'],
             'MargenObjetivo'  => ['ViewAny', 'View'],
             'Convenio'        => ['ViewAny', 'View'],
+
+            /*
+             * Las compras también, y es de lo primero que mira una
+             * auditoría: qué entró, con qué papel, quién lo cargó y
+             * quién lo confirmó. Sin verlas no se puede cerrar ningún
+             * hallazgo de inventario.
+             */
+            'Proveedor' => ['ViewAny', 'View'],
+            'Compra'    => ['ViewAny', 'View'],
+            'Recepcion' => ['ViewAny', 'View'],
         ],
 
         /*
@@ -162,10 +172,19 @@ class MatrizDePermisosSeeder extends Seeder
             'Convenio' => ['ViewAny', 'View'],
         ],
 
+        /*
+         * Farmacia LEE las compras sin poder cargarlas: es la respuesta a
+         * «¿ya llegó el pedido?», que hoy se contesta caminando hasta
+         * bodega. Cargarlas y confirmarlas es de bodega, que es quien
+         * recibe físicamente.
+         */
         'farmacia' => [
-            'Persona' => ['ViewAny', 'View'],
-            'Item'    => ['ViewAny', 'View'],
-            'Unidad'  => ['ViewAny', 'View'],
+            'Persona'   => ['ViewAny', 'View'],
+            'Item'      => ['ViewAny', 'View'],
+            'Unidad'    => ['ViewAny', 'View'],
+            'Proveedor' => ['ViewAny', 'View'],
+            'Compra'    => ['ViewAny', 'View'],
+            'Recepcion' => ['ViewAny', 'View'],
         ],
 
         'laboratorio' => [
@@ -184,10 +203,38 @@ class MatrizDePermisosSeeder extends Seeder
          * Bodega LEE el catálogo pero no lo escribe, y no ve expediente:
          * quien recibe una compra no tiene por qué saber quién está
          * internado.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * `Update:Recepcion` ES TAMBIÉN EL PERMISO DE MARCAR REVISADA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Shield genera once acciones fijas y ninguna se llama «revisar»,
+         * así que la revisión viaja en `Update`. Eso NO deja el control
+         * en manos del permiso: la base impide con un CHECK que
+         * `revisada_por` sea el mismo que `created_by`, así que dos
+         * personas de bodega se revisan entre sí — exactamente como dos
+         * de admisión se aprueban las fusiones.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * BODEGA NO VE COMPRAS, Y NO ES DESCONFIANZA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `Compra` es el registro FISCAL: qué facturó el proveedor, con
+         * cuánto ISV, en qué se gastó. Quien recibe mercadería no
+         * necesita saber a qué precio se negoció ni cuánto se le paga a
+         * cada proveedor, y una lista de gastos del hospital circulando
+         * por bodega es exactamente la clase de dato que se filtra.
+         *
+         * El proveedor sí lo da de alta bodega: es quien lo conoce, y a
+         * diferencia de un convenio, darlo de alta no declara nada legal
+         * —solo un nombre y un RTN—.
          */
         'bodega' => [
-            'Item'   => ['ViewAny', 'View'],
-            'Unidad' => ['ViewAny', 'View'],
+            'Item'      => ['ViewAny', 'View'],
+            'Unidad'    => ['ViewAny', 'View'],
+            'Almacen'   => ['ViewAny', 'View'],
+            'Proveedor' => ['ViewAny', 'View', 'Create', 'Update'],
+            'Recepcion' => ['ViewAny', 'View', 'Create', 'Update'],
         ],
     ];
 

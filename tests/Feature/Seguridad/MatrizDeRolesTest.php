@@ -33,11 +33,16 @@ use Spatie\Permission\PermissionRegistrar;
  */
 
 /**
- * Los doce sujetos que Shield genera hoy, uno por Resource registrado.
+ * Los quince sujetos que Shield genera hoy, uno por Resource registrado.
+ *
+ * Cuando se agrega un Resource nuevo hay que agregarlo acá también, o los
+ * tests de esta matriz siembran un universo de permisos más chico que el
+ * real y no verifican nada sobre el módulo nuevo.
  */
 const SUJETOS_DE_SHIELD = [
-    'Activity', 'Almacen', 'Convenio', 'FusionDePersona', 'Item',
-    'MargenObjetivo', 'Persona', 'Role', 'Sede', 'Servicio', 'Unidad', 'User',
+    'Activity', 'Almacen', 'Compra', 'Convenio', 'FusionDePersona', 'Item',
+    'MargenObjetivo', 'Persona', 'Proveedor', 'Recepcion', 'Role', 'Sede',
+    'Servicio', 'Unidad', 'User',
 ];
 
 /**
@@ -213,6 +218,45 @@ it('admision y caja leen los convenios pero no los crean', function (): void {
 
     expect($bodega->hasPermissionTo('ViewAny:Convenio'))->toBeFalse();
 })->note('Dar de alta un convenio incluye declarar sobre qué monto se le aplica el descuento del Art. 30. Esa es una decisión con respaldo legal, no del turno de las 3 de la mañana.');
+
+it('bodega recibe mercaderia pero no ve el registro fiscal de compras', function (): void {
+    sembrarPermisosComoShield();
+
+    $this->seed(MatrizDePermisosSeeder::class);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    /** @var Role $bodega */
+    $bodega = Role::findByName('bodega', 'web');
+
+    /** @var Role $auditoria */
+    $auditoria = Role::findByName('auditoria', 'web');
+
+    expect($bodega->hasPermissionTo('Create:Recepcion'))->toBeTrue()
+        ->and($bodega->hasPermissionTo('Update:Recepcion'))->toBeTrue()
+        ->and($bodega->hasPermissionTo('ViewAny:Compra'))->toBeFalse()
+        ->and($auditoria->hasPermissionTo('ViewAny:Recepcion'))->toBeTrue()
+        ->and($auditoria->hasPermissionTo('ViewAny:Compra'))->toBeTrue()
+        ->and($auditoria->hasPermissionTo('Create:Recepcion'))->toBeFalse();
+})->note('Son dos módulos distintos: bodega mete mercadería al kardex y no ve cuánto se le paga a cada proveedor. `Update:Recepcion` es también el permiso de marcar revisada, y eso no rompe los cuatro ojos porque la base impide que revise el mismo que recibió.');
+
+it('nadie puede borrar una recepcion, ni siquiera direccion', function (): void {
+    sembrarPermisosComoShield();
+
+    $this->seed(MatrizDePermisosSeeder::class);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    foreach (array_keys(RoleSeeder::ROLES) as $nombreRol) {
+        /** @var Role $rol */
+        $rol = Role::findByName($nombreRol, 'web');
+
+        expect($rol->hasPermissionTo('Delete:Recepcion'))->toBe($nombreRol === 'direccion');
+    }
+
+    /** @var Role $direccion */
+    $direccion = Role::findByName('direccion', 'web');
+
+    expect($direccion->hasPermissionTo('Delete:Recepcion'))->toBeTrue();
+})->note('Dirección se lleva el permiso por el comodín —por eso el test de «ningún permiso de borrado» sigue en verde—, pero `RecepcionPolicy::delete()` devuelve false igual: una recepción explica movimientos de un kardex append-only, así que no la borra nadie. El permiso existe y la policy lo niega, que es el patrón de todo el catálogo.');
 
 it('direccion se lleva todos los permisos que existan', function (): void {
     sembrarPermisosComoShield();

@@ -35,6 +35,25 @@ use Spatie\Permission\PermissionRegistrar;
  *
  * Los tests de la matriz no lo veían porque prueban qué permisos tiene
  * cada rol, no si alguien los consulta. Estos prueban lo segundo.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * Y YA SALVÓ EL MISMO AGUJERO UNA SEGUNDA VEZ
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Un `php artisan shield:generate --all` —corrido para crear los
+ * permisos de dos Resources nuevos— **reescribió las catorce policies**
+ * con la plantilla de Shield, donde cada método delega en el permiso del
+ * mismo nombre: `delete()` pasó a devolver `$authUser->can('Delete:Item')`
+ * en vez de `false`.
+ *
+ * O sea que dirección volvió a poder borrar el catálogo, sin un solo
+ * cambio en el código escrito a mano y sin ningún aviso. Los únicos tres
+ * tests que fallaron fueron los de acá abajo.
+ *
+ * Por eso `config/filament-shield.php` tiene ahora
+ * `policies.generate => false`: Shield crea los permisos y no toca
+ * `app/Policies/`. Si alguien lo vuelve a poner en true y regenera, esto
+ * es lo que se pone rojo.
  */
 $permisosDeLaPrueba = [
     'ViewAny:Item', 'View:Item', 'Create:Item', 'Update:Item', 'Delete:Item',

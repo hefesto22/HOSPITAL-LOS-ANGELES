@@ -12,6 +12,7 @@ use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
+use App\Support\UsuarioAutenticado;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -68,6 +69,8 @@ final class RegistradorDeMovimiento
         ?string $motivo = null,
         ?string $referencia = null,
         ?CarbonInterface $ocurridoEn = null,
+        ?Decimal $costoUnitario = null,
+        ?Decimal $costoPromedioDespues = null,
     ): MovimientoKardex {
         $this->verificar($item, $lote, $tipo, $cantidad, $motivo);
 
@@ -93,6 +96,8 @@ final class RegistradorDeMovimiento
             $motivo,
             $referencia,
             $ocurridoEn,
+            $costoUnitario,
+            $costoPromedioDespues,
             $saldo,
         ): MovimientoKardex {
             $firmada = $tipo->esEntrada() ? $cantidad : $cantidad->por('-1');
@@ -122,13 +127,23 @@ final class RegistradorDeMovimiento
                 'ocurrido_en'   => $ocurridoEn ?? now(),
 
                 /*
+                 * Nulos cuando el movimiento no tiene costo asociado: un
+                 * traslado, una devolución, o cualquiera anterior a que
+                 * el sistema costeara. Nulo significa «no se sabe», que
+                 * es la verdad; un cero significaría «costó cero», que no
+                 * lo es.
+                 */
+                'costo_unitario'         => $costoUnitario?->paraBase(6),
+                'costo_promedio_despues' => $costoPromedioDespues?->paraBase(6),
+
+                /*
                  * A mano y no con `HasAuditFields`: ese trait también
                  * escribe `updated_by` y `deleted_by`, y acá esas
                  * columnas no existen porque nada se actualiza ni se
                  * borra. Quién lo asentó es lo único que hay que saber —
                  * y en un kardex es de lo más importante que hay.
                  */
-                'created_by' => auth()->id(),
+                'created_by' => UsuarioAutenticado::id(),
             ]);
         });
 

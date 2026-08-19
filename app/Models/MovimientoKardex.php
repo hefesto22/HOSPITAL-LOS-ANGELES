@@ -44,6 +44,8 @@ use LogicException;
  * @property string|null $motivo
  * @property string|null $referencia
  * @property CarbonInterface $ocurrido_en
+ * @property string|null $costo_unitario
+ * @property string|null $costo_promedio_despues
  */
 class MovimientoKardex extends Model
 {
@@ -63,6 +65,8 @@ class MovimientoKardex extends Model
         'motivo',
         'referencia',
         'ocurrido_en',
+        'costo_unitario',
+        'costo_promedio_despues',
         'created_by',
     ];
 
@@ -134,6 +138,30 @@ class MovimientoKardex extends Model
         $cantidad = $this->cantidadDecimal();
 
         return $cantidad->esNegativo() ? $cantidad->por('-1') : $cantidad;
+    }
+
+    /**
+     * Lo que costó la unidad en ESTE movimiento, o nulo si no se sabe.
+     *
+     * Nulo y no cero: los movimientos anteriores a que el sistema
+     * costeara no tienen costo y no lo van a tener —el kardex es
+     * append-only, rellenarlos sería inventar el dato—. Un cero
+     * significaría «costó cero», que es otra cosa y pasa de verdad con
+     * las donaciones.
+     */
+    public function costoUnitarioDecimal(): ?Decimal
+    {
+        return $this->costo_unitario === null ? null : Decimal::de($this->costo_unitario);
+    }
+
+    /**
+     * El promedio ponderado que quedó vigente después de este movimiento.
+     */
+    public function costoPromedioDespuesDecimal(): ?Decimal
+    {
+        return $this->costo_promedio_despues === null
+            ? null
+            : Decimal::de($this->costo_promedio_despues);
     }
 
     public function saldoDespuesDecimal(): Decimal
