@@ -27,7 +27,13 @@ class EditItem extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            CalcularPrecioAction::make()
+            /*
+             * `true` = con botón de guardar. Llegar a esta pantalla ya
+             * exige permiso para modificar el ítem, así que la
+             * autorización queda resuelta por dónde se entró. Desde el
+             * listado la misma acción es de solo lectura.
+             */
+            CalcularPrecioAction::make(puedeGuardar: true)
                 ->visible(fn (Item $record): bool => $record->tipo->precioDerivadoDelCosto()),
         ];
     }

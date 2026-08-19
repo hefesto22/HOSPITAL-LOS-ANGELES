@@ -10,8 +10,10 @@ use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioSugerido;
 use App\Models\Item;
 use App\Services\CalculadoraDePrecioDeLista;
+use App\Services\FijadorDePrecio;
 use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Html;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
@@ -21,14 +23,22 @@ use Illuminate\Support\HtmlString;
  * «Calcular precio» — la cuenta completa, antes de decidir.
  *
  * ─────────────────────────────────────────────────────────────────────
- * PROPONE, NO GUARDA
+ * PROPONE, Y SOLO GUARDA SI SE LO PIDEN
  * ─────────────────────────────────────────────────────────────────────
  *
- * El modal no escribe nada. Muestra el precio de lista que sale del
- * costo, del margen vigente y del descuento máximo de ley, y debajo qué
- * paga y cuánto deja **cada rango de edad**. Escribirlo en el tarifario
- * es otra decisión y otra pantalla (§4.1: «la Ruta A no reemplaza al
- * tarifario: lo alimenta»).
+ * Muestra el precio de lista que sale del costo, del margen vigente y del
+ * descuento máximo de ley, y debajo qué paga y cuánto deja **cada rango
+ * de edad**. Guardar es un segundo acto deliberado, con su propio botón.
+ *
+ * Y solo se ofrece desde la ficha del ítem (`$puedeGuardar`), nunca desde
+ * el listado: llegar a la ficha ya exige permiso para modificar el ítem,
+ * así que la autorización queda resuelta por dónde se entró y no por un
+ * `can()` con el nombre del permiso escrito a mano. Desde el listado el
+ * modal es de solo lectura.
+ *
+ * Lo que escribe es una fila de tarifario sin convenio y sin sede —el
+ * precio de lista— con el motivo redactado desde la propia cuenta. §4.1:
+ * «la Ruta A no reemplaza al tarifario: lo alimenta».
  *
  * ─────────────────────────────────────────────────────────────────────
  * POR QUÉ LA TABLA DE ESCENARIOS Y NO SOLO EL PRECIO
@@ -46,16 +56,17 @@ use Illuminate\Support\HtmlString;
  */
 final class CalcularPrecioAction
 {
-    public static function make(): Action
+    public static function make(bool $puedeGuardar = false): Action
     {
-        return Action::make('calcularPrecio')
+        $accion = Action::make('calcularPrecio')
             ->label('Calcular precio')
             ->icon(Heroicon::OutlinedCalculator)
             ->color('gray')
             ->modalHeading(fn (Item $record): string => 'Precio sugerido · '.$record->nombre)
-            ->modalDescription('Esto no guarda nada: es la cuenta a la vista para decidir el precio del tarifario.')
+            ->modalDescription($puedeGuardar
+                ? 'La cuenta a la vista. Guardar escribe el precio de lista; las facturas ya emitidas no cambian.'
+                : 'Esto no guarda nada: es la cuenta a la vista para decidir el precio del tarifario.')
             ->modalWidth('2xl')
-            ->modalSubmitAction(false)
             ->modalCancelActionLabel('Cerrar')
             ->schema([
                 TextInput::make('costo')
@@ -90,6 +101,77 @@ final class CalcularPrecioAction
                  */
                 Html::make(fn (Get $get, Item $record): HtmlString => self::cuenta($record, $get('costo'))),
             ]);
+
+        if (! $puedeGuardar) {
+            return $accion->modalSubmitAction(false);
+        }
+
+        return $accion
+            ->modalSubmitActionLabel('Guardar como precio de lista')
+            ->action(function (array $data, Action $action, Item $record, FijadorDePrecio $fijador): void {
+                /** @var string $costo */
+                $costo = $data['costo'] ?? '';
+
+                try {
+                    $precio = app(CalculadoraDePrecioDeLista::class)
+                        ->para($record, Monto::de($costo), now());
+
+                    $fila = $fijador->fijar(
+                        item: $record,
+                        convenio: null,
+                        sede: null,
+                        precio: $precio->lista,
+                        motivo: self::motivo($precio, $costo),
+                        desde: now(),
+                    );
+                } catch (SihlaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo guardar el precio')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    /*
+                     * `halt()` lanza una excepción de Filament pero está
+                     * declarado `void`: el `return` explícito deja claro
+                     * que abajo no se sigue.
+                     */
+                    $action->halt();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Precio de lista fijado en '.$fila->monto()->formateado())
+                    ->body('Rige desde el '.$fila->vigencia_desde->format('d/m/Y').'. Queda en la pestaña de precios.')
+                    ->send();
+            });
+    }
+
+    /**
+     * El motivo lo redacta la cuenta, no el usuario.
+     *
+     * Es el único caso del sistema donde el motivo se genera solo, y se
+     * justifica porque acá el «por qué» ES la cuenta: costo, margen y
+     * descuento máximo, con los números del día en que se fijó. Escrito a
+     * mano quedaría peor y más tarde.
+     */
+    private static function motivo(PrecioSugerido $precio, string $costo): string
+    {
+        return sprintf(
+            'Derivado del costo L %s con margen objetivo %s y descuento máximo de ley %s: '
+            .'%s ÷ (1 − %s) = %s. El adulto mayor paga %s y deja %s.',
+            $costo,
+            $precio->margenObjetivoComoPorcentaje(),
+            $precio->descuentoMaximo->comoPorcentaje(),
+            $precio->costo->formateado(),
+            $precio->descuentoMaximo->comoPorcentaje(),
+            $precio->lista->formateado(),
+            $precio->peorEscenario()->paga->formateado(),
+            $precio->peorEscenario()->margenComoPorcentaje(),
+        );
     }
 
     private static function cuenta(Item $item, mixed $costo): HtmlString

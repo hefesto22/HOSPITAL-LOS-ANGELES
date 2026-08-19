@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Items;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Pages\ListItems;
+use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
 use App\Filament\Resources\Items\Tables\ItemsTable;
@@ -119,12 +120,18 @@ class ItemResource extends Resource
      * consulta médica no viene en caja. Ver
      * `PresentacionesRelationManager::canViewForRecord()`.
      *
+     * Los precios van en el mismo lugar y por la misma razón. Además es
+     * el único sitio donde se le puede poner precio a lo que no se
+     * compra —un honorario, una estancia, un hemograma—, que es la Ruta B
+     * del §4.1: ahí no hay costo del cual derivar, se fija a mano.
+     *
      * @return array<int, class-string>
      */
     public static function getRelations(): array
     {
         return [
             PresentacionesRelationManager::class,
+            PreciosRelationManager::class,
         ];
     }
 

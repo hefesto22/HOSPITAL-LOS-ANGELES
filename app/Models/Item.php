@@ -216,6 +216,21 @@ class Item extends Model
     }
 
     /**
+     * Todas las filas de tarifario del ítem: el precio de lista y los
+     * negociados con cada pagador, vigentes y vencidos.
+     *
+     * Los vencidos también, y a propósito: son la explicación de las
+     * facturas de ayer. Filtrar por fecha es trabajo de quien pregunta
+     * por una fecha, no de la relación.
+     *
+     * @return HasMany<Tarifario, $this>
+     */
+    public function precios(): HasMany
+    {
+        return $this->hasMany(Tarifario::class);
+    }
+
+    /**
      * La presentación que propone el formulario de compra.
      */
     public function presentacionPredeterminada(): ?ItemPresentacion

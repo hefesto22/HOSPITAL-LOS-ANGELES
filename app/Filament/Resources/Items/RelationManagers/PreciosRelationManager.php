@@ -1,0 +1,259 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Filament\Resources\Items\RelationManagers;
+
+use App\Domain\Exceptions\PrecioNoFijableException;
+use App\Domain\ValueObjects\Monto;
+use App\Models\Convenio;
+use App\Models\Item;
+use App\Models\Sede;
+use App\Models\Tarifario;
+use App\Services\FijadorDePrecio;
+use Carbon\Carbon;
+use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
+use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Table;
+
+/**
+ * Los precios de un ítem — el tarifario, visto desde el producto.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * ACÁ NO SE EDITA: SE FIJA
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * No hay botón de editar ni de borrar, igual que en márgenes objetivo.
+ * Cambiar un precio es cerrar el vigente y abrir uno nuevo con fecha: un
+ * `UPDATE` sobre la fila vigente borraría la respuesta a «¿por qué esta
+ * factura de marzo dice L 29.33?», y una factura que no se puede explicar
+ * es un problema ante el SAR.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * SE MUESTRAN TAMBIÉN LOS VENCIDOS
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Esconder los precios viejos convertiría la tabla en un campo de
+ * configuración con pasos de más. Son el historial, y es lo único que
+ * contesta por las facturas de ayer.
+ */
+class PreciosRelationManager extends RelationManager
+{
+    protected static string $relationship = 'precios';
+
+    protected static ?string $title = 'Precios';
+
+    protected static function getModelLabel(): ?string
+    {
+        return 'precio';
+    }
+
+    protected static function getPluralModelLabel(): ?string
+    {
+        return 'precios';
+    }
+
+    public function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                TextColumn::make('convenio.nombre')
+                    ->label('Pagador')
+                    ->badge()
+                    ->color(fn (Tarifario $record): string => $record->esPrecioDeLista() ? 'gray' : 'info')
+                    ->placeholder('Precio de lista')
+                    ->description(fn (Tarifario $record): ?string => $record->esPrecioDeLista()
+                        ? 'Vale para todo pagador sin precio propio'
+                        : null),
+
+                TextColumn::make('sede.nombre')
+                    ->label('Sede')
+                    ->placeholder('Todas')
+                    ->toggleable(),
+
+                TextColumn::make('precio')
+                    ->label('Precio')
+                    ->weight('bold')
+                    ->alignEnd()
+                    ->formatStateUsing(fn (Tarifario $record): string => $record->monto()->formateado())
+                    ->description('antes del ISV'),
+
+                TextColumn::make('vigencia_desde')
+                    ->label('Desde')
+                    ->date('d/m/Y')
+                    ->sortable(),
+
+                TextColumn::make('vigencia_hasta')
+                    ->label('Hasta')
+                    ->date('d/m/Y')
+                    ->placeholder('Vigente')
+                    ->badge()
+                    ->color(fn (Tarifario $record): string => $record->vigencia_hasta === null
+                        ? 'success'
+                        : 'gray'),
+
+                TextColumn::make('motivo')
+                    ->label('Por qué')
+                    ->wrap()
+                    ->toggleable(),
+            ])
+            ->defaultSort('vigencia_desde', 'desc')
+            ->paginated([10, 25])
+            ->headerActions([
+                $this->accionDeFijar(),
+            ])
+            ->recordActions([])
+            ->toolbarActions([])
+            ->emptyStateIcon('heroicon-o-banknotes')
+            ->emptyStateHeading('Este ítem todavía no se puede cobrar')
+            ->emptyStateDescription(
+                'Sin precio de lista, el resolutor se niega a inventar uno: ni el costo ni el '
+                .'último precio conocido sirven de reemplazo.'
+            );
+    }
+
+    private function accionDeFijar(): Action
+    {
+        return Action::make('fijarPrecio')
+            ->label('Fijar un precio')
+            ->icon(Heroicon::OutlinedPlus)
+            ->modalHeading('Fijar un precio nuevo')
+            ->modalDescription(
+                'El precio vigente para ese mismo pagador y sede se cierra el día anterior, y este '
+                .'arranca en la fecha que elijas. Las facturas ya emitidas no cambian.'
+            )
+            ->modalSubmitActionLabel('Fijar')
+            ->modalWidth('lg')
+            ->schema([
+                Select::make('convenio_id')
+                    ->label('Para quién')
+                    ->options(fn (): array => Convenio::query()
+                        ->orderBy('nombre')
+                        ->pluck('nombre', 'id')
+                        ->all())
+                    ->placeholder('Precio de lista (todos los pagadores)')
+                    ->native(false)
+                    ->searchable()
+                    ->helperText(
+                        'Vacío = el precio que ve cualquiera. Elegí un pagador solo si con él se '
+                        .'negoció un precio distinto para este ítem.'
+                    ),
+
+                Select::make('sede_id')
+                    ->label('En qué sede')
+                    ->options(fn (): array => Sede::query()
+                        ->orderBy('nombre')
+                        ->pluck('nombre', 'id')
+                        ->all())
+                    ->placeholder('Todas las sedes')
+                    ->native(false),
+
+                TextInput::make('precio')
+                    ->label('Precio antes del ISV')
+                    ->prefix('L')
+                    ->required()
+                    /*
+                     * `regex` y no `numeric`: `numeric` acepta "1e3", que
+                     * entra a bcmath como cero y dejaría el producto
+                     * gratis con cara de precio cargado.
+                     */
+                    ->rule('regex:/^\d{1,9}(\.\d{1,4})?$/')
+                    ->validationMessages([
+                        'regex' => 'Escribí solo el número, con punto decimal: 29.33.',
+                    ])
+                    ->helperText('El impuesto lo calcula la factura según el régimen del ítem.'),
+
+                DatePicker::make('vigencia_desde')
+                    ->label('Vigente desde')
+                    ->required()
+                    ->default(now())
+                    ->native(false)
+                    ->displayFormat('d/m/Y')
+                    ->helperText('Tiene que ser posterior a todos los precios que ya existen para ese pagador.'),
+
+                Textarea::make('motivo')
+                    ->label('Por qué')
+                    ->required()
+                    ->minLength(10)
+                    ->rows(3)
+                    ->helperText(
+                        'Es lo que se lee cuando alguien pregunte, dentro de dos años, por qué '
+                        .'este producto se vendía a este precio.'
+                    ),
+            ])
+            ->action(function (array $data, Action $action, FijadorDePrecio $fijador): void {
+                $item = $this->getOwnerRecord();
+
+                if (! $item instanceof Item) {
+                    return;
+                }
+
+                /** @var string $precio */
+                $precio = $data['precio'];
+
+                /** @var string $motivo */
+                $motivo = $data['motivo'];
+
+                /** @var string $desde */
+                $desde = $data['vigencia_desde'];
+
+                try {
+                    $fila = $fijador->fijar(
+                        item: $item,
+                        convenio: self::convenioDe($data['convenio_id'] ?? null),
+                        sede: self::sedeDe($data['sede_id'] ?? null),
+                        precio: Monto::de($precio),
+                        motivo: $motivo,
+                        desde: Carbon::parse($desde),
+                    );
+                } catch (PrecioNoFijableException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo fijar el precio')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    /*
+                     * `halt()` lanza una excepción de Filament pero está
+                     * declarado `void`: el `return` explícito deja claro
+                     * —al analizador y a quien lea— que abajo no se sigue.
+                     */
+                    $action->halt();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Precio fijado en '.$fila->monto()->formateado())
+                    ->body('Rige desde el '.$fila->vigencia_desde->format('d/m/Y').'.')
+                    ->send();
+            });
+    }
+
+    private static function convenioDe(mixed $id): ?Convenio
+    {
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        return Convenio::query()->find((int) $id);
+    }
+
+    private static function sedeDe(mixed $id): ?Sede
+    {
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        return Sede::query()->find((int) $id);
+    }
+}
