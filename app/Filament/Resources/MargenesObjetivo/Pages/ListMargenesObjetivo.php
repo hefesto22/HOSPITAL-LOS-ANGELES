@@ -6,7 +6,9 @@ namespace App\Filament\Resources\MargenesObjetivo\Pages;
 
 use App\Filament\Resources\MargenesObjetivo\Actions\FijarMargenAction;
 use App\Filament\Resources\MargenesObjetivo\MargenObjetivoResource;
+use App\Models\MargenObjetivo;
 use Filament\Resources\Pages\ListRecords;
+use Illuminate\Support\Facades\Gate;
 
 class ListMargenesObjetivo extends ListRecords
 {
@@ -25,7 +27,15 @@ class ListMargenesObjetivo extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            FijarMargenAction::make(),
+            /*
+             * Auditoría llega a esta pantalla —lee el margen porque es la
+             * mitad de la explicación de cada precio— pero no lo fija. Se
+             * pide `create` y no `update` a propósito: fijar un margen
+             * nuevo es insertar una fila, no editar la vigente. La policy
+             * niega `update` para todo el mundo justamente por eso.
+             */
+            FijarMargenAction::make()
+                ->visible(fn (): bool => Gate::allows('create', MargenObjetivo::class)),
         ];
     }
 }

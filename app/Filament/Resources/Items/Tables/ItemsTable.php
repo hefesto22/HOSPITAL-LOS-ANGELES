@@ -178,12 +178,14 @@ final class ItemsTable
             )
             ->recordActions([
                 /*
-                 * Solo en lo que se compra. Un honorario o una estancia
-                 * no tienen costo de entrada, así que el botón abriría un
-                 * modal que solo sabe decir que no (Ruta B del §4.1).
+                 * Dos condiciones, y la segunda es de permisos: el modal
+                 * muestra el margen objetivo y lo que deja cada rango de
+                 * edad. Eso es política comercial, y la matriz solo se lo
+                 * concede a dirección y auditoría. Ver
+                 * `CalcularPrecioAction::puedeVerse()`.
                  */
                 CalcularPrecioAction::make()
-                    ->visible(fn (Item $record): bool => $record->tipo->precioDerivadoDelCosto()),
+                    ->visible(fn (Item $record): bool => CalcularPrecioAction::puedeVerse($record)),
 
                 EditAction::make(),
             ])

@@ -34,7 +34,7 @@ class EditItem extends EditRecord
              * listado la misma acción es de solo lectura.
              */
             CalcularPrecioAction::make(puedeGuardar: true)
-                ->visible(fn (Item $record): bool => $record->tipo->precioDerivadoDelCosto()),
+                ->visible(fn (Item $record): bool => CalcularPrecioAction::puedeVerse($record)),
         ];
     }
 

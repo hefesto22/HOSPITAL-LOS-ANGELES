@@ -9,6 +9,7 @@ use App\Domain\ValueObjects\EscenarioDePrecio;
 use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioSugerido;
 use App\Models\Item;
+use App\Models\MargenObjetivo;
 use App\Services\CalculadoraDePrecioDeLista;
 use App\Services\FijadorDePrecio;
 use Filament\Actions\Action;
@@ -17,6 +18,7 @@ use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Html;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\HtmlString;
 
 /**
@@ -56,6 +58,30 @@ use Illuminate\Support\HtmlString;
  */
 final class CalcularPrecioAction
 {
+    /**
+     * ¿Este usuario puede ver la cuenta de este ítem?
+     *
+     * Dos condiciones distintas, y conviene no confundirlas:
+     *
+     *  1. **El ítem tiene costo del cual derivar.** Un honorario o una
+     *     estancia no se compran, así que el modal solo sabría decir que
+     *     no (Ruta B del §4.1).
+     *  2. **El usuario puede ver el margen objetivo.** El modal muestra el
+     *     margen que persigue el hospital y lo que deja cada rango de
+     *     edad: es política comercial, no información del catálogo. La
+     *     matriz se la concede a dirección y auditoría, y a nadie más —
+     *     que bodega o laboratorio vean cuánto gana el hospital por cada
+     *     insumo no aporta nada y sí filtra lo que la matriz protege.
+     *
+     * Está en un método propio y no en el cierre para poder probarlo sin
+     * montar la tabla entera.
+     */
+    public static function puedeVerse(Item $item): bool
+    {
+        return $item->tipo->precioDerivadoDelCosto()
+            && Gate::allows('viewAny', MargenObjetivo::class);
+    }
+
     public static function make(bool $puedeGuardar = false): Action
     {
         $accion = Action::make('calcularPrecio')

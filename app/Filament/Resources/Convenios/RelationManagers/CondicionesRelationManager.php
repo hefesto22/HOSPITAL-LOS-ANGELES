@@ -20,6 +20,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Lo pactado con este convenio, renovación por renovación.
@@ -108,6 +109,12 @@ class CondicionesRelationManager extends RelationManager
         return Action::make('pactarCondicion')
             ->label('Pactar un porcentaje')
             ->icon(Heroicon::OutlinedPlus)
+            /*
+             * Admisión y caja LEEN el convenio; pactar el porcentaje que
+             * se le cobra es otra cosa. Se pide `update` sobre el
+             * convenio, que la matriz solo le concede a dirección.
+             */
+            ->visible(fn (): bool => Gate::allows('update', $this->getOwnerRecord()))
             ->modalHeading('Pactar un porcentaje nuevo')
             ->modalDescription(
                 'El porcentaje vigente se cierra el día anterior y este arranca en la fecha que '

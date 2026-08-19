@@ -22,6 +22,7 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Los precios de un ítem — el tarifario, visto desde el producto.
@@ -124,6 +125,14 @@ class PreciosRelationManager extends RelationManager
         return Action::make('fijarPrecio')
             ->label('Fijar un precio')
             ->icon(Heroicon::OutlinedPlus)
+            /*
+             * Ver el precio es una cosa —el paciente lo ve en el
+             * mostrador— y ponerlo es otra. Se pide `update` sobre el
+             * ítem, que la matriz solo le concede a dirección: sin esto,
+             * cualquiera que pudiera abrir la ficha podía fijar el precio
+             * de venta del hospital.
+             */
+            ->visible(fn (): bool => Gate::allows('update', $this->getOwnerRecord()))
             ->modalHeading('Fijar un precio nuevo')
             ->modalDescription(
                 'El precio vigente para ese mismo pagador y sede se cierra el día anterior, y este '
