@@ -71,9 +71,20 @@ class AdminUserSeeder extends Seeder
         $this->command?->info("✓ Super-admin listo: {$email}");
 
         // ─── Filament Shield: generar permisos para todos los Resources ─────
-        // Esto genera permisos como view_any_user, create_user, update_user,
-        // etc. para CADA Resource detectado en app/Filament/Resources.
+        // Genera permisos con el formato de `config/filament-shield.php`:
+        // separator ":" y case pascal, o sea `ViewAny:Item`, `Create:Convenio`.
         // Sin esto, los Resources NO aparecen en el sidebar (Shield los oculta).
+        //
+        // ⚠️ Genera SOLO los permisos, no las policies, y es a propósito: las
+        // policies viven escritas a mano en `app/Policies/` porque llevan
+        // reglas que Shield no puede saber —acá nada se borra, se cierra la
+        // vigencia— y `--option=all` las sobreescribiría en cada seed.
+        //
+        // El precio de eso es que un Resource nuevo necesita su policy
+        // escrita a mano. Y no es opcional: **sin policy, Filament no
+        // deniega, permite** (ver `get_authorization_response()` en el
+        // helper de Filament). El test `PoliticasDelCatalogoTest` falla si
+        // algún modelo se queda sin la suya.
         $this->command?->info('Generando permisos de Shield para todos los Resources…');
 
         Artisan::call('shield:generate', [

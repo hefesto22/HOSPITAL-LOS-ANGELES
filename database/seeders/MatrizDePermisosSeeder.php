@@ -16,17 +16,38 @@ use Spatie\Permission\PermissionRegistrar;
  * Corre DESPUÉS de AdminUserSeeder, porque es ahí donde `shield:generate`
  * crea los permisos de cada Resource. Antes de eso no hay qué asignar.
  *
- * ⚠️ CÓMO ESTÁ CONSTRUIDA, Y POR QUÉ ASÍ:
+ * ─────────────────────────────────────────────────────────────────────
+ * POR QUÉ LOS NOMBRES SON EXACTOS Y NO PALABRAS CLAVE
+ * ─────────────────────────────────────────────────────────────────────
  *
- * La matriz no nombra permisos exactos (`view_any_user`), sino **recursos
- * por palabra clave**. Shield deriva el nombre del permiso del Resource,
- * y ese nombre cambia cuando se renombra una clase. Atarse al nombre
- * exacto produce un seeder que "corre bien" mientras deja roles sin
- * permisos, en silencio.
+ * La primera versión de este archivo buscaba **por substring en
+ * minúsculas** —`str_contains($permiso, 'item')`— y con prefijos tipo
+ * `view_any_`, para no atarse al nombre exacto que genera Shield.
  *
- * Todo lo que la matriz NO otorga, queda denegado. Es allowlist, nunca
- * denylist: un permiso nuevo de un módulo futuro no se le concede a nadie
- * por descuido, hay que agregarlo acá a propósito.
+ * Falló en silencio durante todo el bloque 3. Shield está configurado con
+ * `separator: ':'` y `case: 'pascal'` (ver `config/filament-shield.php`),
+ * así que los permisos reales se llaman **`ViewAny:Item`**, y ni
+ * `str_contains('ViewAny:Item', 'item')` ni
+ * `str_starts_with('ViewAny:Item', 'view_any_')` son verdaderos. Resultado:
+ * todos los roles menos `direccion` —que usa el comodín— quedaron con CERO
+ * permisos, y los tests no lo vieron porque creaban a mano permisos con
+ * nombres que Shield nunca genera.
+ *
+ * Ahora los nombres son exactos. El riesgo de atarse al nombre exacto —que
+ * alguien renombre un Resource y esto deje de conceder en silencio— se
+ * resuelve al revés de como se intentó antes: **el seeder valida que cada
+ * permiso declarado exista de verdad** y grita si no, y hay un test que
+ * falla si la matriz nombra algo que ningún Resource produce.
+ *
+ * Adivinar es peor que romperse fuerte.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * ALLOWLIST, SIEMPRE
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Todo lo que la matriz NO otorga queda denegado. Un permiso nuevo de un
+ * módulo futuro no se le concede a nadie por descuido: hay que agregarlo
+ * acá a propósito.
  *
  * `syncPermissions` es deliberado: reconcilia contra este archivo y borra
  * lo que alguien haya agregado a mano en el panel. Ese es el punto (§1.4).
@@ -34,13 +55,28 @@ use Spatie\Permission\PermissionRegistrar;
 class MatrizDePermisosSeeder extends Seeder
 {
     /**
-     * Rol => recursos que puede tocar, con las acciones permitidas.
+     * Los afijos que Shield genera, en el orden del `config`.
      *
-     * La clave del recurso es una PALABRA CLAVE que se busca dentro del
-     * nombre del permiso. Las acciones son los prefijos de Shield.
+     * Están acá para que el test pueda verificar que la matriz no inventa
+     * acciones. `Delete`, `ForceDelete` y `ForceDeleteAny` existen como
+     * permiso pero no se le conceden a nadie: en este sistema nada se
+     * borra, se cierra la vigencia. Las policies además los niegan.
      *
-     * Hoy solo existen los Resources de usuarios, roles y bitácora. Los
-     * recursos de los módulos que faltan se agregan acá conforme se
+     * @var list<string>
+     */
+    public const ACCIONES = [
+        'ViewAny', 'View', 'Create', 'Update', 'Delete', 'Restore',
+        'ForceDelete', 'ForceDeleteAny', 'RestoreAny', 'Replicate', 'Reorder',
+    ];
+
+    /**
+     * Rol => sujeto del permiso, con las acciones concedidas.
+     *
+     * El sujeto es el nombre del MODELO en PascalCase, tal como lo arma
+     * Shield: el Resource de pacientes tiene modelo `Persona`, así que el
+     * permiso es `ViewAny:Persona` y no `ViewAny:Paciente`.
+     *
+     * Los recursos de los módulos que faltan se agregan acá conforme se
      * construyen — este archivo crece, no se reescribe.
      *
      * @var array<string, array<string, list<string>>>
@@ -54,150 +90,104 @@ class MatrizDePermisosSeeder extends Seeder
          * puede leer la bitácora. Que pueda escribir en expediente o
          * facturar destruiría su función: quien audita no puede ser parte
          * de lo auditado.
+         *
+         * Lee también el margen objetivo y los convenios porque son las
+         * dos mitades de la explicación de cada precio: sin verlos, un
+         * hallazgo sobre lo que se le cobró a un paciente no se cierra.
          */
         'auditoria' => [
-            'activity' => ['view_any', 'view'],
-            'user'     => ['view_any', 'view'],
-            'fusion'   => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
-            /*
-             * El margen objetivo entra a la lista de lectura porque es
-             * la mitad de la explicación de cada precio: sin verlo, un
-             * hallazgo sobre el precio de un medicamento no se puede
-             * cerrar. La otra mitad —el descuento del Art. 30— es ley,
-             * no decisión del hospital.
-             */
-            'margen' => ['view_any', 'view'],
-            /*
-             * El convenio es la otra mitad de por qué una factura salió
-             * en ese monto: qué pagador era y bajo qué lectura del Art.
-             * 30 se le aplicó —o no— el descuento del adulto mayor.
-             */
-            'convenio' => ['view_any', 'view'],
+            'Activity'        => ['ViewAny', 'View'],
+            'User'            => ['ViewAny', 'View'],
+            'FusionDePersona' => ['ViewAny', 'View'],
+            'Item'            => ['ViewAny', 'View'],
+            'Unidad'          => ['ViewAny', 'View'],
+            'MargenObjetivo'  => ['ViewAny', 'View'],
+            'Convenio'        => ['ViewAny', 'View'],
         ],
 
         /*
-         * Los módulos que todavía no existen no otorgan nada. Sus
-         * permisos aparecen cuando se construya cada uno:
-         *   admision    → encuentros, camas
-         *   caja        → cuentas, facturas, notas de crédito, cierre
-         *   medico      → notas, órdenes, prescripción
-         *   enfermeria  → signos vitales, MAR, censo
-         *   farmacia    → dispensación, lotes, controlados
-         *   laboratorio → órdenes, muestras, resultados
-         *   imagenes    → estudios, informes
-         *   bodega      → entradas, traslados, conteos, ajustes
+         * PACIENTES — registran admisión Y enfermería. La segunda no es
+         * una concesión: si solo admisión pudiera, la enfermera de turno
+         * que recibe a un accidentado a las 3 de la mañana terminaría
+         * usando la clave de otro, y la bitácora dejaría de servir para lo
+         * único que existe: saber quién hizo qué.
          *
-         * Entran al panel igual (User::canAccessPanel), pero no ven nada
-         * hasta que su módulo exista. Eso es correcto: mejor un panel
-         * vacío que un permiso concedido por descuido.
-         */
-        /*
-         * PACIENTES — primer modulo operativo con Resource propio.
+         * El resto de los roles clínicos y caja solo LEEN. Bodega no
+         * aparece: nunca ve expediente (§1.4).
          *
-         * Registran admision Y enfermeria. La segunda no es una
-         * concesion: si solo admision pudiera, la enfermera de turno que
-         * recibe a un accidentado a las 3 de la manana terminaria usando
-         * la clave de otro, y la bitacora dejaria de servir para lo unico
-         * que existe — saber quien hizo que.
+         * `FusionDePersona` incluye aprobar y deshacer, y eso NO
+         * contradice el control de cuatro ojos: la base impide que apruebe
+         * quien propuso, así que dos personas de admisión se aprueban
+         * entre sí. Si solo dirección pudiera, a las 3 de la mañana no
+         * habría quien apruebe y el duplicado seguiría vivo.
          *
-         * El resto de los roles clinicos y caja solo LEEN: necesitan
-         * saber a quien atienden o a quien facturan, no crear identidades.
-         * Bodega no aparece: nunca ve expediente (§1.4).
+         * CATÁLOGO — lo lee todo el mundo, lo escribe dirección. Farmacia,
+         * laboratorio, imágenes, quirófano y caja cobran contra el mismo
+         * catálogo. Crearlo es otra cosa: al dar de alta un ítem se fija su
+         * régimen de ISV y bajo qué numeral del Art. 30 cae su descuento.
+         * Equivocarse en cualquiera de los dos es un hallazgo del SAR o una
+         * denuncia a la línea 115.
          *
-         * Se listan dos palabras clave —paciente y persona— porque Shield
-         * deriva el nombre del permiso del Resource o del modelo segun la
-         * version, y atarse a una sola produce un seeder que "corre bien"
-         * dejando al rol sin permisos, en silencio.
-         */
-        /*
-         * `fusion` incluye aprobar y deshacer, y eso NO es una
-         * contradiccion con el control de cuatro ojos: la base impide que
-         * apruebe quien propuso, asi que dos personas de admision se
-         * aprueban entre si. Si solo direccion pudiera, a las 3 de la
-         * manana no habria quien apruebe y el duplicado seguiria vivo.
-         */
-        /*
-         * CATALOGO — lo lee todo el mundo, lo escribe direccion.
-         *
-         * Farmacia, laboratorio, imagenes, quirofano y caja cobran contra
-         * el mismo catalogo, asi que todos necesitan verlo. Crearlo es
-         * otra cosa: al dar de alta un item se fija su regimen de ISV y
-         * bajo que numeral del Art. 30 cae su descuento de adulto mayor.
-         * Equivocarse en cualquiera de los dos es un hallazgo del SAR o
-         * una denuncia a la linea 115, no un dato que se corrige despues.
-         */
-        /*
-         * `convenio` se LEE en admisión y en caja: la primera elige el
-         * pagador al ingreso, la segunda factura contra él. Crearlo es
-         * otra cosa — dar de alta un convenio incluye declarar sobre qué
-         * monto se le aplica el descuento del Art. 30, y esa es una
-         * decisión de dirección con respaldo legal, no del turno.
+         * CONVENIOS — se LEEN en admisión y en caja: la primera elige el
+         * pagador al ingreso, la segunda factura contra él. Crearlos es de
+         * dirección, porque dar de alta un convenio incluye declarar sobre
+         * qué monto se aplica el descuento del Art. 30, y esa es una
+         * decisión con respaldo legal, no del turno.
          */
         'admision' => [
-            'paciente' => ['view_any', 'view', 'create', 'update'],
-            'persona'  => ['view_any', 'view', 'create', 'update'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
-            'convenio' => ['view_any', 'view'],
-            'fusion'   => ['view_any', 'view', 'create', 'update'],
+            'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
+            'FusionDePersona' => ['ViewAny', 'View', 'Create', 'Update'],
+            'Item'            => ['ViewAny', 'View'],
+            'Unidad'          => ['ViewAny', 'View'],
+            'Convenio'        => ['ViewAny', 'View'],
         ],
 
         'enfermeria' => [
-            'paciente' => ['view_any', 'view', 'create', 'update'],
-            'persona'  => ['view_any', 'view', 'create', 'update'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
-            'fusion'   => ['view_any', 'view', 'create'],
+            'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
+            'FusionDePersona' => ['ViewAny', 'View', 'Create'],
+            'Item'            => ['ViewAny', 'View'],
+            'Unidad'          => ['ViewAny', 'View'],
         ],
 
         'medico' => [
-            'paciente' => ['view_any', 'view'],
-            'persona'  => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
+            'Persona' => ['ViewAny', 'View'],
+            'Item'    => ['ViewAny', 'View'],
+            'Unidad'  => ['ViewAny', 'View'],
         ],
 
         'caja' => [
-            'paciente' => ['view_any', 'view'],
-            'persona'  => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
-            'convenio' => ['view_any', 'view'],
+            'Persona'  => ['ViewAny', 'View'],
+            'Item'     => ['ViewAny', 'View'],
+            'Unidad'   => ['ViewAny', 'View'],
+            'Convenio' => ['ViewAny', 'View'],
         ],
 
         'farmacia' => [
-            'paciente' => ['view_any', 'view'],
-            'persona'  => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
+            'Persona' => ['ViewAny', 'View'],
+            'Item'    => ['ViewAny', 'View'],
+            'Unidad'  => ['ViewAny', 'View'],
         ],
 
         'laboratorio' => [
-            'paciente' => ['view_any', 'view'],
-            'persona'  => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
+            'Persona' => ['ViewAny', 'View'],
+            'Item'    => ['ViewAny', 'View'],
+            'Unidad'  => ['ViewAny', 'View'],
         ],
 
         'imagenes' => [
-            'paciente' => ['view_any', 'view'],
-            'persona'  => ['view_any', 'view'],
-            'item'     => ['view_any', 'view'],
-            'unidad'   => ['view_any', 'view'],
+            'Persona' => ['ViewAny', 'View'],
+            'Item'    => ['ViewAny', 'View'],
+            'Unidad'  => ['ViewAny', 'View'],
         ],
 
         /*
-         * Bodega LEE el catalogo pero no lo escribe. Dar de alta un item
-         * fija su regimen de ISV y su categoria legal de descuento: son
-         * decisiones con consecuencia fiscal y sancionable, no de quien
-         * recibe la mercaderia. Cuando el hospital designe quien mantiene
-         * el catalogo, se le agrega create y update aca.
+         * Bodega LEE el catálogo pero no lo escribe, y no ve expediente:
+         * quien recibe una compra no tiene por qué saber quién está
+         * internado.
          */
         'bodega' => [
-            'item'   => ['view_any', 'view'],
-            'unidad' => ['view_any', 'view'],
+            'Item'   => ['ViewAny', 'View'],
+            'Unidad' => ['ViewAny', 'View'],
         ],
     ];
 
@@ -207,6 +197,8 @@ class MatrizDePermisosSeeder extends Seeder
 
         /** @var Collection<int, string> $todos */
         $todos = Permission::query()->where('guard_name', 'web')->pluck('name');
+
+        $this->avisarDeLosQueNoExisten($todos);
 
         foreach (self::MATRIZ as $nombreRol => $recursos) {
             $rol = Role::query()
@@ -230,7 +222,38 @@ class MatrizDePermisosSeeder extends Seeder
     }
 
     /**
-     * Traduce la matriz a nombres de permiso reales.
+     * Todos los permisos que la matriz nombra, sin el comodín.
+     *
+     * Público porque el test lo usa para verificar que ninguno sea
+     * inventado. Es la contracara de haber pasado a nombres exactos.
+     *
+     * @return list<string>
+     */
+    public static function permisosDeclarados(): array
+    {
+        $declarados = [];
+
+        foreach (self::MATRIZ as $recursos) {
+            if (isset($recursos['*'])) {
+                continue;
+            }
+
+            foreach ($recursos as $sujeto => $acciones) {
+                foreach ($acciones as $accion) {
+                    $declarados[] = "{$accion}:{$sujeto}";
+                }
+            }
+        }
+
+        return array_values(array_unique($declarados));
+    }
+
+    /**
+     * Traduce la matriz a los permisos reales de ese rol.
+     *
+     * Comparación EXACTA, no por substring: con `str_contains`, la palabra
+     * `Item` también casaría con `ViewAny:ItemPresentacion` el día que ese
+     * Resource exista, y el rol se llevaría permisos que nadie le dio.
      *
      * @param Collection<int, string> $todos
      * @param array<string, list<string>> $recursos
@@ -247,20 +270,47 @@ class MatrizDePermisosSeeder extends Seeder
             return $todos;
         }
 
-        return $todos->filter(function (string $permiso) use ($recursos): bool {
-            foreach ($recursos as $recurso => $acciones) {
-                if (! str_contains($permiso, $recurso)) {
-                    continue;
-                }
+        $permitidos = [];
 
-                foreach ($acciones as $accion) {
-                    if ($accion === '*' || str_starts_with($permiso, $accion.'_')) {
-                        return true;
-                    }
-                }
+        foreach ($recursos as $sujeto => $acciones) {
+            foreach ($acciones as $accion) {
+                $permitidos[] = "{$accion}:{$sujeto}";
             }
+        }
 
-            return false;
-        })->values();
+        return $todos->intersect($permitidos)->values();
+    }
+
+    /**
+     * Grita cuando la matriz nombra un permiso que no existe.
+     *
+     * Es la red que reemplaza al matching difuso: si alguien renombra un
+     * Resource, esto sale en la consola del deploy en vez de dejar a un rol
+     * mudo durante meses.
+     *
+     * @param Collection<int, string> $todos
+     */
+    private function avisarDeLosQueNoExisten(Collection $todos): void
+    {
+        if ($todos->isEmpty()) {
+            $this->command?->warn(
+                '  ⚠ No hay ningún permiso en la base. Corré shield:generate antes de la matriz.'
+            );
+
+            return;
+        }
+
+        $inexistentes = collect(self::permisosDeclarados())->diff($todos);
+
+        if ($inexistentes->isEmpty()) {
+            return;
+        }
+
+        $this->command?->error(
+            '  ✗ La matriz nombra permisos que no existen: '.$inexistentes->implode(', ')
+        );
+        $this->command?->comment(
+            '    Alguien renombró un Resource, o el formato de nombres de Shield cambió.'
+        );
     }
 }
