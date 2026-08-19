@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Convenio;
+use App\Models\ConvenioCondicion;
 use App\Models\Item;
 use App\Models\Sede;
 use App\Models\Tarifario;
@@ -20,18 +21,17 @@ use Carbon\CarbonInterface;
  * ─────────────────────────────────────────────────────────────────────
  *
  *   1. Precio firmado con ese pagador para ese ítem.
- *   2. Precio de lista.
+ *   2. Porcentaje pactado con ese pagador, sobre la lista.
+ *   3. Precio de lista.
  *
  * Y en cada peldaño, la fila de esta sede le gana a la que vale para
- * todas. El orden lo arma `Tarifario::scopeResolviendoPara`, así que acá
- * no hay `if`: se pide la primera y esa es.
+ * todas. El orden entre el 1 y el 3 lo arma
+ * `Tarifario::scopeResolviendoPara`, así que la consulta ya devuelve la
+ * ganadora; el 2 se aplica solo cuando la ganadora resultó ser la lista.
  *
- * ⚠️ **Falta un peldaño en el medio.** El incremento 2f agrega el
- * porcentaje pactado del convenio —«el IHSS paga lista menos 15 %»— que
- * entra entre el 1 y el 2: cuando no hay precio propio negociado pero sí
- * un factor acordado, la lista se multiplica por él. Hasta entonces un
- * convenio sin fila propia paga la lista tal cual, que es exactamente lo
- * que hoy hace CONTADO.
+ * Que el precio negociado le gane al porcentaje es lo que hace que «las
+ * dos formas» convivan: el factor cubre el catálogo entero, y los pocos
+ * ítems que se negociaron uno por uno lo pisan.
  *
  * ─────────────────────────────────────────────────────────────────────
  * LA FECHA NO TIENE DEFAULT
@@ -67,7 +67,32 @@ final class ResolutorDePrecio
             );
         }
 
-        return PrecioResuelto::desde($fila);
+        /*
+         * Si la ganadora es un precio firmado para este ítem, ahí termina:
+         * lo negociado uno por uno pisa al porcentaje general.
+         */
+        if (! $fila->esPrecioDeLista()) {
+            return PrecioResuelto::desde($fila);
+        }
+
+        $condicion = $this->condicionVigente($convenio, $fechaServicio);
+
+        return $condicion instanceof ConvenioCondicion
+            ? PrecioResuelto::conFactor($fila, $condicion)
+            : PrecioResuelto::desde($fila);
+    }
+
+    /**
+     * El porcentaje pactado con ese pagador, si lo hay ese día.
+     */
+    public function condicionVigente(Convenio $convenio, CarbonInterface $fecha): ?ConvenioCondicion
+    {
+        $condicion = ConvenioCondicion::query()
+            ->where('convenio_id', $convenio->id)
+            ->vigentesEn($fecha)
+            ->first();
+
+        return $condicion instanceof ConvenioCondicion ? $condicion : null;
     }
 
     /**

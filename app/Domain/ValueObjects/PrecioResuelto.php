@@ -5,20 +5,26 @@ declare(strict_types=1);
 namespace App\Domain\ValueObjects;
 
 use App\Domain\Enums\OrigenDelPrecio;
+use App\Models\ConvenioCondicion;
 use App\Models\Tarifario;
 
 /**
  * Cuánto cuesta, y por qué ese número y no otro.
  *
  * ─────────────────────────────────────────────────────────────────────
- * DEVUELVE LA FILA, NO SOLO EL MONTO
+ * DEVUELVE LAS FILAS, NO SOLO EL MONTO
  * ─────────────────────────────────────────────────────────────────────
  *
- * Un resolutor que devolviera `L 29.33` a secas dejaría sin respuesta la
+ * Un resolutor que devolviera `L 24.93` a secas dejaría sin respuesta la
  * única pregunta que importa cuando alguien reclama: **de dónde salió**.
- * Acá viaja la fila del tarifario que ganó, así que la factura puede
- * guardar su `id` y el reclamo de dentro de dos años se contesta leyendo
- * un registro en vez de reconstruyendo la historia a mano.
+ * Acá viajan las filas que lo produjeron —la del tarifario, y la
+ * condición del convenio si el precio se derivó— así que la factura puede
+ * guardar sus `id` y el reclamo de dentro de dos años se contesta leyendo
+ * dos registros en vez de reconstruyendo la historia a mano.
+ *
+ * Esto importa especialmente en el precio derivado: `L 24.93` no está
+ * escrito en ninguna fila. Sin la condición al lado, dentro de dos años
+ * nadie podría rehacer la multiplicación con el factor que regía ese día.
  */
 final readonly class PrecioResuelto
 {
@@ -26,8 +32,12 @@ final readonly class PrecioResuelto
         public Monto $precio,
         public OrigenDelPrecio $origen,
         public Tarifario $fila,
+        public ?ConvenioCondicion $condicion = null,
     ) {}
 
+    /**
+     * El precio tal cual está escrito en una fila de tarifario.
+     */
     public static function desde(Tarifario $fila): self
     {
         return new self(
@@ -36,6 +46,19 @@ final readonly class PrecioResuelto
                 ? OrigenDelPrecio::PrecioDeLista
                 : OrigenDelPrecio::PrecioNegociado,
             fila: $fila,
+        );
+    }
+
+    /**
+     * La lista multiplicada por el porcentaje pactado con el pagador.
+     */
+    public static function conFactor(Tarifario $lista, ConvenioCondicion $condicion): self
+    {
+        return new self(
+            precio: $condicion->aplicarA($lista->monto()),
+            origen: OrigenDelPrecio::PorcentajePactado,
+            fila: $lista,
+            condicion: $condicion,
         );
     }
 
@@ -55,6 +78,19 @@ final readonly class PrecioResuelto
         $alcance = $this->fila->valeParaTodaSede()
             ? 'en todas las sedes'
             : 'solo en esta sede';
+
+        if ($this->condicion instanceof ConvenioCondicion) {
+            return sprintf(
+                'Precio de lista %s vigente desde el %s %s, por lo pactado con el pagador: %s. '
+                .'Resultado: %s. %s',
+                $this->fila->monto()->formateado(),
+                $desde,
+                $alcance,
+                $this->condicion->resumen(),
+                $this->precio->formateado(),
+                $this->condicion->motivo,
+            );
+        }
 
         $quien = $this->esNegociado()
             ? 'precio firmado con el pagador'

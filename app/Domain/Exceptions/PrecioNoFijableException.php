@@ -24,4 +24,14 @@ final class PrecioNoFijableException extends SihlaException
             .'a explicarse con una tarifa que ese día no existía.'
         );
     }
+
+    public static function yaHayCondicionPosterior(string $convenio, string $desde): self
+    {
+        return new self(
+            "Ya hay una condición pactada con {$convenio} que arranca el {$desde} o después. Una "
+            .'condición nueva solo se puede pactar desde una fecha posterior a todas las que ya '
+            .'existen: si no, las facturas de esa renovación pasarían a calcularse con un '
+            .'porcentaje que ese día todavía no se había firmado.'
+        );
+    }
 }

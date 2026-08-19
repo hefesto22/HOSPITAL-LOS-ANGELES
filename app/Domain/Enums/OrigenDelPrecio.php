@@ -16,22 +16,42 @@ enum OrigenDelPrecio: string
     /** Una fila del tarifario firmada con ese pagador para ese ítem. */
     case PrecioNegociado = 'precio_negociado';
 
+    /**
+     * No hay precio propio para este ítem, pero sí un porcentaje pactado
+     * con el pagador: la lista multiplicada por ese factor.
+     */
+    case PorcentajePactado = 'porcentaje_pactado';
+
     /** La fila sin convenio: el precio que ve cualquiera. */
     case PrecioDeLista = 'precio_de_lista';
 
     public function etiqueta(): string
     {
         return match ($this) {
-            self::PrecioNegociado => 'Precio negociado',
-            self::PrecioDeLista   => 'Precio de lista',
+            self::PrecioNegociado   => 'Precio negociado',
+            self::PorcentajePactado => 'Porcentaje pactado',
+            self::PrecioDeLista     => 'Precio de lista',
         };
+    }
+
+    /**
+     * ¿El número sale de una fila de tarifario tal cual, o se calculó?
+     *
+     * Importa para la factura: un precio derivado hay que poder
+     * recalcularlo igual dentro de dos años, así que además de la fila de
+     * lista tiene que quedar guardada la condición que lo multiplicó.
+     */
+    public function esDerivado(): bool
+    {
+        return $this === self::PorcentajePactado;
     }
 
     public function color(): string
     {
         return match ($this) {
-            self::PrecioNegociado => 'info',
-            self::PrecioDeLista   => 'gray',
+            self::PrecioNegociado   => 'info',
+            self::PorcentajePactado => 'warning',
+            self::PrecioDeLista     => 'gray',
         };
     }
 }

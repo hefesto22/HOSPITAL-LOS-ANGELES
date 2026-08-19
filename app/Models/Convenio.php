@@ -13,6 +13,7 @@ use Database\Factories\ConvenioFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -101,6 +102,19 @@ class Convenio extends Model
     public static function camposEnMayusculas(): array
     {
         return ['codigo', 'nombre'];
+    }
+
+    /**
+     * El historial de lo pactado: vigentes y vencidas.
+     *
+     * Las vencidas también, y a propósito: son la explicación de las
+     * facturas de las renovaciones anteriores.
+     *
+     * @return HasMany<ConvenioCondicion, $this>
+     */
+    public function condiciones(): HasMany
+    {
+        return $this->hasMany(ConvenioCondicion::class);
     }
 
     public function esAlContado(): bool

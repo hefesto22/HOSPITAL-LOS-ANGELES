@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Convenios;
 use App\Filament\Resources\Convenios\Pages\CreateConvenio;
 use App\Filament\Resources\Convenios\Pages\EditConvenio;
 use App\Filament\Resources\Convenios\Pages\ListConvenios;
+use App\Filament\Resources\Convenios\RelationManagers\CondicionesRelationManager;
 use App\Filament\Resources\Convenios\Schemas\ConvenioForm;
 use App\Filament\Resources\Convenios\Tables\ConveniosTable;
 use App\Models\Convenio;
@@ -89,6 +90,22 @@ class ConvenioResource extends Resource
     public static function canDeleteAny(): bool
     {
         return false;
+    }
+
+    /**
+     * El porcentaje pactado se carga DENTRO de la ficha del convenio.
+     *
+     * Una condición sin su convenio no significa nada, y una pantalla
+     * aparte obligaría a elegir el pagador de un selector — que es como
+     * se termina pactando el 85 % con la aseguradora equivocada.
+     *
+     * @return array<int, class-string>
+     */
+    public static function getRelations(): array
+    {
+        return [
+            CondicionesRelationManager::class,
+        ];
     }
 
     /**
