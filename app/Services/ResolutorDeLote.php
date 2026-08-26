@@ -6,8 +6,10 @@ namespace App\Services;
 
 use App\Domain\Exceptions\RecepcionException;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * El lote que corresponde a lo que llegó: el que ya existe, o uno nuevo.
@@ -46,6 +48,7 @@ final class ResolutorDeLote
         string $numero,
         ?CarbonInterface $vencimiento = null,
         ?string $proveedor = null,
+        ?ItemPresentacion $presentacion = null,
     ): Lote {
         /*
          * El número se canoniza acá y no en el modelo: viene tecleado
@@ -55,9 +58,29 @@ final class ResolutorDeLote
          */
         $numero = mb_strtoupper(trim($numero));
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL LOTE SE BUSCA POR NÚMERO **Y ENVASE**
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Buscándolo solo por número, tres entradas del mismo jarabe con
+         * el mismo lote —diez frascos de 60, diez de 80 y diez de 120—
+         * caían en una sola fila de 2600 ML. En el estante no hay 2600
+         * mililitros: hay tres pilas de frascos distintos, que se cuentan
+         * aparte, se abren aparte y costaron distinto.
+         *
+         * Un laboratorio SÍ puede usar el mismo número para dos envases
+         * —es el mismo jarabe embotellado distinto— y por eso el envase
+         * entra en la búsqueda en vez de tratarse como un choque.
+         */
         $existente = Lote::query()
             ->where('item_id', $item->id)
             ->where('numero', $numero)
+            ->when(
+                $presentacion instanceof ItemPresentacion,
+                fn (Builder $consulta): Builder => $consulta->where('item_presentacion_id', $presentacion?->id),
+                fn (Builder $consulta): Builder => $consulta->whereNull('item_presentacion_id'),
+            )
             ->first();
 
         if ($existente instanceof Lote) {
@@ -67,10 +90,11 @@ final class ResolutorDeLote
         }
 
         return Lote::query()->create([
-            'item_id'           => $item->id,
-            'numero'            => $numero,
-            'fecha_vencimiento' => $vencimiento?->toDateString(),
-            'proveedor'         => $proveedor,
+            'item_id'              => $item->id,
+            'item_presentacion_id' => $presentacion?->id,
+            'numero'               => $numero,
+            'fecha_vencimiento'    => $vencimiento?->toDateString(),
+            'proveedor'            => $proveedor,
         ]);
     }
 

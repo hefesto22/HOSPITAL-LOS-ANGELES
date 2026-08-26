@@ -49,6 +49,13 @@ class DatabaseSeeder extends Seeder
             //    no tendría a quién cobrarle.
             ConveniosSeeder::class,
 
+            // 9. El vocabulario clínico. No depende de nada del catálogo
+            //    comercial —un diagnóstico no tiene precio— pero sí tiene
+            //    que existir antes del primer encuentro: sin él, la cuenta
+            //    no se le puede reclamar a una aseguradora y el Art. 180
+            //    del Código de Salud queda sin con qué cumplirse.
+            Cie10DeArranqueSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }

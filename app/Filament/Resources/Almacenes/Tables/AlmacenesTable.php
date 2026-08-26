@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Almacenes\Tables;
 
 use App\Domain\Enums\TipoAlmacen;
+use App\Filament\Resources\Almacenes\Schemas\AlmacenForm;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -12,12 +13,21 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 
+/**
+ * Listado de almacenes.
+ *
+ * En modo almacén único (`sihla.inventario.modo_almacen_unico`) las
+ * columnas de Tipo y Servicio dueño no se muestran: una columna que dice
+ * lo mismo en todas las filas solo gasta ancho de pantalla.
+ */
 final class AlmacenesTable
 {
     public static function configure(Table $table): Table
     {
+        $modoUnico = AlmacenForm::modoUnico();
+
         return $table
-            ->columns([
+            ->columns(array_values(array_filter([
                 TextColumn::make('codigo')
                     ->label('Código')
                     ->badge()
@@ -30,13 +40,13 @@ final class AlmacenesTable
                     ->searchable()
                     ->sortable(),
 
-                TextColumn::make('tipo')
+                $modoUnico ? null : TextColumn::make('tipo')
                     ->label('Tipo')
                     ->badge()
                     ->color(fn (TipoAlmacen $state): string => $state->color())
                     ->formatStateUsing(fn (TipoAlmacen $state): string => $state->etiqueta()),
 
-                TextColumn::make('servicio.nombre')
+                $modoUnico ? null : TextColumn::make('servicio.nombre')
                     ->label('Servicio dueño')
                     ->placeholder('— no cuelga de un área')
                     ->searchable(),
@@ -56,11 +66,11 @@ final class AlmacenesTable
                     ->badge()
                     ->color('gray')
                     ->toggleable(),
-            ])
+            ])))
             ->defaultSort('codigo')
             ->paginated([25, 50, 100])
-            ->filters([
-                SelectFilter::make('tipo')
+            ->filters(array_values(array_filter([
+                $modoUnico ? null : SelectFilter::make('tipo')
                     ->label('Tipo')
                     ->options(fn (): array => collect(TipoAlmacen::cases())
                         ->mapWithKeys(fn (TipoAlmacen $t): array => [$t->value => $t->etiqueta()])
@@ -71,7 +81,7 @@ final class AlmacenesTable
                     ->placeholder('Todos')
                     ->trueLabel('Solo con controlados')
                     ->falseLabel('Sin controlados'),
-            ])
+            ])))
             ->recordActions([
                 EditAction::make(),
             ])

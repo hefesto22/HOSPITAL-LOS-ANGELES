@@ -33,6 +33,19 @@ class AlmacenFactory extends Factory
         ];
     }
 
+    /**
+     * El almacén único del hospital, que es como nace en producción
+     * mientras `sihla.inventario.modo_almacen_unico` esté encendido.
+     */
+    public function unico(): self
+    {
+        return $this->state(fn (): array => [
+            'tipo'               => TipoAlmacen::AlmacenUnico,
+            'servicio_id'        => null,
+            'maneja_controlados' => true,
+        ]);
+    }
+
     public function de(TipoAlmacen $tipo): self
     {
         return $this->state(fn (): array => ['tipo' => $tipo]);

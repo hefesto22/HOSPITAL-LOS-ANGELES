@@ -31,8 +31,9 @@ final readonly class PrecioResuelto
     public function __construct(
         public Monto $precio,
         public OrigenDelPrecio $origen,
-        public Tarifario $fila,
+        public ?Tarifario $fila,
         public ?ConvenioCondicion $condicion = null,
+        public ?string $referenciaAcordada = null,
     ) {}
 
     /**
@@ -62,6 +63,29 @@ final readonly class PrecioResuelto
         );
     }
 
+    /**
+     * Un precio ACORDADO, que no sale de ninguna fila de tarifario
+     * (ADR-0009).
+     *
+     * Es el paquete quirúrgico: la familia acordó L 40,000 por la
+     * apendicectomía completa. Ese monto no está en el tarifario y no
+     * puede estarlo, porque cada caso cotiza distinto — pero la factura
+     * igual tiene que poder explicar de dónde salió, y para eso está
+     * `OrigenDelPrecio::Presupuestado`.
+     *
+     * ⚠️ Es el ÚNICO camino sin fila. Todo lo demás sigue saliendo del
+     * tarifario con vigencia (ADR-0003), y esa regla no se afloja.
+     */
+    public static function acordado(Monto $precio, string $referencia): self
+    {
+        return new self(
+            precio: $precio,
+            origen: OrigenDelPrecio::Presupuestado,
+            fila: null,
+            referenciaAcordada: $referencia,
+        );
+    }
+
     public function esNegociado(): bool
     {
         return $this->origen === OrigenDelPrecio::PrecioNegociado;
@@ -73,6 +97,10 @@ final readonly class PrecioResuelto
      */
     public function explicacion(): string
     {
+        if (! $this->fila instanceof Tarifario) {
+            return 'Acordado en el presupuesto '.($this->referenciaAcordada ?? 'del paciente');
+        }
+
         $desde = $this->fila->vigencia_desde->format('d/m/Y');
 
         $alcance = $this->fila->valeParaTodaSede()

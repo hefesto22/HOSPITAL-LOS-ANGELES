@@ -137,3 +137,39 @@ it('las tres lecturas del articulo tienen explicacion escrita', function (): voi
             ->and($base->etiqueta())->not->toBeEmpty();
     }
 })->note('Si alguien agrega una cuarta lectura sin explicarla, este test falla. La pantalla muestra la explicación al lado de cada opción: sin ella, la decisión se toma a ciegas.');
+
+/*
+|--------------------------------------------------------------------------
+| 🔴 El seguro externo se anota, no se le cobra
+|--------------------------------------------------------------------------
+*/
+
+it('🔴 el seguro de reembolso no paga: paga el paciente', function (): void {
+    expect(TipoConvenio::Reembolso->pagaUnTercero())->toBeFalse()
+        ->and(TipoConvenio::Reembolso->admiteCredito())->toBeFalse();
+})->note('🔴 «¿El hospital le factura a la aseguradora?» es la pregunta que separa un convenio de un seguro externo. Acá la respuesta es no: el paciente paga en caja al precio de lista y reclama él. Tratarlo como pagador dejaría una cuenta por cobrar contra una aseguradora que nunca recibió factura y no sabe que existe.');
+
+it('🔴 la base impide fiarle credito a un seguro de reembolso', function (): void {
+    Convenio::factory()->reembolso()->create(['dias_credito' => 30]);
+})->throws(QueryException::class)
+    ->note('🔴 El CHECK decía «tipo <> contado». Dejarlo atado al nombre del tipo viejo permitía darle treinta días de crédito a alguien a quien jamás se le va a mandar una factura.');
+
+it('🔴 la base impide que un seguro de reembolso cubra algo', function (): void {
+    /*
+     * `->reembolso()` deja los días de crédito en nulo a propósito: sin
+     * eso, la fila violaría PRIMERO el CHECK del crédito y la prueba
+     * pasaría por el motivo equivocado.
+     */
+    Convenio::factory()->reembolso()->create([
+        'cobertura_fraccion' => '0.8000',
+        'cubre_por_defecto'  => true,
+    ]);
+})->throws(QueryException::class)
+    ->note('🔴 Si cubriera, la cuenta repartiría entre paciente y aseguradora — y la aseguradora no está en esta conversación. Todo le toca al paciente, que es quien después reclama.');
+
+it('un seguro de reembolso se puede dar de alta con sus datos', function (): void {
+    $palic = Convenio::factory()->reembolso()->create();
+
+    expect($palic->tipo)->toBe(TipoConvenio::Reembolso)
+        ->and($palic->tipo->pagaUnTercero())->toBeFalse();
+})->note('Es para lo que existe: que la aseguradora se dé de alta UNA vez con su nombre y su RTN, en vez de escribirse de veinte formas distintas en un campo libre, y que salga impresa junto a la póliza para que el paciente pueda reclamar.');

@@ -86,17 +86,25 @@ it('la base rechaza pedir lote sobre algo que no es fisico', function (): void {
     ]);
 })->throws(QueryException::class);
 
-it('el modelo apaga las banderas de farmacia cuando el item deja de ser fisico', function (): void {
+it('el modelo apaga las banderas de farmacia cuando el item deja de almacenarse', function (): void {
     $item = Item::factory()->controlado()->create();
 
     expect($item->requiere_lote)->toBeTrue()
         ->and($item->es_controlado)->toBeTrue();
 
-    $item->update(['tipo' => TipoItem::Honorario]);
+    $item->update(['tipo' => TipoItem::Honorario, 'se_almacena' => false]);
 
     expect($item->fresh()?->requiere_lote)->toBeFalse()
         ->and($item->fresh()?->es_controlado)->toBeFalse();
-})->note('En la pantalla, al cambiar el tipo la pestaña de farmacia se oculta y sus campos ya no se envían: el valor viejo seguiría en el modelo y la base tiraría un error de SQL en la cara del usuario.');
+})->note('En la pantalla, al dejar de almacenarse la pestaña de farmacia se oculta y sus campos ya no se envían: el valor viejo seguiría en el modelo y la base tiraría un error de SQL en la cara del usuario.');
+
+it('🔴 cambiar el tipo NO apaga solo el almacenamiento', function (): void {
+    $item = Item::factory()->medicamento()->create();
+
+    $item->update(['tipo' => TipoItem::Otro]);
+
+    expect($item->fresh()?->mueveInventario())->toBeTrue();
+})->note('🔴 `se_almacena` es una RESPUESTA, y una respuesta no se reescribe sola. Un ítem con existencia al que alguien le cambia el tipo no puede quedar de golpe sin inventario: el stock no se borraría, se volvería invisible — ninguna pantalla lo muestra y el conteo físico siguiente no lo encuentra para cuadrarlo. Quien quiera apagarlo lo apaga a mano, y el formulario no lo deja si ya hay movimientos.');
 
 it('el modelo enciende la receta al marcar controlado', function (): void {
     $item = Item::factory()->medicamento()->create(['requiere_receta' => false]);
@@ -165,6 +173,26 @@ it('encuentra por codigo exacto', function (): void {
 
     expect(Item::buscar('LAB-0042')->pluck('codigo')->all())->toContain('LAB-0042');
 })->note('El código va por ILIKE, no por trigramas: los trigramas de un código con guiones son ruido.');
+
+it('🔴 lo retirado deja de aparecer donde se cobra', function (): void {
+    Item::factory()->create(['nombre' => 'HEMOGRAMA']);
+    Item::factory()->create([
+        'nombre'         => 'EMOGRAMA',
+        'vigencia_hasta' => now()->subDay()->toDateString(),
+    ]);
+
+    expect(Item::buscar('emograma', soloVigentes: true)->pluck('nombre')->all())
+        ->not->toContain('EMOGRAMA');
+})->note('🔴 El catálogo se retira con fecha de fin de vigencia y no con un botón de activo — pero el buscador de la cuenta no la miraba. El nombre mal escrito que alguien creó por error seguía apareciendo al cobrar, y seguía cobrándose: la regla existía y no la aplicaba nadie donde importaba.');
+
+it('lo retirado SÍ aparece para contarlo y ajustarlo', function (): void {
+    Item::factory()->create([
+        'nombre'         => 'EMOGRAMA',
+        'vigencia_hasta' => now()->subDay()->toDateString(),
+    ]);
+
+    expect(Item::buscar('emograma')->pluck('nombre')->all())->toContain('EMOGRAMA');
+})->note('Un producto que se dejó de vender puede seguir teniendo existencia en el estante. Hay que poder contarla y ajustarla; lo que no se puede es cobrarla ni comprar más. Por eso el filtro va apagado por defecto y encendido solo en las dos pantallas comerciales.');
 
 it('devuelve vacio y no revienta con un termino de solo espacios', function (): void {
     Item::factory()->count(3)->create();

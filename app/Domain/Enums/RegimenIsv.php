@@ -42,6 +42,10 @@ enum RegimenIsv: string
 
     /**
      * Tasa aplicable como fracción (0.15 = 15 %).
+     *
+     * ⚠️ Devuelve `float` y por eso NO se usa para calcular dinero. Sirve
+     * para mostrar, para comparar contra cero y para configurar. Lo que
+     * entra a la aritmética de una factura es `tasaComoTexto()`.
      */
     public function tasa(): float
     {
@@ -50,6 +54,43 @@ enum RegimenIsv: string
             self::Gravado15               => (float) config('sihla.isv.tasa_general', 0.15),
             self::Gravado18               => (float) config('sihla.isv.tasa_especial', 0.18),
         };
+    }
+
+    /**
+     * La misma tasa, como texto, para entrar directo a bcmath.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ EXISTEN LOS DOS MÉTODOS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * §8.6.2-1 prohíbe el punto flotante en matemática de dinero, y con
+     * razón: `0.15` no es 0.15 en binario. Multiplicar un subtotal por
+     * ese float y redondear produce, cada tantos miles de líneas, un
+     * centavo que hace fallar el CHECK `total = exento + gravado + isv`
+     * de la base — y el error aparece en producción, no en las pruebas.
+     *
+     * `number_format` acá es seguro y no contradice la regla: el valor
+     * viene de `config`, tiene a lo sumo cuatro decimales significativos,
+     * y esta es la ÚNICA conversión, hecha una vez y hacia texto. Lo que
+     * la regla prohíbe es acumular operaciones en float, no leer un
+     * parámetro.
+     *
+     * @return numeric-string
+     */
+    public function tasaComoTexto(): string
+    {
+        return match ($this) {
+            self::Exento, self::Exonerado => '0',
+            default                       => number_format($this->tasa(), 4, '.', ''),
+        };
+    }
+
+    /**
+     * ¿Se le suma ISV a la línea?
+     */
+    public function esGravado(): bool
+    {
+        return $this === self::Gravado15 || $this === self::Gravado18;
     }
 
     /**

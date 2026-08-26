@@ -22,6 +22,16 @@ use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Permission\Traits\HasRoles;
 use stdClass;
 
+/**
+ * ⚠️ Sin estas anotaciones, `getKey()` y `$user->id` llegan como `mixed`
+ * y cualquier `expect($algo)->toBe($user->getKey())` en un test rompe con
+ * «Unable to resolve the template type TValue» — un error que parece de
+ * Pest y es de acá.
+ *
+ * @property int $id
+ * @property string $name
+ * @property string $email
+ */
 class User extends Authenticatable implements FilamentUser
 {
     use HasAuditFields;

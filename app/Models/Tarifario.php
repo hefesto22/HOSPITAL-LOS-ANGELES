@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *
  * @property int $id
  * @property int $item_id
+ * @property int|null $item_presentacion_id
  * @property int|null $convenio_id
  * @property int|null $sede_id
  * @property string $precio fracción con cuatro decimales, antes del ISV
@@ -44,9 +45,11 @@ class Tarifario extends Model
     /** @var list<string> */
     protected $fillable = [
         'item_id',
+        'item_presentacion_id',
         'convenio_id',
         'sede_id',
         'precio',
+        'elegible',
         'motivo',
         'vigencia_desde',
         'vigencia_hasta',
@@ -129,6 +132,19 @@ class Tarifario extends Model
     }
 
     /**
+     * El envase al que le corresponde este precio, si es de uno solo.
+     *
+     * Nulo = el precio del producto entero, el que se usa cuando no hay
+     * uno específico para el frasco que se está dispensando.
+     *
+     * @return BelongsTo<ItemPresentacion, $this>
+     */
+    public function presentacion(): BelongsTo
+    {
+        return $this->belongsTo(ItemPresentacion::class, 'item_presentacion_id');
+    }
+
+    /**
      * Las filas que podrían aplicar, con la que gana primero.
      *
      * ─────────────────────────────────────────────────────────────────
@@ -147,14 +163,30 @@ class Tarifario extends Model
      *
      * @return Builder<Tarifario>
      */
-    public function scopeResolviendoPara(Builder $consulta, ?int $convenioId, ?int $sedeId): Builder
-    {
+    public function scopeResolviendoPara(
+        Builder $consulta,
+        ?int $convenioId,
+        ?int $sedeId,
+        ?int $presentacionId = null,
+    ): Builder {
         return $consulta
             ->where(function (Builder $sub) use ($convenioId): void {
                 $sub->whereNull('convenio_id');
 
                 if ($convenioId !== null) {
                     $sub->orWhere('convenio_id', $convenioId);
+                }
+            })
+            /*
+             * El envase entra igual que el convenio y la sede: nulo
+             * siempre vale —es el precio del producto entero— y el
+             * específico gana cuando existe.
+             */
+            ->where(function (Builder $sub) use ($presentacionId): void {
+                $sub->whereNull('item_presentacion_id');
+
+                if ($presentacionId !== null) {
+                    $sub->orWhere('item_presentacion_id', $presentacionId);
                 }
             })
             ->where(function (Builder $sub) use ($sedeId): void {
@@ -164,7 +196,14 @@ class Tarifario extends Model
                     $sub->orWhere('sede_id', $sedeId);
                 }
             })
+            /*
+             * El orden ES la jerarquía: primero lo que se FIRMÓ con el
+             * pagador, después QUÉ envase se está vendiendo, y al final
+             * dónde. El contrato manda sobre el producto y el producto
+             * manda sobre la política de la sede.
+             */
             ->orderByRaw('convenio_id is null')
+            ->orderByRaw('item_presentacion_id is null')
             ->orderByRaw('sede_id is null');
     }
 }

@@ -31,6 +31,7 @@ enum TipoCorrelativo: string
     case Accession = 'accession';
     case Traslado = 'traslado';
     case AjusteInventario = 'ajuste_inventario';
+    case Presupuesto = 'presupuesto';
 
     /**
      * Prefijo visible del número generado.
@@ -47,6 +48,7 @@ enum TipoCorrelativo: string
             self::Accession        => 'ACC',
             self::Traslado         => 'TRA',
             self::AjusteInventario => 'AJU',
+            self::Presupuesto      => 'PRE',
         };
     }
 
@@ -95,6 +97,7 @@ enum TipoCorrelativo: string
             self::Accession        => 'Accession number (DICOM)',
             self::Traslado         => 'Traslado de inventario',
             self::AjusteInventario => 'Ajuste de inventario',
+            self::Presupuesto      => 'Presupuesto al paciente',
         };
     }
 }

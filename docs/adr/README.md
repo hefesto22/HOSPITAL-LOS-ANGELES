@@ -14,6 +14,8 @@ Este directorio es la **fuente de verdad #3** del proyecto, después del `CLAUDE
 | [0003](0003-catalogo-unico-y-tarifario-con-vigencia.md) | Catálogo único de ítems + tarifario por convenio con vigencia | **Aceptado** |
 | [0004](0004-append-only-expediente-y-kardex.md) | Expediente y kardex append-only, con bitácora de lectura y break-the-glass | **Aceptado** |
 | [0005](0005-infraestructura-de-produccion.md) | Infraestructura de producción sobre el VPS compartido | **🚧 ABIERTO** — se cierra al terminar la Etapa 1 |
+| [0006](0006-material-de-curacion-no-se-inventaria.md) | El material intercambiable no se inventaría; se controla por consumo del período | **Aceptado** |
+| [0007](0007-una-atencion-una-factura.md) | Una atención asegurada produce un solo documento fiscal | **Aceptado** — se escribe antes del módulo de facturación |
 
 ## Por qué existen estos documentos
 

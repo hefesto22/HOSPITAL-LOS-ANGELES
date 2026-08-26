@@ -1,8 +1,15 @@
 <?php
 
 declare(strict_types=1);
+use App\Domain\Enums\TipoEncuentro;
 use App\Domain\ValueObjects\Monto;
+use App\Models\Convenio;
+use App\Models\Cuenta;
+use App\Models\Expediente;
+use App\Models\Persona;
+use App\Models\Sede;
 use App\Models\User;
+use App\Services\AbridorDeEncuentro;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Pest\Expectation;
 use Tests\TestCase;
@@ -69,4 +76,44 @@ function actingAsAdmin(): User
     test()->actingAs($user);
 
     return $user;
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────
+ * 🔴 ESTA FUNCIÓN VIVE ACÁ Y NO EN UN ARCHIVO DE TEST
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * La usan `MotorDeCargosTest` y `DescuentoComercialTest`. Mientras Pest
+ * corría en un proceso, definirla en uno de los dos alcanzaba: las
+ * funciones sueltas comparten el espacio global.
+ *
+ * Con `pest --parallel` eso deja de ser cierto. Cada proceso carga SOLO
+ * los archivos que le tocan, así que la función existe o no existe según
+ * cómo cayó el reparto —y el reparto cambia cuando se agrega un archivo
+ * o cuando el timing es otro—. El síntoma es
+ * `Call to undefined function` en un test que nadie tocó.
+ *
+ * `tests/Pest.php` lo carga TODO proceso. Todo ayudante compartido entre
+ * dos archivos de test va acá; el que usa un solo archivo se queda en él.
+ */
+function unaCuentaCon(Convenio $convenio, int $edad = 40): Cuenta
+{
+    $sede = Sede::factory()->create();
+
+    $persona = Persona::factory()->create([
+        'fecha_nacimiento' => now()->subYears($edad)->subDay()->toDateString(),
+    ]);
+
+    $expediente = Expediente::factory()->create([
+        'sede_id'    => $sede->id,
+        'persona_id' => $persona->id,
+    ]);
+
+    return app(AbridorDeEncuentro::class)->abrir(
+        persona: $persona,
+        expediente: $expediente,
+        tipo: TipoEncuentro::Hospitalizacion,
+        convenio: $convenio,
+        sede: $sede,
+    );
 }

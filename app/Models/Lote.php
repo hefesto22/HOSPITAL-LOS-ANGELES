@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *
  * @property int $id
  * @property int $item_id
+ * @property int|null $item_presentacion_id
  * @property string $numero
  * @property CarbonInterface|null $fecha_vencimiento
  * @property CarbonInterface|null $fecha_fabricacion
@@ -44,6 +45,7 @@ class Lote extends Model
     /** @var list<string> */
     protected $fillable = [
         'item_id',
+        'item_presentacion_id',
         'numero',
         'fecha_vencimiento',
         'fecha_fabricacion',
@@ -69,6 +71,20 @@ class Lote extends Model
     public function item(): BelongsTo
     {
         return $this->belongsTo(Item::class);
+    }
+
+    /**
+     * El envase con el que llegó: FRASCO DE 60 ML, CAJA X 100.
+     *
+     * Es lo que permite leer una existencia como «10 frascos de 60 ML» en
+     * vez de «600 ML». En el estante no hay mililitros sueltos, y quien
+     * va a buscarlo necesita saber cuántos envases va a tener que abrir.
+     *
+     * @return BelongsTo<ItemPresentacion, $this>
+     */
+    public function presentacion(): BelongsTo
+    {
+        return $this->belongsTo(ItemPresentacion::class, 'item_presentacion_id');
     }
 
     /**

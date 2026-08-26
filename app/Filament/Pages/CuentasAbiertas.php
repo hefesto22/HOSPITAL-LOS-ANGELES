@@ -1,0 +1,2732 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Filament\Pages;
+
+use App\Domain\Enums\EstadoCargo;
+use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\MomentoDiagnostico;
+use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\RangoEdad;
+use App\Domain\Enums\TipoDiagnostico;
+use App\Domain\Enums\TipoEncuentro;
+use App\Domain\Exceptions\CargoException;
+use App\Domain\Exceptions\CuentaException;
+use App\Domain\Exceptions\DiagnosticoException;
+use App\Domain\Exceptions\EncuentroException;
+use App\Domain\Exceptions\ExistenciaInsuficienteException;
+use App\Domain\ValueObjects\Decimal;
+use App\Domain\ValueObjects\LineaDeCargo;
+use App\Models\Almacen;
+use App\Models\Cargo;
+use App\Models\Cie10;
+use App\Models\Convenio;
+use App\Models\Cuenta;
+use App\Models\Diagnostico;
+use App\Models\Expediente;
+use App\Models\Item;
+use App\Models\ItemPresentacion;
+use App\Models\Persona;
+use App\Models\Presupuesto;
+use App\Models\PresupuestoLinea;
+use App\Models\PrincipioActivo;
+use App\Services\AbridorDeEncuentro;
+use App\Services\AnuladorDeCargo;
+use App\Services\ConsultorDeExistencias;
+use App\Services\PoliticaDeDescuentoComercial;
+use App\Services\RegistradorDeCargo;
+use App\Services\RegistradorDeDiagnostico;
+use App\Support\AlmacenesDelUsuario;
+use App\Support\NormalizadorDeTexto;
+use App\Support\NumeroDeFormulario;
+use App\Support\UsuarioAutenticado;
+use BackedEnum;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
+use Filament\Pages\Page;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
+use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
+use Throwable;
+
+/**
+ * Las cuentas abiertas del hospital, en tarjetas.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * POR QUÉ NO ES UN RESOURCE (§9.A10 🔴)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Cargarle cosas a la cuenta de un paciente es un flujo con estado, no
+ * un formulario: hay que ver de quién es la cuenta, escanear, confirmar
+ * el precio y seguir. Un CRUD genérico permite guardar estados
+ * imposibles y cuesta cinco clics donde tiene que costar uno.
+ *
+ * Filament brilla en catálogos, tarifarios y conciliación. Esta pantalla
+ * no es eso: es la que se usa a las tres de la mañana, con la pistola en
+ * una mano.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * TARJETAS Y NO TABLA
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Una tabla de veinte columnas obliga a leer para encontrar al paciente.
+ * La tarjeta pone lo único que importa a un metro de distancia: **de
+ * quién es, desde cuándo está y cuánto lleva.** El resto está adentro.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * EL MODAL NO SE CIERRA DESPUÉS DE CADA ÍTEM
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * `replaceMountedAction` lo vuelve a montar con los mismos argumentos:
+ * el ítem entra, la lista de abajo se actualiza, el campo de escaneo
+ * queda vacío y con el foco. Cerrar y reabrir por cada ampolla serían
+ * tres clics de más por línea, y una ronda de medicamentos son veinte
+ * líneas.
+ */
+class CuentasAbiertas extends Page
+{
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+
+    protected static ?string $slug = 'cuentas';
+
+    protected static ?int $navigationSort = 1;
+
+    protected string $view = 'filament.pages.cuentas-abiertas';
+
+    /**
+     * Lo que se teclea en el buscador. Sin `live()` con debounce corto:
+     * cada tecla sería una consulta sobre pacientes (§13.2).
+     */
+    /**
+     * Las claves del selector de unidad de cobro. Constantes y no strings
+     * sueltos porque viajan entre el formulario, la conversión y la vista.
+     */
+    private const POR_UNIDAD = 'dispensacion';
+
+    private const POR_FRACCION = 'fraccion';
+
+    private const POR_PRESENTACION = 'presentacion:';
+
+    public string $busqueda = '';
+
+    /**
+     * El token que distingue «lo cargué otra vez» de «apreté dos veces».
+     * Vive en el estado de Livewire, así que un reenvío de la misma
+     * acción trae el mismo valor y el servicio devuelve el cargo que ya
+     * existía en vez de duplicarlo.
+     */
+    public string $claveDeEnvio = '';
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL DESCUENTO DE LA TANDA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Lo que se puso arriba en «Descuento sobre medicamentos» sobrevive a
+     * cada «Agregar». Vive en el componente y no en los argumentos de la
+     * acción porque el modal se vuelve a montar por tres caminos
+     * distintos —Agregar, el atajo de lo más cargado, y el atajo que solo
+     * deja el ítem puesto—, y un dato que hay que acordarse de pasar en
+     * los tres se pierde en el que alguien olvide.
+     *
+     * 🔴 `cuentaDelDescuento` es lo que impide que se cruce de paciente:
+     * la propiedad sobrevive a que el modal se cierre, así que sin ella
+     * el 30 % autorizado a uno aparecería puesto al abrir la cuenta del
+     * siguiente — y nadie lo mira dos veces cuando el campo ya está
+     * lleno.
+     */
+    /**
+     * Cuántas líneas van cargadas en esta tanda.
+     *
+     * No se muestra en ningún lado y no es un dato del negocio: es lo que
+     * hace que el contexto de la acción cambie en cada ítem para que
+     * Filament no cierre el modal. El porqué está en `cargarEnCuenta`.
+     */
+    /**
+     * Memoria por pintada de «¿este paciente ya tiene cuenta viva?».
+     *
+     * @var array<int, Cuenta|null>
+     */
+    private array $cuentasVivas = [];
+
+    public int $renglonDeLaTanda = 0;
+
+    public ?int $cuentaDelDescuento = null;
+
+    public ?string $descuentoDeLaTanda = null;
+
+    public ?string $motivoDeLaTanda = null;
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL PRINCIPIO ACTIVO QUE SE ESCANEÓ, MIENTRAS DURE ESTA LÍNEA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Escanear la etiqueta de la gaveta no dice qué cobrar: dice de qué
+     * MOLÉCULA se trata. El acetaminofén está en tableta, en jarabe y en
+     * supositorio, y cuál se le dio al paciente lo sabe quien lo dio.
+     *
+     * Así que el escaneo no elige: acota. Mientras esto tenga un valor,
+     * «¿Qué se le agrega?» ofrece solo los productos que lo llevan.
+     *
+     * ⚠️ Se limpia en `fillForm`, que corre al abrir el modal Y en cada
+     * remontaje después de agregar una línea. Un filtro que sobrevive a
+     * la línea siguiente es un filtro invisible, y un filtro invisible es
+     * una lista corta que nadie entiende por qué está corta.
+     */
+    public ?int $principioEscaneado = null;
+
+    /**
+     * Memoria por pintada de los productos de ese principio.
+     *
+     * @var array<int, array<int, string>>
+     */
+    private array $productosPorPrincipio = [];
+
+    /**
+     * La línea cuya ✕ está esperando que le escriban el porqué.
+     *
+     * Nula casi siempre: solo se llena cuando la línea es de otro turno o
+     * ya no es de recién, que es cuando quitarla dejó de ser corregir un
+     * tecleo. El porqué completo está en `Cargo::pideMotivoParaQuitar()`.
+     */
+    public ?int $cargoAQuitar = null;
+
+    /**
+     * El renglón del paquete cuya cantidad se está preguntando, y cuánto.
+     *
+     * ⚠️ Estado de Livewire, no una acción de Filament: `mountAction()`
+     * desde adentro de una acción montada no abre nada y no da error.
+     */
+    public ?int $lineaAEntregar = null;
+
+    public string $cantidadAEntregar = '';
+
+    /**
+     * Si el desglose del paquete está desplegado.
+     *
+     * ⚠️ Vive en Livewire y NO en el `<details>` del navegador: cada
+     * entrega vuelve a renderizar la lista, y un `<details>` sin estado
+     * se cierra solo. Quien está despachando cinco renglones seguidos
+     * tenía que reabrirlo cinco veces.
+     */
+    public bool $paqueteAbierto = false;
+
+    public string $motivoDeQuitar = '';
+
+    public static function getNavigationLabel(): string
+    {
+        return 'Cuentas abiertas';
+    }
+
+    public static function getNavigationGroup(): ?string
+    {
+        return 'Atención';
+    }
+
+    public function getTitle(): string
+    {
+        return 'Cuentas abiertas';
+    }
+
+    public function getSubheading(): string
+    {
+        return 'Lo que cada paciente lleva acumulado. Se le agrega escaneando o buscando por nombre.';
+    }
+
+    public static function canAccess(): bool
+    {
+        return Gate::allows('viewAny', Cuenta::class);
+    }
+
+    public function mount(): void
+    {
+        abort_unless(static::canAccess(), 403);
+
+        $this->claveDeEnvio = (string) Str::uuid();
+    }
+
+    // ── Las tarjetas ──────────────────────────────────────────────────
+
+    /**
+     * @return Collection<int, Cuenta>
+     */
+    public function cuentas(): Collection
+    {
+        $termino = trim($this->busqueda);
+
+        return Cuenta::query()
+            /*
+             * Columnas nombradas y no `with('encuentro.persona')` a
+             * secas: la tarjeta necesita seis campos y traer la persona
+             * entera son cuarenta columnas por fila (§12).
+             */
+            ->with([
+                'encuentro:id,numero,tipo,estado,abierto_en,persona_id,expediente_id,servicio_id',
+                'encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido,apellido_casada,fecha_nacimiento,sexo_biologico,es_nn',
+                'encuentro.expediente:id,numero',
+                'encuentro.servicio:id,nombre',
+                'convenio:id,codigo,nombre,tipo',
+            ])
+            ->vivas()
+            /*
+             * ⚠️ Todo el buscador va DENTRO de un solo `where` agrupado.
+             *
+             * Con un `orWhere` de primer nivel, el SQL queda
+             * `(estado IN (...) AND EXISTS(...)) OR numero ILIKE ...` y
+             * buscar por número de cuenta traería también cuentas
+             * cerradas y anuladas a la pantalla de cuentas ABIERTAS.
+             */
+            /*
+             * ⚠️ La búsqueda por nombre entra como SUBCONSULTA y no como
+             * `whereHas('persona', fn ($p) => $p->buscarPorNombre(...))`.
+             *
+             * Dentro de un `whereHas`, el builder que llega es genérico
+             * —`Builder<Model>`— y el análisis estático no puede saber
+             * que ahí vive el scope de `Persona`. Construir la subconsulta
+             * desde `Persona::query()` lo deja tipado, y de paso deja a la
+             * vista que la búsqueda tolerante a errores de tecleo
+             * (trigramas) corre contra su propio índice.
+             *
+             * Todas las columnas van calificadas: hay más de una tabla en
+             * juego y `numero` existe en tres de ellas.
+             */
+            ->when($termino !== '', fn ($consulta) => $consulta->where(
+                fn ($grupo) => $grupo
+                    ->where('cuentas.numero', 'ilike', '%'.$termino.'%')
+                    ->orWhereHas(
+                        'encuentro',
+                        fn ($e) => $e->where('encuentros.numero', 'ilike', '%'.$termino.'%')
+                            ->orWhereIn(
+                                'encuentros.persona_id',
+                                Persona::query()->buscarPorNombre($termino)->select('personas.id'),
+                            )
+                            ->orWhereIn(
+                                'encuentros.expediente_id',
+                                Expediente::query()
+                                    ->where('expedientes.numero', 'ilike', '%'.$termino.'%')
+                                    ->select('expedientes.id'),
+                            )
+                    )
+            ))
+            ->orderByDesc('abierta_en')
+            ->limit((int) config('sihla.facturacion.tarjetas_por_pantalla', 24))
+            ->get();
+    }
+
+    public function hayCuentas(): bool
+    {
+        return $this->cuentas()->isNotEmpty();
+    }
+
+    /**
+     * ¿Quien mira puede cargarle cosas a las cuentas?
+     *
+     * Lo usa la vista para decidir si la tarjeta es un botón o una ficha
+     * de lectura. Auditoría entra a esta pantalla —la necesita— pero no
+     * asienta nada.
+     */
+    /**
+     * ¿Este usuario puede escribir el diagnóstico?
+     *
+     * Solo el médico —y el super admin, que es quien prueba el sistema—.
+     * Ver `DiagnosticoPolicy`: está atado al ROL y no a un permiso de
+     * Shield a propósito, porque diagnosticar no es una pantalla que
+     * dirección reparte, es un acto médico.
+     *
+     * Esto solo apaga el botón. Quien de verdad protege es el
+     * `abort_unless` dentro de la acción: `mountAction` se puede disparar
+     * desde el cliente sin que exista ningún botón.
+     */
+    public function puedeDiagnosticar(): bool
+    {
+        return Gate::allows('create', Diagnostico::class);
+    }
+
+    /**
+     * Cuántos diagnósticos vigentes lleva la cuenta.
+     *
+     * Va en la tarjeta como un contador rojo cuando hay alguno, y NO
+     * cuando no hay: un cero en cada tarjeta se vuelve invisible en dos
+     * días. Lo que se quiere ver de un vistazo es cuáles ya tienen y
+     * cuáles siguen sin diagnóstico — que son las que no se le pueden
+     * cobrar a una aseguradora.
+     */
+    public function cuantosDiagnosticos(Cuenta $cuenta): int
+    {
+        return Diagnostico::query()
+            ->where('encuentro_id', $cuenta->encuentro_id)
+            ->vigentes()
+            ->count();
+    }
+
+    public function puedeCargar(): bool
+    {
+        return Gate::allows('create', Cargo::class);
+    }
+
+    // ── Abrir una cuenta ──────────────────────────────────────────────
+
+    public function abrirCuentaAction(): Action
+    {
+        return Action::make('abrirCuenta')
+            ->label('Abrir cuenta')
+            ->icon(Heroicon::OutlinedPlus)
+            ->color('primary')
+            ->modalHeading('Abrir la cuenta de un paciente')
+            ->modalDescription(
+                'Se abre el encuentro y su cuenta a la vez. El pagador se puede cambiar después '
+                .'sin perder lo ya cargado.'
+            )
+            ->modalSubmitActionLabel('Abrir la cuenta')
+            ->visible(fn (): bool => Gate::allows('create', Cuenta::class))
+            ->schema([
+                Section::make('¿Quién es el paciente?')
+                    ->columns(2)
+                    ->schema([
+                        Select::make('persona_id')
+                            ->label('Paciente')
+                            ->required()
+                            ->searchable()
+                            ->native(false)
+                            ->live()
+                            ->columnSpanFull()
+                            ->helperText('Buscá por nombre, apellido o número de expediente antes de crear nada.')
+                            /*
+                             * ─────────────────────────────────────────
+                             * 🔴 EL QUE YA TIENE CUENTA SE VE, PERO NO
+                             * SE PUEDE ELEGIR
+                             * ─────────────────────────────────────────
+                             *
+                             * Sacarlo del buscador era lo primero que se
+                             * pensó y es peor: quien lo busca y no lo
+                             * encuentra concluye «no está registrado» y
+                             * lo crea de nuevo. Este sistema tiene una
+                             * pantalla entera para fusionar duplicados
+                             * justamente porque eso pasa y sale caro.
+                             *
+                             * Apagado y con el número de su cuenta al
+                             * lado: no se puede elegir, se entiende por
+                             * qué, y dice a dónde ir. El aviso aparte
+                             * sobraba.
+                             */
+                            ->getSearchResultsUsing(function (string $search): array {
+                                $encontrados = Persona::buscar($search);
+
+                                /*
+                                 * `array_values(array_map(...))` y no
+                                 * `->pluck('id')->all()`: los dos dan lo
+                                 * mismo en tiempo de ejecución, pero solo
+                                 * el primero le prueba a PHPStan que son
+                                 * enteros y que las llaves quedaron
+                                 * 0,1,2… `pluck` devuelve `mixed` porque
+                                 * el nombre de la columna es una cadena
+                                 * que el analizador no puede resolver.
+                                 */
+                                $this->precargarCuentasVivas(array_values(array_map(
+                                    fn (Persona $p): int => (int) $p->id,
+                                    $encontrados->all(),
+                                )));
+
+                                return $encontrados
+                                    ->mapWithKeys(fn (Persona $p): array => [
+                                        $p->id => $this->conSuCuentaAbierta($p),
+                                    ])
+                                    ->all();
+                            })
+                            ->disableOptionWhen(fn (mixed $value): bool => $this->cuentaVivaDe($value) instanceof Cuenta)
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => Persona::query()
+                                ->find(is_numeric($value) ? (int) $value : 0)?->nombreCompleto())
+                            ->afterStateUpdated(fn (Set $set) => $set('expediente_id', null)),
+
+                        Select::make('expediente_id')
+                            ->label('Expediente')
+                            ->required()
+                            ->native(false)
+                            ->options(fn (Get $get): array => $this->expedientesDe($get('persona_id')))
+                            ->helperText('El expediente es de la sede. Un paciente puede tener uno por sede.'),
+
+                        Select::make('tipo')
+                            ->label('Tipo de atención')
+                            ->required()
+                            ->native(false)
+                            ->default(TipoEncuentro::Hospitalizacion->value)
+                            ->options(TipoEncuentro::opciones()),
+                    ]),
+
+                Section::make('¿Quién paga?')
+                    ->columns(2)
+                    ->schema([
+                        Select::make('convenio_id')
+                            ->label('Pagador')
+                            ->required()
+                            ->native(false)
+                            ->columnSpanFull()
+                            ->options(fn (): array => app(AbridorDeEncuentro::class)
+                                ->pagadoresDisponibles()
+                                ->mapWithKeys(fn (Convenio $c): array => [$c->id => $c->nombre])
+                                ->all())
+                            ->helperText(
+                                'Contado también es un pagador. Si todavía no aparece la póliza, abrila '
+                                .'como contado: cambiarla después no pierde ningún cargo.'
+                            ),
+
+                        TextInput::make('numero_poliza')
+                            ->label('Número de póliza')
+                            ->maxLength(60),
+
+                        TextInput::make('numero_autorizacion')
+                            ->label('Número de autorización')
+                            ->maxLength(60)
+                            ->helperText('Si el seguro ya la dio. Se puede cargar después.'),
+
+                        Textarea::make('motivo')
+                            ->label('Motivo de la atención')
+                            ->maxLength(200)
+                            ->columnSpanFull()
+                            ->rows(2),
+                    ]),
+            ])
+            ->action(function (array $data): void {
+                $persona = Persona::query()->find((int) ($data['persona_id'] ?? 0));
+                $expediente = Expediente::query()->find((int) ($data['expediente_id'] ?? 0));
+                $convenio = Convenio::query()->find((int) ($data['convenio_id'] ?? 0));
+
+                if (! $persona instanceof Persona
+                    || ! $expediente instanceof Expediente
+                    || ! $convenio instanceof Convenio) {
+                    Notification::make()
+                        ->danger()
+                        ->title('Faltan datos')
+                        ->body('Elegí el paciente, su expediente y quién paga.')
+                        ->send();
+
+                    return;
+                }
+
+                try {
+                    $cuenta = app(AbridorDeEncuentro::class)->abrir(
+                        persona: $persona,
+                        expediente: $expediente,
+                        tipo: TipoEncuentro::from((string) $data['tipo']),
+                        convenio: $convenio,
+                        motivo: is_string($data['motivo'] ?? null) && $data['motivo'] !== '' ? $data['motivo'] : null,
+                        numeroPoliza: is_string($data['numero_poliza'] ?? null) && $data['numero_poliza'] !== ''
+                            ? $data['numero_poliza'] : null,
+                        numeroAutorizacion: is_string($data['numero_autorizacion'] ?? null) && $data['numero_autorizacion'] !== ''
+                            ? $data['numero_autorizacion'] : null,
+                    );
+                } catch (EncuentroException|CuentaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo abrir la cuenta')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Cuenta '.$cuenta->numero.' abierta')
+                    ->body($persona->nombreCompleto().' ya puede recibir cargos.')
+                    ->send();
+            });
+    }
+
+    // ── Cargar cosas a una cuenta ─────────────────────────────────────
+
+    public function cargarEnCuentaAction(): Action
+    {
+        return Action::make('cargarEnCuenta')
+            ->label('Agregar a la cuenta')
+            ->modalHeading(fn (array $arguments): string => $this->tituloDelModal($arguments))
+            ->modalDescription('Cada ítem entra con el precio que le corresponde a este pagador hoy.')
+            ->modalWidth('5xl')
+            ->modalSubmitActionLabel('Agregar')
+            ->closeModalByClickingAway(false)
+            /*
+             * 🔴 El permiso se verifica en los DOS lados.
+             *
+             * `visible()` esconde el botón; `abort_unless` dentro de la
+             * acción es el que de verdad protege, porque
+             * `mountAction('cargarEnCuenta', {...})` se puede disparar
+             * desde el cliente sin que exista ningún botón.
+             *
+             * Sin esto, `canAccess()` —que solo exige `ViewAny:Cuenta`—
+             * le alcanzaría a auditoría para asentar cargos reales, que
+             * es exactamente lo que la matriz de permisos le niega.
+             */
+            ->visible(fn (): bool => Gate::allows('create', Cargo::class))
+            ->schema([
+                Section::make()
+                    /*
+                     * Doce columnas y no cuatro: con cuatro, los cuatro
+                     * campos no entran en una fila y el almacén cae solo
+                     * abajo, desalineado. Con doce se reparten 5-3-2-2 y
+                     * la fila se lee de un vistazo.
+                     */
+                    ->columns(12)
+                    ->schema([
+                        /*
+                         * ⚠️ `dehydrated()` en TRUE, al revés que en la
+                         * pantalla de conteo.
+                         *
+                         * Una pistola de código de barras teclea el código
+                         * y manda Enter de una. Ese Enter envía el
+                         * formulario ANTES de que el `afterStateUpdated`
+                         * termine de resolver el ítem, así que si el
+                         * escaneo no viaja con los datos, el envío llega
+                         * sin nada y no pasa nada. Viajando, el servicio
+                         * lo resuelve como respaldo y escanear + Enter
+                         * carga la línea sin tocar el mouse.
+                         */
+                        BarcodeInput::make('escaneo')
+                            ->label('Escaneá el código')
+                            ->live()
+                            ->autofocus()
+                            ->columnSpanFull()
+                            ->helperText(
+                                'Con la pistola o con la cámara. El del envase carga el producto; el de '
+                                .'la gaveta —PA-0001— acota la lista a lo que lleva ese principio activo.'
+                            )
+                            ->afterStateUpdated(fn (mixed $state, Set $set) => $this->resolverEscaneo($state, $set)),
+
+                        Select::make('item_id')
+                            ->label('¿Qué se le agrega?')
+                            /*
+                             * 🔴 Obligatorio también cuando lo escaneado
+                             * fue una gaveta.
+                             *
+                             * El código de un principio activo NO resuelve
+                             * un ítem —esa es toda su gracia: son varios—,
+                             * así que sin esto el Enter de la pistola
+                             * mandaría el formulario con el selector vacío
+                             * y el respaldo de `agregar()` no encontraría
+                             * nada. Terminaba en «falta decir qué se
+                             * agrega» después de apretar, en vez de antes.
+                             */
+                            ->required(fn (Get $get): bool => blank($get('escaneo'))
+                                || $this->principioEscaneado !== null)
+                            ->searchable()
+                            ->native(false)
+                            ->live()
+                            ->columnSpan(5)
+                            /*
+                             * Con la gaveta escaneada la lista ya viene
+                             * puesta: se abre el desplegable y están los
+                             * tres o cuatro, sin teclear nada. Sin gaveta
+                             * queda vacía y manda la búsqueda de siempre.
+                             */
+                            ->options(fn (): array => $this->productosDelPrincipioEscaneado())
+                            ->getSearchResultsUsing(fn (string $search): array => $this->resultadosDeBusqueda($search))
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->itemDe($value)?->etiqueta())
+                            /*
+                             * 🔴 Un filtro que no se ve es una lista corta
+                             * que nadie entiende por qué está corta —y de
+                             * ahí sale «el sistema no tiene el producto»
+                             * cuando sí lo tiene. Se dice qué acotó la
+                             * lista, y se sale de ahí con un clic.
+                             */
+                            ->hint(fn (): ?string => $this->principioEscaneado === null
+                                ? null
+                                : 'Solo lo que lleva '.$this->nombreDelPrincipioEscaneado())
+                            ->hintAction(
+                                Action::make('quitar_filtro_de_principio')
+                                    ->label('Ver todo el catálogo')
+                                    ->icon(Heroicon::OutlinedXMark)
+                                    ->color('gray')
+                                    ->visible(fn (): bool => $this->principioEscaneado !== null)
+                                    ->action(function (Set $set): void {
+                                        $this->principioEscaneado = null;
+                                        $set('item_id', null);
+                                        $set('escaneo', null);
+                                    }),
+                            )
+                            ->placeholder(fn (): string => $this->principioEscaneado === null
+                                ? 'Escribí tres letras o el código'
+                                : 'Elegí en qué forma se le dio'),
+
+                        /*
+                         * Sin texto de ayuda a propósito: las propias
+                         * opciones dicen todo lo que hay que saber
+                         * —«CAJA X 100 TABLETAS — 100 TABLETA»— y un
+                         * párrafo acá rompía la fila y empujaba el resto
+                         * del formulario media pantalla hacia abajo.
+                         */
+                        Select::make('unidad_cobro')
+                            ->label('Se cobra por')
+                            ->native(false)
+                            ->live()
+                            ->default(self::POR_UNIDAD)
+                            ->selectablePlaceholder(false)
+                            ->columnSpan(3)
+                            ->options(fn (Get $get): array => $this->unidadesDeCobro($this->itemDe($get('item_id'))))
+                            ->visible(fn (Get $get): bool => count(
+                                $this->unidadesDeCobro($this->itemDe($get('item_id')))
+                            ) > 1),
+
+                        TextInput::make('cantidad')
+                            ->label('Cantidad')
+                            ->numeric()
+                            ->required()
+                            ->default(1)
+                            ->minValue(0.0001)
+                            ->step('0.0001')
+                            ->columnSpan(2)
+                            ->live(onBlur: true)
+                            /*
+                             * 🔴 La equivalencia, a la vista y en vivo.
+                             *
+                             * «1» escrito en una caja de cien tabletas y «1»
+                             * escrito en una tableta son el mismo carácter y
+                             * son L 900 de diferencia. Que la pantalla diga
+                             * «1 CAJA X 100 TABLETAS = 100 TABLETA» antes de
+                             * apretar Agregar es lo único que impide ese
+                             * error, porque después ya está cobrado.
+                             */
+                            ->helperText(function (Get $get): ?string {
+                                $item = $this->itemDe($get('item_id'));
+
+                                if (! $item instanceof Item) {
+                                    return null;
+                                }
+
+                                return $this->equivalencia(
+                                    $item,
+                                    is_string($get('unidad_cobro')) ? $get('unidad_cobro') : self::POR_UNIDAD,
+                                    $get('cantidad'),
+                                );
+                            }),
+
+                        Select::make('almacen_id')
+                            ->label('Almacén')
+                            ->native(false)
+                            ->columnSpan(2)
+                            ->options(fn (): array => Almacen::query()
+                                ->orderBy('nombre')
+                                ->pluck('nombre', 'id')
+                                ->all())
+                            ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
+                            ->helperText('Sale por FEFO.'),
+
+                    ]),
+            ])
+            ->action(function (array $data, array $arguments): void {
+                abort_unless(Gate::allows('create', Cargo::class), 403);
+
+                $cuenta = $this->cuentaDe($arguments);
+
+                if (! $cuenta instanceof Cuenta) {
+                    return;
+                }
+
+                /*
+                 * Y sobre ESTA cuenta en particular: el id llega del
+                 * cliente. `CuentaPolicy::update()` ya niega las cerradas
+                 * y las anuladas.
+                 */
+                abort_unless(Gate::allows('update', $cuenta), 403);
+
+                $this->agregar($cuenta, $data);
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL MODAL TIENE QUE QUEDARSE ABIERTO
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Una ronda de medicamentos son veinte líneas. Si el
+                 * modal se cierra en cada una, son veinte veces buscar al
+                 * paciente de nuevo — y la pantalla deja de servir para
+                 * lo que existe.
+                 *
+                 * 🔴 `replaceMountedAction` sola NO alcanza. Filament,
+                 * después de correr la acción, decide si desmontarla
+                 * comparando **solo el nombre y el contexto** de lo que
+                 * estaba montado contra lo que quedó montado
+                 * (`InteractsWithActions::callMountedAction`). Volver a
+                 * montar la misma acción con el mismo contexto le da dos
+                 * arreglos idénticos: concluye que nadie la reemplazó y
+                 * la cierra igual.
+                 *
+                 * El contador hace que el contexto cambie en cada ítem, y
+                 * con eso la comparación da distinto y el modal se queda.
+                 * Filament solo lee `schemaComponent`, `table`, `bulk` y
+                 * `recordKey` del contexto: una clave propia le es
+                 * indiferente.
+                 */
+                $this->renglonDeLaTanda++;
+
+                $this->replaceMountedAction(
+                    'cargarEnCuenta',
+                    $arguments,
+                    ['renglon' => $this->renglonDeLaTanda],
+                );
+            })
+            /*
+             * `fillForm` con el ítem que venga en los argumentos: es lo
+             * que permite que un atajo de «lo más usado» que SÍ mueve
+             * inventario deje el ítem puesto y solo pida el almacén, en
+             * vez de fallar con un aviso.
+             */
+            ->fillForm(function (array $arguments): array {
+                $this->cargarElDescuentoDe($arguments);
+
+                /*
+                 * Cada línea arranca sin filtro. Corre al abrir el modal y
+                 * también en cada remontaje —o sea después de cada ítem
+                 * agregado—, que es justo lo que hace falta: la gaveta que
+                 * se escaneó para el renglón anterior no tiene por qué
+                 * seguir acotando el siguiente.
+                 */
+                $this->principioEscaneado = null;
+
+                return [
+                    'item_id'  => is_numeric($arguments['item'] ?? null) ? (int) $arguments['item'] : null,
+                    'cantidad' => 1,
+
+                    /*
+                     * El default va acá también: `fillForm` pisa el estado
+                     * entero, así que sin esta línea el selector volvía a
+                     * «Seleccione una opción» después de cada ítem cargado.
+                     */
+                    'unidad_cobro' => self::POR_UNIDAD,
+                ];
+            })
+            /*
+             * ─────────────────────────────────────────────────────────
+             * EL DESCUENTO VIVE EN LA BANDA DE ARRIBA, NO EN EL FORMULARIO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Son dos decisiones distintas y de dos personas distintas:
+             * qué lleva el paciente lo dice la receta, cuánto se le rebaja
+             * lo autoriza el hospital. Adentro de la fila del ítem obligaba
+             * a decidirlo mientras se tecleaba QUÉ se cobra, y encima había
+             * que volver a escribirlo en cada línea.
+             *
+             * Acá se pone UNA vez, para toda la tanda, y ocupa el rincón de
+             * arriba a la derecha: es una excepción que se usa cinco veces
+             * al día contra un escaneo que se usa cien.
+             */
+            ->modalContent(function (array $arguments) {
+                $rango = $this->rangoDelPacienteDe($arguments);
+
+                return view('filament.pages.partials.atajos-de-cargo', [
+                    'cuenta'    => $this->cuentaDe($arguments),
+                    'items'     => $this->itemsFrecuentes($arguments),
+                    'puede'     => $this->puedeCargar(),
+                    'tope'      => $this->topeDeDescuento($rango)->por('100')->redondeado(2),
+                    'ayuda'     => $this->ayudaDelDescuento($rango),
+                    'descuento' => $this->descuentoDeLaTanda,
+                    'motivo'    => $this->motivoDeLaTanda,
+                ]);
+            })
+            ->modalFooter(fn (array $arguments) => view(
+                'filament.pages.partials.cargos-de-la-cuenta',
+                [
+                    'cuenta' => $this->cuentaDe($arguments),
+
+                    /*
+                     * El descuento que está puesto pero todavía no tocó
+                     * ninguna línea: el pie lo muestra para que la pantalla
+                     * no se vea inerte entre que se teclea y que se agrega.
+                     */
+                    'armado' => $this->descuentoDeLaTanda,
+
+                    /*
+                     * Van como datos de la vista y no leídos con `$this`
+                     * adentro del Blade: así el partial se puede renderizar
+                     * desde cualquier lado sin depender de qué componente
+                     * lo esté pintando.
+                     */
+                    'usuario'      => auth()->id(),
+                    'cargoAQuitar' => $this->cargoAQuitar,
+                ],
+            ));
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function agregar(Cuenta $cuenta, array $data): void
+    {
+        $item = $this->itemDe($data['item_id'] ?? null);
+
+        /*
+         * Respaldo del Enter de la pistola: si el selector quedó vacío
+         * pero vino un código, se resuelve acá. Sin esto, escanear y
+         * presionar Enter no hace nada y el operador vuelve a escanear —
+         * que es como nacen los cargos duplicados.
+         */
+        if (! $item instanceof Item) {
+            $item = $this->itemPorCodigo($data['escaneo'] ?? null);
+        }
+
+        if (! $item instanceof Item) {
+            Notification::make()
+                ->warning()
+                ->title('Falta decir qué se agrega')
+                ->body('Escaneá el código o elegí el ítem del catálogo.')
+                ->send();
+
+            return;
+        }
+
+        /*
+         * ⚠️ Si no se entiende el número, NO se asume nada. Un `12,5`
+         * que llegue como float y se convierta a la brava termina
+         * cobrándole al paciente una cantidad que nadie tecleó
+         * (`NumeroDeFormulario`, lección del bloque 5d-1).
+         */
+        $tecleada = NumeroDeFormulario::aDecimal($data['cantidad'] ?? null);
+
+        if (! $tecleada instanceof Decimal) {
+            Notification::make()
+                ->danger()
+                ->title('No se entiende esa cantidad')
+                ->body('Escribí solo números, con punto o coma para los decimales. Ejemplo: 2.5')
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        /*
+         * 🔴 Acá se convierte a unidad de dispensación, y en un solo
+         * lugar. Todo lo que sale de esta línea hacia el motor ya está en
+         * la unidad del kardex: si la conversión viviera repartida, una
+         * caja terminaría descontando una tableta.
+         */
+        $unidadDeCobro = is_string($data['unidad_cobro'] ?? null)
+            ? $data['unidad_cobro']
+            : self::POR_UNIDAD;
+
+        $cantidad = $this->aUnidadesDeDispensacion($item, $unidadDeCobro, $tecleada);
+
+        if (! $cantidad instanceof Decimal) {
+            Notification::make()
+                ->danger()
+                ->title('Esa unidad no aplica a este ítem')
+                ->body(
+                    'Elegí otra forma de cobrarlo. Si el producto se fracciona y no aparece la '
+                    .'fracción, hay que declararla en el catálogo antes de poder venderla así.'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $almacen = isset($data['almacen_id']) && is_numeric($data['almacen_id'])
+            ? Almacen::query()->find((int) $data['almacen_id'])
+            : null;
+
+        /*
+         * 🔴 EL DESCUENTO DEL HOSPITAL ES SOLO PARA LO QUE SALE DE
+         * FARMACIA.
+         *
+         * Está puesto arriba y queda fijo mientras dura la tanda, así que
+         * en la misma tanda puede entrar una consulta. Esa no lleva
+         * rebaja, y no la lleva ACÁ y no en la memoria de quien atiende:
+         * esa es la diferencia entre una política y una costumbre.
+         *
+         * De porcentaje tecleado a fracción: 30 → 0.30. La división por
+         * cien va acá y no en la calculadora, para que el dominio hable
+         * siempre en fracciones y la pantalla siempre en porcentajes.
+         */
+        $fraccion = $cuenta->descuento_hospital;
+
+        $descuento = $item->se_almacena && $fraccion !== null
+            ? Decimal::de($fraccion)
+            : null;
+
+        $motivo = $descuento instanceof Decimal
+            ? $cuenta->motivo_descuento_hospital
+            : null;
+
+        try {
+            $cargos = app(RegistradorDeCargo::class)->registrar(
+                cuenta: $cuenta,
+                linea: new LineaDeCargo(
+                    item: $item,
+                    cantidad: $cantidad,
+                    claveIdempotencia: $this->claveDeEnvio,
+                    almacen: $almacen,
+                    descuentoComercialPorcentaje: $descuento,
+                    motivoDescuento: $motivo,
+
+                    /*
+                     * 🔴 Quién lo dio, no quién lo autorizó.
+                     *
+                     * El descuento no necesita el permiso de nadie: lo da
+                     * quien está cobrando. Pero queda con nombre, porque un
+                     * descuento anónimo es un descuento que nadie va a
+                     * explicar. `created_by` ya guarda quién asentó el
+                     * cargo; esto guarda quién decidió la rebaja, que en un
+                     * cargo cargado por una interfaz no son la misma
+                     * persona.
+                     */
+                    autorizadoPor: $descuento instanceof Decimal ? $cuenta->descuento_hospital_por : null,
+                ),
+            );
+        } catch (CargoException|CuentaException|EncuentroException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo agregar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        } catch (ExistenciaInsuficienteException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No hay suficiente en el estante')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        /*
+         * Clave nueva: lo que venga después es un hecho distinto y tiene
+         * que poder registrarse. Renovarla acá —y no al empezar la
+         * petición— es lo que hace que el reintento del MISMO envío siga
+         * trayendo la clave vieja y no duplique.
+         */
+        $this->claveDeEnvio = (string) Str::uuid();
+
+        /*
+         * Se suma con SIGNO y no con `montoTotal()`, que devuelve el
+         * valor absoluto: si el reintento idempotente trajera una fila
+         * negativa, el aviso diría el doble de lo que se cobró.
+         *
+         * Con `foreach` y no con `reduce()` porque el acumulador de
+         * `reduce` queda tipado como `Decimal|null` en la primera vuelta
+         * y eso hace fallar el nivel 7 sin ganar nada en claridad.
+         */
+        $total = Decimal::cero();
+
+        foreach ($cargos as $cargo) {
+            $total = $total->sumar(Decimal::de($cargo->total));
+        }
+
+        Notification::make()
+            ->success()
+            ->title($item->nombre)
+            ->body(
+                $cargos->count() > 1
+                    ? 'Agregado desde '.$cargos->count().' lotes, por L '.number_format((float) $total->redondeado(2), 2).'.'
+                    : 'Agregado por L '.number_format((float) $total->redondeado(2), 2).'.'
+            )
+            ->send();
+    }
+
+    // ── Anular un cargo ───────────────────────────────────────────────
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * LA ✕ QUITA LA LÍNEA EN EL ACTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Antes abría un segundo modal encima del de agregar, con un campo
+     * «¿qué pasó?» de diez caracteres mínimo. Dos problemas.
+     *
+     * 🔴 El de fondo: el botón solo aparece en cargos **pendientes** —
+     * `EstadoCargo::admiteAnulacionDirecta()` es cierto únicamente ahí—,
+     * o sea en algo que todavía no se facturó. Quitar una línea que se
+     * tecleó hace diez segundos, en una cuenta abierta, es corregir un
+     * error de tipeo; no es enmendar un documento fiscal. Pedir una
+     * justificación escrita para eso no produce auditoría: produce
+     * «aaaaaaaaaa».
+     *
+     * ⚠️ Lo que NO se relajó: se sigue llamando al mismo
+     * `AnuladorDeCargo`, así que igual queda la anulación con su reversa,
+     * el medicamento vuelve al mismo lote del que salió, y el registro
+     * dice quién lo quitó y cuándo. Nada se borra — lo único que cambió
+     * es que el motivo lo escribe el sistema en vez de la persona.
+     *
+     * El día que haya una pantalla de cierre donde se quiten cargos de
+     * hace tres días, ESA sí tiene que preguntar.
+     *
+     * ⚠️ Es un método público de Livewire: se puede invocar desde el
+     * cliente aunque el botón no exista. Por eso la autorización se
+     * verifica acá y no en el Blade.
+     */
+    public function quitarCargo(int $cargo): void
+    {
+        abort_unless(Gate::allows('create', Cargo::class), 403);
+
+        $laLinea = $this->cargoDe(['cargo' => $cargo]);
+
+        if (! $laLinea instanceof Cargo) {
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $laLinea->cuenta), 403);
+
+        /*
+         * 🔴 EL GUARDIÁN ESTÁ ACÁ, NO EN EL BLADE.
+         *
+         * El Blade dibuja la ✕ de una o la que abre el campo, pero esto
+         * es un método público de Livewire: se puede invocar desde el
+         * cliente con el id de un cargo de otro turno y sin motivo
+         * ninguno. Una regla que solo vive en la pantalla no es una regla.
+         */
+        $quienQuita = auth()->id();
+
+        if ($laLinea->pideMotivoParaQuitar(is_int($quienQuita) ? $quienQuita : null)) {
+            $this->pedirElMotivo($cargo);
+
+            return;
+        }
+
+        $this->anular($laLinea, 'Quitado en el mostrador mientras se armaba la cuenta.');
+    }
+
+    /**
+     * Abre el campo del motivo debajo del renglón.
+     *
+     * ⚠️ Es estado de Livewire y no una acción de Filament montada encima
+     * del modal. Ese camino ya se probó y no funciona: `mountAction()`
+     * desde adentro de una acción montada no abre nada y no da error —
+     * el clic simplemente no hace nada.
+     */
+    public function pedirElMotivo(int $cargo): void
+    {
+        $this->cargoAQuitar = $cargo;
+        $this->motivoDeQuitar = '';
+    }
+
+    /**
+     * Entrega de un tirón lo que falta de un renglón del paquete
+     * presupuestado (ADR-0009).
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * UN CLIC, NO UN FORMULARIO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El renglón ya dice qué producto, de qué envase y cuánto falta. Que
+     * la cajera lo vuelva a teclear es pedirle que copie a mano un dato
+     * que el sistema ya tiene — y ahí es donde se teclea 100 en vez de
+     * 10, con el paciente enfrente.
+     *
+     * ⚠️ Es un método de Livewire y NO una acción de Filament: `mountAction()`
+     * desde adentro de una acción montada no abre nada y no da error
+     * (mismo motivo que `pedirElMotivo()`).
+     *
+     * 🔴 Entra con `IncluidoEnTarifa`: sale de bodega, descuenta
+     * existencia y congela su costo, pero NO se le vuelve a cobrar al
+     * paciente — ya está dentro del paquete.
+     */
+    public function pedirLaCantidad(int $linea): void
+    {
+        $renglon = PresupuestoLinea::query()->with('presupuesto')->find($linea);
+
+        if (! $renglon instanceof PresupuestoLinea) {
+            return;
+        }
+
+        $this->lineaAEntregar = $linea;
+        $this->paqueteAbierto = true;
+
+        /*
+         * Se propone lo que falta, pero se puede bajar: casi nunca se
+         * entregan las diez tabletas de una sola vez. Si se dan ocho y el
+         * paciente pide el alta, las otras dos nunca salieron de farmacia
+         * y no tienen por qué figurar como entregadas.
+         */
+        $this->cantidadAEntregar = rtrim(rtrim(
+            $this->loQueFaltaDe($renglon->presupuesto, $renglon)->redondeado(4),
+            '0'
+        ), '.');
+    }
+
+    /**
+     * Abre o cierra el desglose del paquete.
+     *
+     * ⚠️ Es estado de LIVEWIRE y no un `<details>` del navegador.
+     *
+     * Se intentó con `<details>` —primero solo, después con `@entangle` y
+     * con `wire:key`— y en las tres el nodo se recrea al re-renderizar y
+     * la lista se cierra sola. Quien despacha cinco renglones seguidos
+     * tenía que reabrirla cinco veces, con el paciente esperando.
+     *
+     * Es el mismo camino que ya usa `pedirElMotivo()`: el estado del DOM
+     * no sobrevive a Livewire; el estado del componente sí.
+     */
+    public function alternarPaquete(): void
+    {
+        $this->paqueteAbierto = ! $this->paqueteAbierto;
+    }
+
+    public function cancelarEntrega(): void
+    {
+        $this->lineaAEntregar = null;
+        $this->cantidadAEntregar = '';
+    }
+
+    public function entregarDelPaquete(int $linea): void
+    {
+        $renglon = PresupuestoLinea::query()->with(['item', 'presupuesto'])->find($linea);
+
+        if (! $renglon instanceof PresupuestoLinea || ! $renglon->item instanceof Item) {
+            return;
+        }
+
+        $presupuesto = $renglon->presupuesto;
+        $cuenta = $presupuesto->cuentaViva();
+
+        if (! $cuenta instanceof Cuenta) {
+            Notification::make()->danger()->title('La cuenta ya no está abierta')->send();
+
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $cuenta), 403);
+
+        $pendiente = $this->loQueFaltaDe($presupuesto, $renglon);
+
+        if ($pendiente->esCero() || $pendiente->esNegativo()) {
+            Notification::make()->warning()->title('Ese renglón ya se entregó completo')->send();
+
+            return;
+        }
+
+        /*
+         * Lo que se entrega AHORA: nunca más de lo que falta. Si hiciera
+         * falta más, eso ya no está presupuestado y va por el camino
+         * normal — como excedente cobrable, que es lo correcto.
+         */
+        $aEntregar = NumeroDeFormulario::aDecimal($this->cantidadAEntregar) ?? $pendiente;
+
+        if ($aEntregar->esCero() || $aEntregar->esNegativo()) {
+            Notification::make()->warning()->title('Poné cuánto se le entrega')->send();
+
+            return;
+        }
+
+        if ($pendiente->menorQue($aEntregar)) {
+            $aEntregar = $pendiente;
+        }
+
+        $almacen = $this->almacenConExistencia($renglon->item, $aEntregar);
+
+        if (! $almacen instanceof Almacen) {
+            $hay = $this->cuantoHayDe($renglon->item);
+
+            Notification::make()
+                ->danger()
+                ->title('No hay existencia suficiente')
+                ->body(
+                    "Se piden {$aEntregar->redondeado(2)} de {$renglon->item->nombre} y en los almacenes a los que tenés acceso hay {$hay->redondeado(2)}."
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        try {
+            app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
+                item: $renglon->item,
+                cantidad: $aEntregar,
+                claveIdempotencia: (string) Str::uuid(),
+                almacen: $almacen,
+                ocurridoEn: now(),
+                presupuestoId: $presupuesto->id,
+                presupuestoLineaId: $renglon->id,
+                politica: PoliticaCargo::IncluidoEnTarifa,
+            ));
+        } catch (Throwable $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo entregar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->cancelarEntrega();
+        $this->paqueteAbierto = true;
+
+        $queda = $pendiente->restar($aEntregar);
+
+        Notification::make()
+            ->success()
+            ->title('Entregado')
+            ->body($queda->esCero()
+                ? "{$renglon->texto}. Va incluido en el paquete: no se le cobra aparte."
+                : "{$renglon->texto}: {$aEntregar->redondeado(2)} entregadas, quedan {$queda->redondeado(2)} sin salir de farmacia.")
+            ->send();
+    }
+
+    /**
+     * Cuánto hay del ítem sumando los almacenes que este usuario puede
+     * operar. Para que el aviso diga el número y no solo «no alcanza».
+     */
+    private function cuantoHayDe(Item $item): Decimal
+    {
+        $consultor = app(ConsultorDeExistencias::class);
+        $total = Decimal::cero();
+
+        /** @var Collection<int, Almacen> $almacenes */
+        $almacenes = AlmacenesDelUsuario::elegibles()->get();
+
+        foreach ($almacenes as $almacen) {
+            $total = $total->sumar($consultor->totalEn($item, $almacen));
+        }
+
+        return $total;
+    }
+
+    /**
+     * Deshace la última entrega de un renglón del paquete.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * SE EQUIVOCÓ: PUSO 8 Y SOLO DIO 6
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Pasa, y hay que poder arreglarlo sin llamar a nadie. Pero **un
+     * cargo no se edita** (§9.0.3): se anula, y `AnuladorDeCargo` asienta
+     * su reversa y devuelve el medicamento al kardex. Después se vuelve a
+     * entregar la cantidad correcta.
+     *
+     * Los dos movimientos quedan en la bitácora, que es lo que permite
+     * responder «¿por qué este lote tiene dos salidas y una devolución?»
+     * dentro de tres meses.
+     */
+    public function deshacerEntrega(int $linea): void
+    {
+        $renglon = PresupuestoLinea::query()->with('presupuesto')->find($linea);
+
+        if (! $renglon instanceof PresupuestoLinea) {
+            return;
+        }
+
+        $cuenta = $renglon->presupuesto->cuentaViva();
+
+        if (! $cuenta instanceof Cuenta) {
+            Notification::make()->danger()->title('La cuenta ya no está abierta')->send();
+
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $cuenta), 403);
+
+        $ultima = Cargo::query()
+            ->where('presupuesto_linea_id', $renglon->id)
+            ->where('estado', EstadoCargo::Pendiente->value)
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $ultima instanceof Cargo) {
+            Notification::make()
+                ->warning()
+                ->title('No hay ninguna entrega que deshacer')
+                ->body('Las entregas ya facturadas no se anulan acá: eso es nota de crédito.')
+                ->send();
+
+            return;
+        }
+
+        $this->paqueteAbierto = true;
+
+        try {
+            app(AnuladorDeCargo::class)->anular(
+                $ultima,
+                'Se corrigió la cantidad entregada del paquete presupuestado.'
+            );
+        } catch (Throwable $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo deshacer')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->success()
+            ->title('Entrega deshecha')
+            ->body("Volvieron {$ultima->cantidad} al inventario. Entregá de nuevo con la cantidad correcta.")
+            ->send();
+    }
+
+    /**
+     * Cuánto falta entregar de un renglón: lo presupuestado menos lo que
+     * ya salió. Derivado, nunca una columna (§9.G1).
+     */
+    private function loQueFaltaDe(Presupuesto $presupuesto, PresupuestoLinea $renglon): Decimal
+    {
+        foreach ($presupuesto->desglose() as $fila) {
+            if ($fila['linea']->id === $renglon->id) {
+                return Decimal::de($renglon->cantidad)->restar($fila['consumida']);
+            }
+        }
+
+        return Decimal::de($renglon->cantidad);
+    }
+
+    /**
+     * El primer almacén con saldo suficiente entre los que este usuario
+     * puede operar. El LOTE lo elige el motor por FEFO — acá solo se
+     * decide de qué estante se saca.
+     */
+    private function almacenConExistencia(Item $item, Decimal $cantidad): ?Almacen
+    {
+        $consultor = app(ConsultorDeExistencias::class);
+
+        /** @var Collection<int, Almacen> $almacenes */
+        $almacenes = AlmacenesDelUsuario::elegibles()->get();
+
+        foreach ($almacenes as $almacen) {
+            if (! $consultor->totalEn($item, $almacen)->menorQue($cantidad)) {
+                return $almacen;
+            }
+        }
+
+        return null;
+    }
+
+    public function cancelarQuitar(): void
+    {
+        $this->cargoAQuitar = null;
+        $this->motivoDeQuitar = '';
+    }
+
+    /**
+     * Quita la línea con el motivo que se escribió.
+     *
+     * El mínimo de diez caracteres lo impone `AnuladorDeCargo` y no se
+     * repite acá: si esta pantalla tuviera su propio mínimo, el día que
+     * cambie uno quedarían dos verdades. Lo que sí hace acá es traducir
+     * la excepción a algo que se pueda leer entre dos pacientes.
+     */
+    public function quitarConMotivo(): void
+    {
+        abort_unless(Gate::allows('create', Cargo::class), 403);
+
+        if ($this->cargoAQuitar === null) {
+            return;
+        }
+
+        $laLinea = $this->cargoDe(['cargo' => $this->cargoAQuitar]);
+
+        if (! $laLinea instanceof Cargo) {
+            $this->cancelarQuitar();
+
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $laLinea->cuenta), 403);
+
+        if ($this->anular($laLinea, trim($this->motivoDeQuitar))) {
+            $this->cancelarQuitar();
+        }
+    }
+
+    /**
+     * El único camino por el que esta pantalla anula.
+     *
+     * Devuelve si salió bien, para que quien llame decida si cierra el
+     * campo del motivo o lo deja abierto con lo que la persona ya
+     * escribió — perderle el texto porque el motivo era corto es la forma
+     * de que la segunda vez escriba «aaaaaaaaaa».
+     */
+    private function anular(Cargo $cargo, string $motivo): bool
+    {
+        try {
+            app(AnuladorDeCargo::class)->anular($cargo, $motivo);
+        } catch (CargoException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo quitar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        Notification::make()
+            ->success()
+            ->title('Línea quitada')
+            ->body('Quedó la reversa, con quién la quitó y por qué. Si movió inventario, la '
+                .'existencia volvió a su lote.')
+            ->send();
+
+        return true;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * DE QUÉ SE LE ESTÁ ATENDIENDO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El sistema ya sabe QUÉ se le cobró y QUIÉN se lo dio. Esto es lo
+     * que faltaba: POR QUÉ. Sin diagnóstico la aseguradora no procesa el
+     * reclamo, el Art. 180 del Código de Salud queda sin cumplirse, y el
+     * hospital no puede contestar de qué atiende.
+     *
+     * ⚠️ Cuelga del ENCUENTRO, no de la cuenta. La cuenta es el documento
+     * de cobro; el diagnóstico se consulta veinte años después, cuando la
+     * factura ya se pagó y se archivó.
+     */
+    public function diagnosticarAction(): Action
+    {
+        return Action::make('diagnosticar')
+            ->label('Diagnóstico')
+            ->icon(Heroicon::OutlinedClipboardDocumentList)
+            ->modalHeading(fn (array $arguments): string => $this->tituloDelModal($arguments))
+            ->modalDescription('Con qué entró y con qué sale. Es lo que la aseguradora lee primero y lo que se reporta a SESAL.')
+            ->modalWidth('4xl')
+            ->modalSubmitActionLabel('Agregar diagnóstico')
+            ->closeModalByClickingAway(false)
+            ->visible(fn (): bool => $this->puedeDiagnosticar())
+            ->schema([
+                Section::make()
+                    ->columns(12)
+                    ->schema([
+                        Select::make('momento')
+                            ->label('¿Cuándo?')
+                            ->required()
+                            ->native(false)
+                            ->live()
+                            ->default(MomentoDiagnostico::Ingreso->value)
+                            ->columnSpan(3)
+                            ->options(fn (): array => collect(MomentoDiagnostico::cases())
+                                ->mapWithKeys(fn (MomentoDiagnostico $m): array => [$m->value => $m->etiqueta()])
+                                ->all())
+                            ->helperText('Con qué llegó no es con qué sale.'),
+
+                        Select::make('tipo')
+                            ->label('¿Qué tan central?')
+                            ->required()
+                            ->native(false)
+                            ->default(TipoDiagnostico::Principal->value)
+                            ->columnSpan(3)
+                            ->options(fn (): array => collect(TipoDiagnostico::cases())
+                                ->mapWithKeys(fn (TipoDiagnostico $t): array => [$t->value => $t->etiqueta()])
+                                ->all())
+                            ->helperText('Uno principal por momento.'),
+
+                        Select::make('cie10_id')
+                            ->label('Diagnóstico (CIE-10)')
+                            ->required()
+                            ->searchable()
+                            ->native(false)
+                            ->columnSpan(6)
+                            ->placeholder('Escribí el nombre o el código')
+                            ->getSearchResultsUsing(fn (string $search): array => Cie10::buscar($search)
+                                ->mapWithKeys(fn (Cie10 $c): array => [$c->id => $c->etiqueta()])
+                                ->all())
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => Cie10::query()
+                                ->find(is_numeric($value) ? (int) $value : 0)?->etiqueta())
+                            ->helperText('Se busca sin tildes: «neumonia» encuentra «Neumonía».'),
+
+                        Toggle::make('confirmado')
+                            ->label('Confirmado')
+                            ->columnSpan(12)
+                            ->default(false)
+                            ->helperText(
+                                'Al ingreso casi siempre es presuntivo, y está bien que lo sea. '
+                                .'Guardar un presuntivo como confirmado hace que las estadísticas del '
+                                .'hospital cuenten casos que nunca existieron.'
+                            ),
+
+                        Textarea::make('observacion')
+                            ->label('Observación')
+                            ->rows(2)
+                            ->maxLength(1000)
+                            ->columnSpan(12)
+                            ->helperText('Opcional. Lo que el médico quiera agregar en sus palabras.'),
+                    ]),
+            ])
+            ->modalContent(function (array $arguments) {
+                $cuenta = $this->cuentaDe($arguments);
+
+                return view('filament.pages.partials.diagnosticos-del-encuentro', [
+                    'diagnosticos' => $cuenta instanceof Cuenta
+                        ? $this->diagnosticosDe($cuenta)
+                        : new ColeccionDeModelos,
+                ]);
+            })
+            ->action(function (array $data, array $arguments): void {
+                abort_unless(Gate::allows('create', Diagnostico::class), 403);
+
+                $cuenta = $this->cuentaDe($arguments);
+
+                if (! $cuenta instanceof Cuenta) {
+                    return;
+                }
+
+                $cie10 = Cie10::query()->find($data['cie10_id'] ?? 0);
+
+                if (! $cie10 instanceof Cie10) {
+                    return;
+                }
+
+                try {
+                    app(RegistradorDeDiagnostico::class)->registrar(
+                        encuentro: $cuenta->encuentro,
+                        cie10: $cie10,
+                        tipo: TipoDiagnostico::from((string) $data['tipo']),
+                        momento: MomentoDiagnostico::from((string) $data['momento']),
+                        confirmado: (bool) ($data['confirmado'] ?? false),
+                        observacion: $data['observacion'] ?? null,
+                    );
+                } catch (DiagnosticoException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo agregar')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Diagnóstico agregado')
+                    ->send();
+
+                /*
+                 * Mismo truco que en «Agregar a la cuenta»: el contexto
+                 * cambia para que Filament no cierre el modal. Una lista
+                 * de diagnósticos son tres o cuatro renglones, y cerrar
+                 * entre uno y otro obliga a buscar al paciente de nuevo.
+                 */
+                $this->renglonDeLaTanda++;
+
+                $this->replaceMountedAction(
+                    'diagnosticar',
+                    $arguments,
+                    ['renglon' => $this->renglonDeLaTanda],
+                );
+            });
+    }
+
+    /**
+     * Los diagnósticos vigentes del encuentro, de ingreso primero.
+     *
+     * @return ColeccionDeModelos<int, Diagnostico>
+     */
+    public function diagnosticosDe(Cuenta $cuenta): ColeccionDeModelos
+    {
+        /** @var ColeccionDeModelos<int, Diagnostico> $lista */
+        $lista = Diagnostico::query()
+            ->where('encuentro_id', $cuenta->encuentro_id)
+            ->with(['cie10', 'medico:id,name'])
+            ->orderByRaw("momento = 'egreso'")
+            ->orderByRaw("tipo = 'secundario'")
+            ->orderBy('id')
+            ->get();
+
+        return $lista;
+    }
+
+    // ── Utilidades ────────────────────────────────────────────────────
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL DESCUENTO ALCANZA A TODA LA CUENTA, SIN PREGUNTAR
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * En el mostrador la rebaja se decide AL FINAL: se marcan las cosas y
+     * cuando el paciente pregunta, se resuelve. Y se cambia de idea —30,
+     * después 20, después 10—. Un descuento que solo alcanza a lo que
+     * falta cargar deja al mismo paciente con dos precios en la misma
+     * factura, y el que quede a precio lleno es el que se cargó primero:
+     * pura casualidad, no una decisión.
+     *
+     * ⚠️ NO se editan los cargos por debajo. Cada línea se ANULA con el
+     * mismo servicio de siempre —que devuelve el medicamento al estante y
+     * deja la reversa escrita— y se vuelve a cargar con el descuento. Es
+     * más trabajo que un UPDATE, y es la única forma en que el kardex
+     * sigue diciendo la verdad: si la existencia bajó, hay un cargo que lo
+     * explica; si vuelve a subir, hay una anulación que lo explica.
+     *
+     * Todo va en UNA transacción. A mitad de camino —seis líneas rehechas
+     * y cuatro sin rehacer— la cuenta cobraría dos precios distintos por
+     * el mismo medicamento, en la misma factura, el mismo día.
+     */
+    private function rehacerLasLineasConElDescuento(Cuenta $cuenta): void
+    {
+        $fraccion = $cuenta->descuento_hospital === null
+            ? null
+            : Decimal::de($cuenta->descuento_hospital);
+
+        $motivo = $cuenta->motivo_descuento_hospital;
+
+        /*
+         * Solo lo de farmacia, solo lo que todavía se puede anular, y
+         * solo lo que NO tiene ya el descuento que corresponde. Sin esa
+         * última condición, cada vez que alguien saliera del campo se
+         * anularía y recargaría la cuenta entera para dejarla igual.
+         */
+        $lineas = $cuenta->cargos()
+            ->with(['item', 'almacen'])
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta()
+                && $cargo->item?->se_almacena === true
+                && ! $this->yaLoLleva($cargo, $fraccion));
+
+        if ($lineas->isEmpty()) {
+            return;
+        }
+
+        try {
+            DB::transaction(function () use ($lineas, $cuenta, $fraccion, $motivo): void {
+                $anulador = app(AnuladorDeCargo::class);
+                $registrador = app(RegistradorDeCargo::class);
+
+                foreach ($lineas as $cargo) {
+                    $item = $cargo->item;
+
+                    if (! $item instanceof Item) {
+                        continue;
+                    }
+
+                    $cantidad = Decimal::de($cargo->cantidad);
+                    $almacen = $cargo->almacen;
+
+                    $anulador->anular(
+                        $cargo,
+                        'Se rehace con el descuento del hospital de la cuenta '.$cuenta->numero,
+                    );
+
+                    $registrador->registrar($cuenta, new LineaDeCargo(
+                        item: $item,
+                        cantidad: $cantidad,
+                        claveIdempotencia: (string) Str::uuid(),
+                        almacen: $almacen,
+                        descuentoComercialPorcentaje: $fraccion,
+                        motivoDescuento: $fraccion instanceof Decimal ? $motivo : null,
+                        autorizadoPor: $fraccion instanceof Decimal ? $cuenta->descuento_hospital_por : null,
+                    ));
+                }
+            });
+        } catch (CargoException|CuentaException|EncuentroException|ExistenciaInsuficienteException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo aplicar a lo ya cargado')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->success()
+            ->title($fraccion instanceof Decimal ? 'Descuento aplicado a toda la cuenta' : 'Descuento quitado de toda la cuenta')
+            ->body($lineas->count().' línea(s) de farmacia quedaron al día.')
+            ->send();
+    }
+
+    /**
+     * ¿Esta línea ya tiene exactamente el descuento que le toca?
+     *
+     * Se compara en LEMPIRAS y no en fracciones, por la misma razón que
+     * en `CalculadoraDeCargo`: el descuento vive redondeado al centavo, y
+     * volver a dividirlo por el bruto devuelve un porcentaje que casi
+     * nunca es idéntico al que se pidió.
+     */
+    private function yaLoLleva(Cargo $cargo, ?Decimal $fraccion): bool
+    {
+        $objetivo = $fraccion instanceof Decimal
+            ? Decimal::de($cargo->bruto)->por($fraccion)->redondeado(2)
+            : '0.00';
+
+        return Decimal::de($cargo->descuento_comercial)->igualA($objetivo);
+    }
+
+    /**
+     * 🔴 El descuento SE LEE DE LA CUENTA cada vez que se abre el modal.
+     *
+     * Antes vivía solo en el estado de Livewire y aguantaba mientras la
+     * pantalla estuviera abierta. Bastaba con ir a Recepciones y volver
+     * para perderlo — y el mismo paciente terminaba con dos líneas al
+     * 30 % y una a precio lleno, sin que nadie lo decidiera.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    private function cargarElDescuentoDe(array $arguments): void
+    {
+        $cuenta = $this->cuentaDe($arguments);
+
+        if (! $cuenta instanceof Cuenta) {
+            $this->cuentaDelDescuento = null;
+            $this->descuentoDeLaTanda = null;
+            $this->motivoDeLaTanda = null;
+
+            return;
+        }
+
+        $this->cuentaDelDescuento = $cuenta->id;
+
+        /*
+         * De fracción a porcentaje: 0.3000 → «30». La pantalla habla en
+         * porcentajes y la tabla en fracciones, y la traducción vive
+         * solo acá y en `guardarElDescuentoEnLaCuenta()`.
+         */
+        $this->descuentoDeLaTanda = $cuenta->descuento_hospital === null
+            ? null
+            : rtrim(rtrim(Decimal::de($cuenta->descuento_hospital)->por('100')->redondeado(2), '0'), '.');
+
+        $this->motivoDeLaTanda = $cuenta->motivo_descuento_hospital;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * SE AUTORIZA UNA VEZ, Y QUEDA GUARDADO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Los dos `updated…` disparan lo mismo porque el descuento son dos
+     * datos que valen juntos: se teclea el número, después el motivo, y
+     * recién ahí la cuenta tiene algo que guardar. Escribir a medias
+     * dejaría un porcentaje sin explicación, que es exactamente lo que
+     * el CHECK de la tabla se niega a aceptar.
+     *
+     * Vaciar el campo lo BORRA. Es la forma de quitarlo sin inventar un
+     * botón aparte: si no hay porcentaje, no hay descuento.
+     */
+    public function updatedDescuentoDeLaTanda(): void
+    {
+        $this->guardarElDescuentoEnLaCuenta();
+    }
+
+    public function updatedMotivoDeLaTanda(): void
+    {
+        $this->guardarElDescuentoEnLaCuenta();
+    }
+
+    private function guardarElDescuentoEnLaCuenta(): void
+    {
+        $cuenta = $this->cuentaDelDescuento === null
+            ? null
+            : Cuenta::query()->find($this->cuentaDelDescuento);
+
+        if (! $cuenta instanceof Cuenta || ! Gate::allows('update', $cuenta)) {
+            return;
+        }
+
+        $fraccion = self::hayDescuento($this->descuentoDeLaTanda)
+            ? NumeroDeFormulario::aDecimalO($this->descuentoDeLaTanda, Decimal::cero())->entre('100')
+            : null;
+
+        if (! $fraccion instanceof Decimal) {
+            $cuenta->forceFill([
+                'descuento_hospital'        => null,
+                'motivo_descuento_hospital' => null,
+                'descuento_hospital_por'    => null,
+                'descuento_hospital_en'     => null,
+            ])->save();
+
+            $this->rehacerLasLineasConElDescuento($cuenta);
+
+            return;
+        }
+
+        /*
+         * El `max` del campo es comodidad del navegador, no un control:
+         * un POST armado a mano lo ignora. Un porcentaje mayor a 100
+         * moriría contra el CHECK de la tabla con un error crudo de
+         * Postgres, así que se descarta acá y la cuenta queda como estaba.
+         */
+        if ($fraccion->mayorQue('1')) {
+            return;
+        }
+
+        $motivo = is_string($this->motivoDeLaTanda) ? trim($this->motivoDeLaTanda) : '';
+
+        if (mb_strlen($motivo) < 10) {
+            return;
+        }
+
+        $cuenta->forceFill([
+            'descuento_hospital'        => $fraccion->redondeado(4),
+            'motivo_descuento_hospital' => $motivo,
+            'descuento_hospital_por'    => UsuarioAutenticado::id(),
+            'descuento_hospital_en'     => now(),
+        ])->save();
+
+        /*
+         * Sin preguntar: no hay un botón «¿lo aplico también a lo de
+         * antes?». Preguntarlo obliga a decidir dos veces lo mismo, y el
+         * día que alguien conteste que no, el paciente se lleva dos
+         * precios por el mismo medicamento sin que nadie lo haya querido.
+         */
+        $this->rehacerLasLineasConElDescuento($cuenta);
+    }
+
+    /**
+     * El rango de edad del paciente de esta cuenta, como texto.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    private function rangoDelPacienteDe(array $arguments): ?string
+    {
+        $cuenta = $this->cuentaDe($arguments);
+
+        if (! $cuenta instanceof Cuenta) {
+            return null;
+        }
+
+        return $cuenta->encuentro->persona->rangoDeEdadEn(now())?->value;
+    }
+
+    /**
+     * @param array<string, mixed> $arguments
+     */
+    private function cuentaDe(array $arguments): ?Cuenta
+    {
+        $id = $arguments['cuenta'] ?? null;
+
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        $cuenta = Cuenta::query()
+            ->with(['encuentro.persona', 'encuentro.expediente', 'convenio'])
+            ->find((int) $id);
+
+        return $cuenta instanceof Cuenta ? $cuenta : null;
+    }
+
+    /**
+     * La cuenta viva del paciente, si la tiene.
+     *
+     * Congelada cuenta como viva: congelar es el paso previo a cerrar, no
+     * un cierre, y esa cuenta todavía va a salir en una factura.
+     */
+    /**
+     * El nombre del paciente, con su cuenta viva al lado si la tiene.
+     *
+     * El rótulo va en la propia opción y no en un aviso aparte: la opción
+     * apagada explica sola por qué no se puede elegir, y de paso dice a
+     * qué cuenta hay que ir.
+     */
+    private function conSuCuentaAbierta(Persona $persona): string
+    {
+        $abierta = $this->cuentaVivaDe($persona->id);
+
+        return $abierta instanceof Cuenta
+            ? $persona->nombreCompleto().' — ya tiene '.$abierta->numero.' abierta'
+            : $persona->nombreCompleto();
+    }
+
+    /**
+     * Resuelve de una sola vez qué pacientes de la búsqueda tienen cuenta
+     * viva.
+     *
+     * Sin esto, doce resultados serían doce consultas para armar la lista
+     * y otras doce para decidir cuáles van apagados (§13.2). Se llena la
+     * misma memoria que usa `cuentaVivaDe`, así que lo que venga después
+     * ya no vuelve a preguntar — ni siquiera por los que NO tienen, que
+     * quedan anotados como nulo.
+     *
+     * @param list<int> $personaIds
+     */
+    private function precargarCuentasVivas(array $personaIds): void
+    {
+        $faltantes = array_values(array_filter(
+            $personaIds,
+            fn (int $id): bool => ! array_key_exists($id, $this->cuentasVivas),
+        ));
+
+        if ($faltantes === []) {
+            return;
+        }
+
+        foreach ($faltantes as $id) {
+            $this->cuentasVivas[$id] = null;
+        }
+
+        $vivas = Cuenta::query()
+            ->whereIn('estado', [
+                EstadoCuenta::Abierta->value,
+                EstadoCuenta::Congelada->value,
+            ])
+            ->whereHas('encuentro', fn (Builder $encuentro): Builder => $encuentro
+                ->whereIn('persona_id', $faltantes))
+            ->with('encuentro:id,persona_id')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($vivas as $cuenta) {
+            $persona = $cuenta->encuentro?->persona_id;
+
+            if (is_int($persona)) {
+                $this->cuentasVivas[$persona] = $cuenta;
+            }
+        }
+    }
+
+    private function cuentaVivaDe(mixed $personaId): ?Cuenta
+    {
+        if (! is_numeric($personaId)) {
+            return null;
+        }
+
+        $clave = (int) $personaId;
+
+        /*
+         * El modal se vuelve a pintar con cada campo que se toca, y este
+         * aviso se pregunta dos veces por pintada —una para saber si se
+         * muestra y otra para armar el texto—. Sin la memoria, elegir
+         * paciente, expediente, tipo y pagador serían ocho consultas para
+         * responder cuatro veces lo mismo (§13.2).
+         */
+        if (array_key_exists($clave, $this->cuentasVivas)) {
+            return $this->cuentasVivas[$clave];
+        }
+
+        $cuenta = Cuenta::query()
+            ->whereIn('estado', [
+                EstadoCuenta::Abierta->value,
+                EstadoCuenta::Congelada->value,
+            ])
+            ->whereHas('encuentro', fn (Builder $encuentro): Builder => $encuentro
+                ->where('persona_id', $clave))
+            ->orderByDesc('id')
+            ->first();
+
+        return $this->cuentasVivas[$clave] = $cuenta instanceof Cuenta ? $cuenta : null;
+    }
+
+    private function cargoDe(array $arguments): ?Cargo
+    {
+        $id = $arguments['cargo'] ?? null;
+
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        $cargo = Cargo::query()->find((int) $id);
+
+        return $cargo instanceof Cargo ? $cargo : null;
+    }
+
+    /**
+     * El ítem que corresponde a un código escaneado o tecleado.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL CÓDIGO DE BARRAS NO ESTÁ EN EL ÍTEM: ESTÁ EN LA PRESENTACIÓN
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * `items` no tiene columna de código de barras, y es correcto que no
+     * la tenga: lo que se escanea es el ENVASE, y el mismo medicamento
+     * llega en caja de 100, en blíster de 10 y en muestra médica, cada
+     * uno con su código. Ese dato vive en `item_presentaciones`.
+     *
+     * Así que se busca en dos lugares y en este orden:
+     *
+     *   1. el código de barras de una presentación — lo que lee la
+     *      pistola frente al estante;
+     *   2. el `codigo` del ítem — lo que teclea alguien que se lo sabe.
+     *
+     * ⚠️ El código de barras se compara TAL CUAL, sin pasar a mayúsculas:
+     * algunos GS1 llevan minúsculas y tocarlas rompe la lectura (lo dice
+     * el propio modelo `ItemPresentacion`). El código del ítem sí se
+     * normaliza, porque ese se teclea a mano.
+     *
+     * Un solo lugar para los dos caminos —el `afterStateUpdated` del
+     * escáner y el respaldo del Enter— porque si difirieran, la pistola
+     * encontraría un producto que el teclado no.
+     */
+    private function itemPorCodigo(mixed $codigo): ?Item
+    {
+        $presentacion = $this->presentacionPorCodigo($codigo);
+
+        if ($presentacion instanceof ItemPresentacion) {
+            return $presentacion->item;
+        }
+
+        if (! is_string($codigo) || trim($codigo) === '') {
+            return null;
+        }
+
+        $item = Item::query()
+            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
+            ->first();
+
+        return $item instanceof Item ? $item : null;
+    }
+
+    /**
+     * La presentación cuyo código de barras coincide, si la hay.
+     */
+    private function presentacionPorCodigo(mixed $codigo): ?ItemPresentacion
+    {
+        if (! is_string($codigo) || trim($codigo) === '') {
+            return null;
+        }
+
+        $presentacion = ItemPresentacion::query()
+            ->with('item')
+            ->where('codigo_barras', trim($codigo))
+            ->first();
+
+        return $presentacion instanceof ItemPresentacion ? $presentacion : null;
+    }
+
+    /**
+     * Cuánto puede rebajar el hospital a ESTE paciente, en fracción.
+     *
+     * Es la misma clase que usa `CalculadoraDeCargo`, a propósito: si la
+     * pantalla tuviera su propia tabla de topes, el día que dirección
+     * cambie uno quedarían dos verdades y la pantalla ofrecería algo que
+     * el servicio rechaza.
+     */
+    public function topeDeDescuento(mixed $rango): Decimal
+    {
+        return app(PoliticaDeDescuentoComercial::class)->topePara(
+            is_string($rango) ? RangoEdad::tryFrom($rango) : null
+        );
+    }
+
+    /**
+     * Corto a propósito: el porqué está en el código y en el mensaje de
+     * error, no debajo de un campo que alguien mira de reojo entre dos
+     * pacientes. Acá solo va el número que necesita para decidir.
+     */
+    public function ayudaDelDescuento(mixed $rango): string
+    {
+        $tope = $this->topeDeDescuento($rango);
+
+        if ($tope->esCero()) {
+            return 'No aplica: ya recibe el descuento de ley más alto.';
+        }
+
+        $caso = is_string($rango) ? RangoEdad::tryFrom($rango) : null;
+
+        /*
+         * «Aplica a lo que agregues» y no «aplica a la cuenta»: los cargos
+         * que ya están asentados NO se tocan. Un cargo asentado tiene su
+         * movimiento de kardex y su fila en la bitácora; cambiarlo por
+         * atrás dejaría dos verdades sobre a cuánto se vendió. Si hay que
+         * rehacer una línea, se anula y se vuelve a cargar — y ahí queda
+         * escrito que se rehizo.
+         */
+        return $caso instanceof RangoEdad && $caso->tieneDescuentoLegal()
+            ? 'Hasta '.$tope->comoPorcentaje().', además del de ley. Aplica a toda la cuenta.'
+            : 'Hasta '.$tope->comoPorcentaje().'. Aplica a toda la cuenta.';
+    }
+
+    /**
+     * ¿El campo del descuento trae algo distinto de cero?
+     *
+     * Estático y con `mixed` porque Livewire manda el número tecleado
+     * como float, como entero o como cadena según el momento, y las tres
+     * formas significan lo mismo (§9: un conversor de formulario nunca
+     * decide por su cuenta que «no entiendo esto» vale cero).
+     */
+    public static function hayDescuento(mixed $porcentaje): bool
+    {
+        $fraccion = NumeroDeFormulario::aDecimal($porcentaje);
+
+        return $fraccion instanceof Decimal && ! $fraccion->esCero() && ! $fraccion->esNegativo();
+    }
+
+    /**
+     * Las tres formas de contar lo mismo.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ ESTO ES UNA CONVERSIÓN Y NO UN PRECIO DISTINTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El kardex y el tarifario se llevan SIEMPRE en unidad de
+     * dispensación (§8.7). Vender la caja de cien tabletas no es otro
+     * precio: son cien tabletas. Por eso este selector convierte la
+     * CANTIDAD y no toca el precio unitario.
+     *
+     * Si algún día el hospital quiere cobrar la caja más barata que cien
+     * tabletas sueltas, eso es una fila de tarifario para otro ítem —o
+     * un descuento con motivo y autorizador—, nunca un número escondido
+     * en una conversión de unidades. Un descuento invisible es la fuga de
+     * caja que el §8.6.2-4 existe para evitar.
+     *
+     * @return array<string, string>
+     */
+    public function unidadesDeCobro(?Item $item): array
+    {
+        if (! $item instanceof Item) {
+            return [];
+        }
+
+        $unidad = $this->unidadDe($item);
+
+        $opciones = [
+            self::POR_UNIDAD => $unidad ?? 'Unidad',
+        ];
+
+        /*
+         * La fracción primero entre las «menores»: un frasco que se
+         * fracciona se cobra por ml muchas más veces que por frasco.
+         */
+        if ($item->fraccionable && $item->unidad_fraccion_id !== null && $item->fracciones_por_unidad !== null) {
+            $opciones[self::POR_FRACCION] = $item->unidadFraccion->etiqueta()
+                .' — '.rtrim(rtrim($item->fracciones_por_unidad, '0'), '.')
+                .' por '.($unidad ?? 'unidad');
+        }
+
+        foreach ($this->presentacionesDe($item) as $presentacion) {
+            $opciones[self::POR_PRESENTACION.$presentacion->id] = $presentacion->nombre
+                .' — '.rtrim(rtrim((string) $presentacion->unidades_por_presentacion, '0'), '.')
+                .' '.($unidad ?? 'unidades');
+        }
+
+        return $opciones;
+    }
+
+    /**
+     * Las presentaciones vigentes del ítem, en orden de contenido.
+     *
+     * @return ColeccionDeModelos<int, ItemPresentacion>
+     */
+    private function presentacionesDe(Item $item): ColeccionDeModelos
+    {
+        return ItemPresentacion::query()
+            ->where('item_id', $item->id)
+            ->orderBy('unidades_por_presentacion')
+            ->get();
+    }
+
+    /**
+     * Lo tecleado, llevado a unidades de dispensación.
+     *
+     * Devuelve `null` cuando la unidad elegida no se puede resolver —una
+     * presentación de otro ítem, una fracción en algo que no se
+     * fracciona—. Nunca un cero: el cero es una cantidad legal y
+     * confundirlos sería cobrar la nada (lección de `NumeroDeFormulario`).
+     */
+    private function aUnidadesDeDispensacion(Item $item, string $unidad, Decimal $cantidad): ?Decimal
+    {
+        if ($unidad === self::POR_UNIDAD) {
+            return $cantidad;
+        }
+
+        if ($unidad === self::POR_FRACCION) {
+            if (! $item->fraccionable || $item->fracciones_por_unidad === null) {
+                return null;
+            }
+
+            return $cantidad->entre(Decimal::de($item->fracciones_por_unidad));
+        }
+
+        if (! str_starts_with($unidad, self::POR_PRESENTACION)) {
+            return null;
+        }
+
+        $presentacion = ItemPresentacion::query()
+            ->find((int) mb_substr($unidad, mb_strlen(self::POR_PRESENTACION)));
+
+        if (! $presentacion instanceof ItemPresentacion || $presentacion->item_id !== $item->id) {
+            return null;
+        }
+
+        return Decimal::de($presentacion->aUnidadesDeDispensacion($cantidad->redondeado(4)));
+    }
+
+    /**
+     * «2 CAJA X 100 TABLETAS = 200 TABLETA», para leerlo antes de apretar.
+     */
+    private function equivalencia(Item $item, string $unidad, mixed $cantidad): ?string
+    {
+        $enLaUnidad = $this->unidadDe($item);
+
+        if ($unidad === self::POR_UNIDAD) {
+            return $enLaUnidad === null ? null : 'En '.$enLaUnidad.'.';
+        }
+
+        $tecleada = NumeroDeFormulario::aDecimal($cantidad);
+
+        if (! $tecleada instanceof Decimal) {
+            return null;
+        }
+
+        $convertida = $this->aUnidadesDeDispensacion($item, $unidad, $tecleada);
+
+        if (! $convertida instanceof Decimal) {
+            return null;
+        }
+
+        $etiqueta = $this->unidadesDeCobro($item)[$unidad] ?? '';
+
+        return sprintf(
+            '%s %s = %s %s.',
+            rtrim(rtrim($tecleada->redondeado(4), '0'), '.'),
+            mb_strstr($etiqueta, ' —', true) ?: $etiqueta,
+            rtrim(rtrim($convertida->redondeado(4), '0'), '.'),
+            $enLaUnidad ?? 'unidades',
+        );
+    }
+
+    /**
+     * En qué unidad se cuenta lo que se está cargando.
+     *
+     * El kardex y la cuenta se llevan SIEMPRE en unidad de dispensación,
+     * nunca en envases (§8.7). Decirlo en pantalla es lo que evita que
+     * alguien escanee una caja de cien y teclee «1» pensando en la caja.
+     */
+    private function unidadDe(Item $item): ?string
+    {
+        if ($item->unidad_dispensacion_id === null) {
+            return null;
+        }
+
+        return $item->unidadDispensacion->etiqueta();
+    }
+
+    /**
+     * Los ocho ítems que más se cargaron últimamente en esta sede.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ ESTO AHORRA MÁS TIEMPO QUE CUALQUIER OTRA COSA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Una ronda de medicamentos son veinte líneas y casi siempre las
+     * mismas seis cosas. Buscarlas por nombre veinte veces es el trabajo;
+     * apretarlas es el atajo. Sale de lo que el hospital REALMENTE carga,
+     * no de una lista que alguien tenga que mantener.
+     *
+     * Con la base recién sembrada todavía no hay historial, así que cae
+     * en los primeros ítems con precio de lista vigente: el día uno la
+     * pantalla ya sirve para algo.
+     *
+     * @param array<string, mixed> $arguments
+     *
+     * @return ColeccionDeModelos<int, Item>
+     */
+    public function itemsFrecuentes(array $arguments): ColeccionDeModelos
+    {
+        $cuenta = $this->cuentaDe($arguments);
+
+        if (! $cuenta instanceof Cuenta) {
+            return new ColeccionDeModelos;
+        }
+
+        $ids = Cargo::query()
+            ->where('sede_id', $cuenta->sede_id)
+            ->where('fecha_operacion', '>=', now()->subDays(60)->toDateString())
+            ->where('estado', '<>', EstadoCargo::Anulado->value)
+            ->selectRaw('item_id, count(*) as veces')
+            ->groupBy('item_id')
+            ->orderByDesc('veces')
+            ->limit(8)
+            ->pluck('item_id');
+
+        /*
+         * 🔴 Los atajos también respetan la vigencia. Un ítem retirado
+         * —el nombre mal escrito que alguien creó por error— fue de lo
+         * más cargado justamente PORQUE se estuvo cobrando, así que sin
+         * este filtro se quedaría de botón en la banda: el lugar de la
+         * pantalla donde cobrarlo cuesta un solo clic.
+         */
+        if ($ids->isEmpty()) {
+            return Item::query()
+                ->whereHas('precios', fn ($precios) => $precios->whereNull('convenio_id'))
+                ->vigentesEn(now())
+                ->orderBy('nombre')
+                ->limit(8)
+                ->get();
+        }
+
+        return Item::query()
+            ->whereIn('id', $ids)
+            ->vigentesEn(now())
+            ->orderBy('nombre')
+            ->get();
+    }
+
+    /**
+     * Un clic = una unidad. El atajo de «lo más usado».
+     *
+     * ⚠️ Es un método público de Livewire, así que **se puede invocar
+     * desde el cliente aunque el botón no exista**. La autorización se
+     * verifica acá adentro, no en la vista.
+     */
+    public function agregarRapido(int $cuenta, int $item): void
+    {
+        abort_unless(Gate::allows('create', Cargo::class), 403);
+
+        $laCuenta = $this->cuentaDe(['cuenta' => $cuenta]);
+        $elItem = $this->itemDe($item);
+
+        if (! $laCuenta instanceof Cuenta || ! $elItem instanceof Item) {
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $laCuenta), 403);
+
+        /*
+         * Lo que mueve inventario NO se carga de un clic: hay que decir de
+         * qué almacén sale, y adivinarlo sería inventar un faltante en el
+         * estante equivocado. Se deja el ítem puesto en el formulario y se
+         * pide lo único que falta.
+         */
+        if ($elItem->mueveInventario()) {
+            Notification::make()
+                ->info()
+                ->title($elItem->nombre)
+                ->body('Decí de qué almacén sale y presioná Agregar.')
+                ->send();
+
+            $this->replaceMountedAction('cargarEnCuenta', [
+                'cuenta' => $laCuenta->id,
+                'item'   => $elItem->id,
+            ]);
+
+            return;
+        }
+
+        $this->agregar($laCuenta, ['item_id' => $elItem->id, 'cantidad' => 1]);
+
+        $this->replaceMountedAction('cargarEnCuenta', ['cuenta' => $laCuenta->id]);
+    }
+
+    private function itemDe(mixed $valor): ?Item
+    {
+        if (! is_numeric($valor)) {
+            return null;
+        }
+
+        $item = Item::query()->find((int) $valor);
+
+        return $item instanceof Item ? $item : null;
+    }
+
+    /**
+     * @param array<string, mixed> $arguments
+     */
+    private function tituloDelModal(array $arguments): string
+    {
+        $cuenta = $this->cuentaDe($arguments);
+
+        if (! $cuenta instanceof Cuenta) {
+            return 'Agregar a la cuenta';
+        }
+
+        return $cuenta->encuentro->persona->nombreCompleto().' · '.$cuenta->numero;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function expedientesDe(mixed $personaId): array
+    {
+        if (! is_numeric($personaId)) {
+            return [];
+        }
+
+        return Expediente::query()
+            ->where('persona_id', (int) $personaId)
+            ->orderByDesc('abierto_el')
+            ->pluck('numero', 'id')
+            ->all();
+    }
+
+    /**
+     * El código escaneado resuelve el ítem y deja el foco listo para la
+     * cantidad. Si no lo encuentra, lo dice y no adivina.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EN ESTE HOSPITAL SE ESCANEAN DOS COSAS DISTINTAS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     *   · EL ENVASE — la caja, el frasco, el blíster. Ese código
+     *     identifica UN producto, así que lo elige y listo.
+     *   · LA GAVETA — la etiqueta del principio activo, `PA-0001`. Esa
+     *     no identifica un producto: identifica una molécula, y el
+     *     acetaminofén vive en tableta, en jarabe y en supositorio.
+     *
+     * Confundirlas sería lo peor que puede hacer esta pantalla: elegir
+     * «el primero que aparezca» con el paciente enfrente es dispensar
+     * una forma farmacéutica por otra. Por eso la gaveta no elige, acota
+     * — y quien dispensó dice cuál fue.
+     *
+     * El prefijo alcanza para distinguirlas sin preguntarle nada a quien
+     * escanea, que es todo el punto de que el prefijo exista.
+     */
+    private function resolverEscaneo(mixed $codigo, Set $set): void
+    {
+        if (! is_string($codigo) || trim($codigo) === '') {
+            return;
+        }
+
+        $this->principioEscaneado = null;
+
+        if (PrincipioActivo::pareceUnCodigoSuyo($codigo)) {
+            $this->resolverGaveta($codigo, $set);
+
+            return;
+        }
+
+        $presentacion = $this->presentacionPorCodigo($codigo);
+        $item = $this->itemPorCodigo($codigo);
+
+        if (! $item instanceof Item) {
+            Notification::make()
+                ->warning()
+                ->title('Ese código no está en el catálogo')
+                ->body(
+                    'El código de barras se registra en la PRESENTACIÓN del ítem —la caja, el frasco, '
+                    .'el blíster—, no en el ítem. Si el producto ya existe, agregale su presentación con '
+                    .'este código desde el catálogo. Mientras tanto, buscalo por nombre.'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $set('item_id', $item->id);
+
+        /*
+         * ⚠️ La cantidad queda en UNO, no en el contenido de la caja.
+         *
+         * La tentación es poner 100 al escanear una caja de 100 tabletas.
+         * Sería cobrarle una caja entera al paciente por pasar la pistola:
+         * en un hospital se dispensan dos tabletas, no el envase. El
+         * escaneo dice QUÉ es; cuánto lo dice la persona.
+         */
+        $set('cantidad', 1);
+
+        $unidad = $this->unidadDe($item);
+
+        Notification::make()
+            ->success()
+            ->title($item->nombre)
+            ->body(
+                ($presentacion instanceof ItemPresentacion
+                    ? 'Leído de «'.$presentacion->nombre.'». '
+                    : '')
+                .($unidad === null
+                    ? 'Escribí la cantidad y presioná Agregar.'
+                    /*
+                     * Se avisa que quedó en la unidad suelta, no en la
+                     * caja. El default nunca cobra de más: si de verdad
+                     * se vende el envase entero, hay que decirlo.
+                     */
+                    : 'Se cobra por '.$unidad.'. Si vendés el envase entero, cambialo en «¿Se cobra por…?».')
+            )
+            ->send();
+    }
+
+    /**
+     * La etiqueta de la gaveta: acota la lista a lo que lleva ese
+     * principio activo, y solo elige cuando no hay nada que elegir.
+     */
+    private function resolverGaveta(string $codigo, Set $set): void
+    {
+        $principio = PrincipioActivo::query()
+            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
+            ->first();
+
+        if (! $principio instanceof PrincipioActivo) {
+            Notification::make()
+                ->warning()
+                ->title('Esa etiqueta no está en el catálogo')
+                ->body(
+                    'El código arranca con «'.PrincipioActivo::PREFIJO.'», así que es una etiqueta de '
+                    .'gaveta, pero ningún principio activo la tiene. Puede ser de una gaveta vieja: '
+                    .'reimprimí la etiqueta desde Farmacia → Principios activos.'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $productos = $this->productosVigentesDe($principio);
+
+        if ($productos === []) {
+            Notification::make()
+                ->warning()
+                ->title('Nada vigente con '.$principio->nombre)
+                ->body(
+                    'La gaveta está etiquetada pero hoy ningún producto del catálogo lo lleva. Se '
+                    .'vincula desde la ficha del producto, en «Principios activos».'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->principioEscaneado = (int) $principio->getKey();
+        $set('cantidad', 1);
+
+        /*
+         * Uno solo no es una elección: es el producto. Obligar a abrir un
+         * desplegable de un renglón es un clic que no decide nada.
+         */
+        if (count($productos) === 1) {
+            $set('item_id', array_key_first($productos));
+
+            Notification::make()
+                ->success()
+                ->title($principio->nombre)
+                ->body(
+                    'El único vigente que lo lleva: '.reset($productos)
+                    .'. Escribí la cantidad y presioná Agregar.'
+                )
+                ->send();
+
+            return;
+        }
+
+        $set('item_id', null);
+
+        Notification::make()
+            ->success()
+            ->title($principio->nombre.' · '.count($productos).' productos')
+            ->body(
+                'Abrí «¿Qué se le agrega?» y elegí en qué forma se le dio. La lista quedó acotada a '
+                .'los que llevan este principio activo.'
+            )
+            ->send();
+    }
+
+    /**
+     * Los productos vigentes que llevan ese principio activo, ya
+     * rotulados para el desplegable.
+     *
+     * La consulta vive en el modelo —`PrincipioActivo::productosVigentes()`—
+     * y no acá: es una pregunta del negocio, se hace desde más de una
+     * pantalla, y en un método privado de una página de Filament no hay
+     * forma de probarla.
+     *
+     * @return array<int, string>
+     */
+    private function productosVigentesDe(PrincipioActivo $principio): array
+    {
+        $id = (int) $principio->getKey();
+
+        if (array_key_exists($id, $this->productosPorPrincipio)) {
+            return $this->productosPorPrincipio[$id];
+        }
+
+        $productos = $principio->productosVigentes()
+            ->mapWithKeys(fn (Item $item): array => [(int) $item->getKey() => $item->etiqueta()])
+            ->all();
+
+        return $this->productosPorPrincipio[$id] = $productos;
+    }
+
+    /**
+     * Las opciones que ve el desplegable: los del principio escaneado, o
+     * ninguna cuando no hay gaveta de por medio —ahí manda la búsqueda—.
+     *
+     * @return array<int, string>
+     */
+    private function productosDelPrincipioEscaneado(): array
+    {
+        if ($this->principioEscaneado === null) {
+            return [];
+        }
+
+        $principio = PrincipioActivo::query()->find($this->principioEscaneado);
+
+        return $principio instanceof PrincipioActivo
+            ? $this->productosVigentesDe($principio)
+            : [];
+    }
+
+    private function nombreDelPrincipioEscaneado(): string
+    {
+        if ($this->principioEscaneado === null) {
+            return '';
+        }
+
+        $principio = PrincipioActivo::query()->find($this->principioEscaneado);
+
+        return $principio instanceof PrincipioActivo ? $principio->nombre : '';
+    }
+
+    /**
+     * Lo que devuelve el buscador del selector.
+     *
+     * Con una gaveta escaneada busca DENTRO de esos productos y no en
+     * todo el catálogo: si la lista dice «solo lo que lleva
+     * ACETAMINOFÉN», teclear tiene que seguir respetando eso. Un filtro
+     * que se rompe al escribir es peor que no tenerlo.
+     *
+     * @return array<int, string>
+     */
+    private function resultadosDeBusqueda(string $search): array
+    {
+        if ($this->principioEscaneado === null) {
+            return Item::buscar($search, soloVigentes: true)
+                ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
+                ->mapWithKeys(fn (Item $item): array => [(int) $item->getKey() => $item->etiqueta()])
+                ->all();
+        }
+
+        $clave = NormalizadorDeTexto::clave($search);
+
+        if ($clave === '') {
+            return $this->productosDelPrincipioEscaneado();
+        }
+
+        return array_filter(
+            $this->productosDelPrincipioEscaneado(),
+            fn (string $etiqueta): bool => str_contains(NormalizadorDeTexto::clave($etiqueta), $clave),
+        );
+    }
+
+    /**
+     * Lo que la tarjeta muestra sin que nadie tenga que abrir nada.
+     *
+     * @return array<string, string>
+     */
+    public function resumenDe(Cuenta $cuenta): array
+    {
+        $encuentro = $cuenta->encuentro;
+        $persona = $encuentro->persona;
+
+        return [
+            'nombre'      => $persona->nombreCompleto(),
+            'expediente'  => $encuentro->expediente->numero,
+            'ingreso'     => $encuentro->abierto_en->format('d/m/Y H:i'),
+            'desde'       => $encuentro->abierto_en->diffForHumans(),
+            'tipo'        => $encuentro->tipo->etiqueta(),
+            'servicio'    => $encuentro->servicio_id === null ? '' : $encuentro->servicio->nombre,
+            'pagador'     => $cuenta->convenio->nombre,
+            'total'       => $cuenta->saldo()->formateado(),
+            'paciente'    => $cuenta->saldoDelPaciente()->formateado(),
+            'aseguradora' => $cuenta->saldoDeLaAseguradora()->formateado(),
+            'lineas'      => (string) $cuenta->lineas,
+            'estado'      => $cuenta->estado->etiqueta(),
+        ];
+    }
+
+    public function colorDelEstado(Cuenta $cuenta): string
+    {
+        return $cuenta->estado === EstadoCuenta::Congelada ? 'warning' : 'success';
+    }
+}

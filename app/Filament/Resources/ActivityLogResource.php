@@ -37,7 +37,7 @@ class ActivityLogResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Administración';
+        return 'Seguridad y auditoría';
     }
 
     public static function canCreate(): bool

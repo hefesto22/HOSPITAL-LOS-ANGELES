@@ -8,6 +8,7 @@ use App\Domain\Enums\TipoAlmacen;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\SedeField;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
@@ -18,6 +19,17 @@ use Filament\Schemas\Schema;
 
 /**
  * Formulario de Almacén — patrón §10.
+ *
+ * ⚠️ MODO ALMACÉN ÚNICO (`sihla.inventario.modo_almacen_unico`)
+ *
+ * Hospital Los Ángeles no divide el inventario: hay UN almacén y ahí se
+ * guarda todo. Con la bandera encendida, «Tipo» y «Servicio dueño»
+ * desaparecen de la pantalla y el almacén nace como `AlmacenUnico`.
+ * Crear un almacén queda en: sede (ya viene puesta) + código + nombre.
+ *
+ * No se borran ni el campo ni los otros tipos: la clínica siguiente sí
+ * separa bodega de farmacia (§1.1) y apagar la bandera se los devuelve
+ * sin tocar código ni migración.
  */
 final class AlmacenForm
 {
@@ -33,6 +45,11 @@ final class AlmacenForm
                     self::estado(),
                 ]),
         ]);
+    }
+
+    public static function modoUnico(): bool
+    {
+        return (bool) config('sihla.inventario.modo_almacen_unico', false);
     }
 
     private static function identificacion(): Tab
@@ -52,31 +69,63 @@ final class AlmacenForm
                 CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
-                    ->maxLength(255),
+                    ->maxLength(255)
+                    ->columnSpan(self::modoUnico() ? 2 : 1),
 
-                Select::make('tipo')
-                    ->label('Tipo')
-                    ->options(fn (): array => collect(TipoAlmacen::cases())
-                        ->mapWithKeys(fn (TipoAlmacen $t): array => [$t->value => $t->etiqueta()])
-                        ->all())
-                    ->required()
-                    ->native(false)
-                    ->helperText('La bodega central no dispensa a paciente: traslada.'),
-
-                Select::make('servicio_id')
-                    ->label('Servicio dueño')
-                    ->relationship('servicio', 'nombre')
-                    ->searchable()
-                    ->preload()
-                    ->placeholder('Ninguno — no cuelga de un área')
-                    ->columnSpanFull()
-                    ->helperText(
-                        'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de '
-                        .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
-                        .'paro de emergencia o el stock de piso de hospitalización.'
-                    ),
+                ...self::tipoYServicio(),
             ])
             ->columns(2);
+    }
+
+    /**
+     * El par «Tipo + Servicio dueño», o el Hidden que lo reemplaza.
+     *
+     * Se decide acá en PHP y no con `->visible()` a propósito: dos
+     * componentes vivos apuntando al mismo `tipo` es la clase de cosa que
+     * en Filament no revienta, solo se comporta raro (§9).
+     *
+     * @return list<Hidden|Select>
+     */
+    private static function tipoYServicio(): array
+    {
+        if (self::modoUnico()) {
+            /*
+             * Va como Hidden y no como Select escondido porque un campo
+             * invisible no manda valor y `almacenes.tipo` es NOT NULL.
+             *
+             * `default()` solo pisa en create: un almacén viejo que ya era
+             * bodega central conserva su tipo cuando se edita.
+             */
+            return [
+                Hidden::make('tipo')
+                    ->default(TipoAlmacen::AlmacenUnico->value),
+            ];
+        }
+
+        return [
+            Select::make('tipo')
+                ->label('Tipo')
+                ->options(fn (): array => collect(TipoAlmacen::cases())
+                    ->reject(fn (TipoAlmacen $t): bool => $t->esUnico())
+                    ->mapWithKeys(fn (TipoAlmacen $t): array => [$t->value => $t->etiqueta()])
+                    ->all())
+                ->required()
+                ->native(false)
+                ->helperText('La bodega central no dispensa a paciente: traslada.'),
+
+            Select::make('servicio_id')
+                ->label('Servicio dueño')
+                ->relationship('servicio', 'nombre')
+                ->searchable()
+                ->preload()
+                ->placeholder('Ninguno — no cuelga de un área')
+                ->columnSpanFull()
+                ->helperText(
+                    'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de '
+                    .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
+                    .'paro de emergencia o el stock de piso de hospitalización.'
+                ),
+        ];
     }
 
     private static function control(): Tab
@@ -94,6 +143,14 @@ final class AlmacenForm
                     ->schema([
                         Toggle::make('maneja_controlados')
                             ->label('Este almacén maneja controlados')
+                            /*
+                             * Si el hospital guarda todo en un solo almacén,
+                             * los controlados también están ahí. Viene
+                             * marcado por defecto y se puede desmarcar; lo
+                             * contrario es que el libro de ARSA arranque
+                             * apagado sin que nadie se entere.
+                             */
+                            ->default(self::modoUnico())
                             ->helperText(
                                 'Es propiedad del ALMACÉN, no del producto: el mismo medicamento '
                                 .'controlado puede estar bajo llave en un almacén y en anaquel en otro.'

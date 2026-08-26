@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\ValueObjects;
 
 use App\Domain\Enums\RangoEdad;
+use App\Models\Descuento;
 use App\Models\DescuentoLegal;
 
 /**
@@ -18,6 +19,15 @@ use App\Models\DescuentoLegal;
  * El porcentaje viaja como FRACCIÓN —0.25 es 25 %— porque es como se
  * guarda y como se opera. `comoPorcentaje()` existe solo para la
  * pantalla.
+ *
+ * Viene de dos lados y el objeto es el mismo:
+ *
+ *   · de `descuentos_legales`, indexado por numeral del Art. 30;
+ *   · de `descuentos`, la lista con nombres que arma el hospital.
+ *
+ * Por eso hay un `$nombre` opcional: lo de la ley no tiene nombre —su
+ * nombre es el numeral—, y lo del hospital sí, y ese nombre es lo que
+ * el paciente espera ver en la factura.
  */
 final readonly class DescuentoAplicable
 {
@@ -26,6 +36,7 @@ final readonly class DescuentoAplicable
         public ?string $fundamento,
         public bool $exigeReceta,
         public ?RangoEdad $rango,
+        public ?string $nombre = null,
     ) {}
 
     /**
@@ -51,9 +62,54 @@ final readonly class DescuentoAplicable
         );
     }
 
+    /**
+     * Un descuento del catálogo del hospital, aplicado a un rango de edad.
+     *
+     * ⚠️ El rango se pasa aparte y no se saca de `$fila->aplica_a`: lo
+     * que hay que guardar en el cargo es la edad que TENÍA EL PACIENTE,
+     * no la que el descuento apunta. Un paciente de la cuarta edad al que
+     * le toca el descuento de la tercera —porque la cuarta no tiene fila
+     * propia— es de la cuarta edad igual, y así tiene que quedar escrito.
+     */
+    public static function desdeElCatalogo(Descuento $fila, RangoEdad $rango): self
+    {
+        /*
+         * Sin fundamento: los descuentos del hospital no llevan uno. El
+         * numeral del Art. 30 lo trae `desdeLaLey()`, que es de donde
+         * sale cuando la ley es la que manda.
+         */
+        return new self(
+            $fila->fraccion(),
+            null,
+            $fila->exige_receta,
+            $rango,
+            $fila->nombre,
+        );
+    }
+
     public function aplica(): bool
     {
         return $this->rango instanceof RangoEdad && ! $this->fraccion->esCero();
+    }
+
+    /**
+     * De los dos, el que más le conviene al paciente.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LA LEY ES PISO, NUNCA TECHO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El hospital puede dar más que la ley —es su plata— pero no menos.
+     * Por eso lo de la lista del hospital y lo del Artículo 30 no se
+     * reemplazan: se comparan, y gana el mayor.
+     *
+     * Empatados gana el receptor. Quien llama pone primero el de la ley
+     * —`$deLaLey->oElMejorDe($delCatalogo)`— porque es el que trae el
+     * numeral: en dinero da igual, en un reclamo no.
+     */
+    public function oElMejorDe(self $otro): self
+    {
+        return $otro->fraccion->mayorQue($this->fraccion) ? $otro : $this;
     }
 
     /**
@@ -110,6 +166,10 @@ final readonly class DescuentoAplicable
         }
 
         $texto = $this->comoPorcentaje();
+
+        if ($this->nombre !== null) {
+            $texto = $this->nombre.': '.$texto;
+        }
 
         if ($this->fundamento !== null) {
             $texto .= ' · '.$this->fundamento;

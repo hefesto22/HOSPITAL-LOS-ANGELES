@@ -18,18 +18,29 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 
 /**
- * Convenios — quién paga cada cuenta.
+ * Seguros y convenios — quién paga cada cuenta.
  *
  * Va en pantalla completa y no en modal, al revés que unidades: dar de
- * alta un convenio incluye declarar sobre qué monto se le aplica el
- * descuento del adulto mayor y escribir con qué criterio se decidió. Eso
- * no cabe —ni debe caber— en un modal de paso.
+ * alta un pagador incluye declarar sobre qué monto se le aplica el
+ * descuento del adulto mayor, cuánto cubre de cada cuenta y de qué base
+ * hereda sus precios. Eso no cabe —ni debe caber— en un modal de paso.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * POR QUÉ EL RÓTULO DICE «SEGUROS Y CONVENIOS» Y NO SOLO «SEGUROS»
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * En el mostrador todo esto se llama «el seguro del paciente», y esa es
+ * la palabra que tiene que estar en el menú para que alguien lo
+ * encuentre. Pero acá adentro también vive CONTADO —que no es un
+ * seguro— y los convenios institucionales con empresas, que tampoco lo
+ * son. Rotularlo «Seguros» a secas haría que nadie busque CONTADO acá, y
+ * CONTADO es el pagador de la mayoría de las cuentas.
  */
 class ConvenioResource extends Resource
 {
     protected static ?string $model = Convenio::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingOffice2;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedShieldCheck;
 
     protected static ?string $slug = 'convenios';
 
@@ -39,17 +50,17 @@ class ConvenioResource extends Resource
 
     public static function getNavigationLabel(): string
     {
-        return 'Convenios';
+        return 'Seguros y convenios';
     }
 
     public static function getModelLabel(): string
     {
-        return 'convenio';
+        return 'seguro o convenio';
     }
 
     public static function getPluralModelLabel(): string
     {
-        return 'convenios';
+        return 'seguros y convenios';
     }
 
     public static function getNavigationGroup(): ?string

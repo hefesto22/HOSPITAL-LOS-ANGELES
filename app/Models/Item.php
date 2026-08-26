@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Domain\Enums\AmbitoCatalogo;
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
@@ -18,6 +19,7 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -36,6 +38,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $descripcion
  * @property string $nombre_busqueda
  * @property TipoItem $tipo
+ * @property bool $se_almacena
+ * @property bool $factura_envase_entero
+ * @property int|null $categoria_id
+ * @property AmbitoCatalogo|null $categoria_ambito
  * @property RegimenIsv $regimen_isv
  * @property PoliticaCargo $politica_cargo
  * @property CategoriaLegalDeDescuento $categoria_legal_descuento
@@ -77,6 +83,9 @@ class Item extends Model
         'nombre',
         'descripcion',
         'tipo',
+        'se_almacena',
+        'factura_envase_entero',
+        'categoria_id',
         'regimen_isv',
         'politica_cargo',
         'categoria_legal_descuento',
@@ -149,7 +158,82 @@ class Item extends Model
     protected static function booted(): void
     {
         static::saving(function (Item $item): void {
-            if (! $item->tipo->mueveInventario()) {
+            /*
+             * ─────────────────────────────────────────────────────────
+             * EL TIPO PROPONE, LA COLUMNA DECIDE
+             * ─────────────────────────────────────────────────────────
+             *
+             * `se_almacena` es una respuesta, no una deducción: hay
+             * insumos que el hospital compra y consume sin inventariar,
+             * y hasta hoy eso era imposible de declarar.
+             *
+             * Pero si nadie la contestó —un seeder, un import, una
+             * factory de una prueba vieja— se toma la del tipo, que es
+             * la que regía antes de que la columna existiera. Sin esto,
+             * todo lo que ya estaba escrito pasaría a no mover kardex de
+             * un día para el otro, en silencio.
+             */
+            if (! array_key_exists('se_almacena', $item->getAttributes())) {
+                $item->se_almacena = $item->tipo->mueveInventario();
+            }
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL NUMERAL DEL ART. 30 YA NO SE PREGUNTA: SE DEDUCE
+             * ─────────────────────────────────────────────────────────
+             *
+             * El formulario del catálogo dejó de tener el selector de
+             * categoría legal: mostraba porcentajes de adulto mayor al
+             * lado de los descuentos del hospital y parecían lo mismo.
+             *
+             * Pero la columna sigue existiendo y sigue siendo NOT NULL,
+             * porque de ella sale el descuento del Artículo 30 que se
+             * aplica solo — el que no depende de que alguien se acuerde
+             * de marcar nada. Sin este bloque, el primer ítem creado
+             * desde la pantalla nueva reventaría contra la base.
+             *
+             * ⚠️ Se deduce SOLO si nadie la contestó. Los seeders y las
+             * pruebas la escriben a mano y esos valores mandan: hay
+             * honorarios que son consulta especializada y no general, y
+             * el tipo no alcanza para distinguirlos. Pisarlos acá les
+             * bajaría el descuento del 30 % al 25 % en silencio.
+             *
+             * Y por eso mismo cambiar el tipo NO la recalcula: la fila
+             * ya tiene su categoría escrita, así que la clave existe en
+             * los atributos y este bloque no la toca.
+             */
+            /*
+             * ─────────────────────────────────────────────────────────
+             * EXENTO POR DEFECTO — CONFIRMADO POR EL CONTADOR DEL
+             * HOSPITAL (20-ago-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * Casi todo lo que factura un hospital privado hondureño es
+             * exento por el Art. 15 inciso d de la Ley del ISV: consulta,
+             * hospitalización, laboratorio, imagen, medicamentos. Lo
+             * gravado es la excepción —estética, cafetería, parqueo— y
+             * se marca a mano, que es justo el orden correcto: la
+             * excepción cuesta un clic, la regla no cuesta ninguno.
+             *
+             * El formulario ya arranca en «Exento». Esto cubre el otro
+             * camino: un import del sistema viejo o un comando de
+             * consola que no traiga la columna. Sin esto reventaría
+             * contra un NOT NULL, y quien lo arregle rápido va a poner
+             * cualquier cosa.
+             *
+             * ⚠️ Solo si NADIE contestó. Un seeder que escribe
+             * `Gravado15` a propósito manda: pisarlo acá le borraría el
+             * impuesto a lo único que sí lo paga.
+             */
+            if (! array_key_exists('regimen_isv', $item->getAttributes())) {
+                $item->regimen_isv = RegimenIsv::Exento;
+            }
+
+            if (! array_key_exists('categoria_legal_descuento', $item->getAttributes())) {
+                $item->categoria_legal_descuento = CategoriaLegalDeDescuento::sugeridaPara($item->tipo);
+            }
+
+            if (! $item->mueveInventario()) {
                 $item->requiere_lote = false;
                 $item->es_controlado = false;
                 $item->fraccionable = false;
@@ -167,6 +251,29 @@ class Item extends Model
                 $item->unidad_fraccion_id = null;
                 $item->fracciones_por_unidad = null;
             }
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL ÁMBITO DE LA CATEGORÍA NO SE PREGUNTA: SE DERIVA
+             * ─────────────────────────────────────────────────────────
+             *
+             * `items.categoria_ambito` es una columna redundante que
+             * existe SOLO para que la base pueda verificar, con una FK
+             * compuesta contra `categorias_item (id, ambito)`, que un
+             * producto de farmacia no quede archivado bajo «Rayos X».
+             *
+             * Ningún formulario la escribe —sería un campo que pide
+             * repetir algo que el sistema ya sabe, y que alguna vez se
+             * llenaría mal—. Se copia de `se_almacena`, que a esta
+             * altura del closure ya está resuelto.
+             *
+             * Si la categoría elegida es del otro lado, el INSERT falla
+             * contra la FK. Eso es lo buscado: es el único momento en
+             * que se puede atajar.
+             */
+            $item->categoria_ambito = $item->categoria_id === null
+                ? null
+                : AmbitoCatalogo::deSeAlmacena((bool) $item->se_almacena);
         });
     }
 
@@ -177,6 +284,9 @@ class Item extends Model
     {
         return [
             'tipo'                      => TipoItem::class,
+            'se_almacena'               => 'boolean',
+            'factura_envase_entero'     => 'boolean',
+            'categoria_ambito'          => AmbitoCatalogo::class,
             'regimen_isv'               => RegimenIsv::class,
             'politica_cargo'            => PoliticaCargo::class,
             'categoria_legal_descuento' => CategoriaLegalDeDescuento::class,
@@ -190,6 +300,22 @@ class Item extends Model
     }
 
     // ── Relaciones ────────────────────────────────────────────────────
+
+    /**
+    /**
+     * La hoja del tarifario en la que vive este ítem.
+     *
+     * Nullable porque el catálogo existía antes que las categorías: los
+     * ítems ya cargados se clasifican con `CategoriasDelCatalogoSeeder`
+     * y el formulario la exige de acá en adelante. Dejarla obligatoria
+     * en la base habría impedido correr la migración con datos vivos.
+     *
+     * @return BelongsTo<CategoriaItem, $this>
+     */
+    public function categoria(): BelongsTo
+    {
+        return $this->belongsTo(CategoriaItem::class, 'categoria_id');
+    }
 
     /**
      * @return BelongsTo<Unidad, $this>
@@ -251,6 +377,27 @@ class Item extends Model
     public function existencias(): HasMany
     {
         return $this->hasMany(Existencia::class);
+    }
+
+    /**
+     * Los descuentos del catálogo del hospital que se le marcaron.
+     *
+     * ⚠️ Devuelve las filas TAL COMO quedaron marcadas, incluidas las que
+     * ya vencieron. Es a propósito: es lo que la pantalla muestra y lo
+     * que Filament sincroniza al guardar.
+     *
+     * 🔴 Para saber qué descuento le toca a un paciente NO se usa esta
+     * relación: se usa `ResolutorDeDescuentoLegal`, que resuelve por
+     * NOMBRE contra la fecha del servicio. El pivote guarda el `id` que
+     * estaba vigente el día que alguien marcó la casilla, y ese id se
+     * queda viejo en cuanto cambia el porcentaje. Ver el encabezado de
+     * `Descuento`.
+     *
+     * @return BelongsToMany<Descuento, $this>
+     */
+    public function descuentos(): BelongsToMany
+    {
+        return $this->belongsToMany(Descuento::class, 'descuento_item')->withTimestamps();
     }
 
     /**
@@ -328,10 +475,37 @@ class Item extends Model
             return $consulta;
         }
 
-        return $consulta->where(function (Builder $sub) use ($clave): void {
+        $escaneado = trim($termino);
+
+        return $consulta->where(function (Builder $sub) use ($clave, $escaneado): void {
             $sub->whereRaw('nombre_busqueda %> ?', [$clave])
                 ->orWhereRaw('nombre_busqueda % ?', [$clave])
                 ->orWhere('codigo', 'ilike', '%'.$clave.'%');
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * ESCANEAR TAMBIÉN ENCUENTRA
+             * ─────────────────────────────────────────────────────────
+             *
+             * Dos códigos de barras distintos llevan al mismo producto:
+             * el del HOSPITAL —que es el código interno impreso en la
+             * etiqueta del reenvasado, y ya lo encuentra el `ilike` de
+             * arriba— y el del FABRICANTE, que viene en la caja del
+             * proveedor y vive en la presentación de compra.
+             *
+             * ⚠️ El del fabricante se compara EXACTO y sin canonizar. Un
+             * `%like%` sobre un EAN devolvería el producto equivocado
+             * —los códigos comparten prefijos de país y de empresa— y
+             * pasarlo por el normalizador de texto le cambiaría los
+             * caracteres que el lector leyó bien.
+             */
+            if ($escaneado !== '') {
+                $sub->orWhereHas(
+                    'presentaciones',
+                    fn (Builder $presentacion): Builder => $presentacion
+                        ->where('codigo_barras', $escaneado),
+                );
+            }
         });
     }
 
@@ -340,11 +514,36 @@ class Item extends Model
      *
      * @return EloquentCollection<int, static>
      */
-    public static function buscar(string $termino, int $limite = 20): EloquentCollection
-    {
+    public static function buscar(
+        string $termino,
+        int $limite = 20,
+        bool $soloVigentes = false,
+    ): EloquentCollection {
         $clave = NormalizadorDeTexto::clave($termino);
 
         $consulta = static::query()->buscar($termino);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 RETIRAR UN ÍTEM NO LO SACABA DEL BUSCADOR
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El catálogo se retira con fecha de fin de vigencia y no con un
+         * botón de activo — pero el buscador no la miraba. Un estudio
+         * dado de baja, o el nombre mal escrito que alguien creó por
+         * error, seguía apareciendo al cargar una cuenta y seguía
+         * cobrándose. La regla existía y no la aplicaba nadie donde
+         * importaba.
+         *
+         * ⚠️ Apagado por defecto A PROPÓSITO. Conteo físico y ajuste de
+         * inventario SÍ tienen que encontrar lo retirado: un producto que
+         * se dejó de vender puede seguir teniendo existencia en el
+         * estante, y hay que poder contarla y ajustarla. Lo que no se
+         * puede es cobrarla ni comprar más.
+         */
+        if ($soloVigentes) {
+            $consulta->vigentesEn(now());
+        }
 
         if ($clave !== '') {
             $consulta->orderByRaw('similarity(nombre_busqueda, ?) desc', [$clave]);
@@ -361,12 +560,87 @@ class Item extends Model
     /**
      * ¿Descuenta existencia del kardex?
      *
-     * Vive en el enum porque es propiedad del TIPO, no de este ítem: si
-     * mañana los insumos dejaran de moverse, cambiaría para todos.
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 ES UNA RESPUESTA DE ESTE ÍTEM, NO UNA PROPIEDAD DE SU TIPO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Antes se deducía del tipo: medicamento e insumo movían kardex y
+     * todo lo demás no. Eso deja afuera dos casos reales:
+     *
+     *   · el insumo que se compra y se consume sin inventariar —el papel
+     *     de la camilla, el gel del ecógrafo— y que al inventariarse a
+     *     la fuerza aparece en cada conteo físico dando diferencias que
+     *     nadie puede explicar;
+     *   · el ítem de tipo «otro» que sí se guarda y sí hay que contar.
+     *
+     * Ahora lo contesta quien da de alta el ítem. El tipo sigue
+     * proponiendo el valor —ver `booted()`—, pero no lo impone.
+     *
+     * De acá cuelga TODO lo demás: si es falso no hay almacén, ni lote,
+     * ni FEFO, ni costo promedio, ni pestaña de existencias. Por eso no
+     * se puede apagar en un ítem que ya tiene movimientos: dejaría stock
+     * escrito que ninguna pantalla vuelve a mostrar.
      */
+    /**
+     * ¿Se le cobra el envase completo?
+     *
+     * Para un jarabe que el paciente se lleva, sí: el frasco es suyo
+     * porque lo pagó. Para lo que se comparte entre pacientes —una
+     * solución de la que se sacan dosis— no, y ahí manda la regla normal
+     * del repartidor.
+     *
+     * 🔴 Es del producto y no de cada despacho a propósito: si sobre el
+     * mismo producto conviven las dos reglas, al primero se le cobra el
+     * frasco y al segundo los mililitros que sobraron, y la misma gota se
+     * cobró dos veces.
+     */
+    /**
+     * Lo que este producto lleva adentro.
+     *
+     * ⚠️ Muchos a muchos porque un antigripal lleva acetaminofén +
+     * clorfenamina + fenilefrina, y amoxicilina viene con ácido
+     * clavulánico. Con un solo principio por producto el segundo queda
+     * invisible, y el día que alguien pregunte «¿qué tengo con
+     * acetaminofén?» para no duplicar dosis, la respuesta sale
+     * incompleta sin que se note.
+     *
+     * @return BelongsToMany<PrincipioActivo, $this>
+     */
+    public function principiosActivos(): BelongsToMany
+    {
+        return $this->belongsToMany(PrincipioActivo::class, 'item_principio_activo')
+            ->withPivot('concentracion')
+            ->withTimestamps();
+    }
+
+    public function seFacturaPorEnvase(): bool
+    {
+        return (bool) $this->factura_envase_entero;
+    }
+
     public function mueveInventario(): bool
     {
-        return $this->tipo->mueveInventario();
+        return (bool) $this->se_almacena;
+    }
+
+    /**
+     * ¿Ya tiene algo escrito en inventario?
+     *
+     * Es lo que impide apagar «se almacena» en un ítem que ya se movió.
+     * Apagarlo dejaría existencia, lotes y kardex escritos debajo de un
+     * ítem que ninguna pantalla vuelve a mostrar como inventariable: el
+     * stock no desaparece, se vuelve invisible — y el conteo físico
+     * siguiente no lo encuentra para cuadrarlo.
+     *
+     * ⚠️ Deuda declarada: hoy esto lo cuida el formulario. Un import o
+     * una consola pueden saltárselo. El guardián de verdad es un trigger
+     * en `items`, que va junto con el bloque de familias.
+     */
+    public function tieneInventarioEscrito(): bool
+    {
+        return MovimientoKardex::query()->where('item_id', $this->id)->exists()
+            || $this->existencias()->exists()
+            || $this->lotes()->exists();
     }
 
     /**

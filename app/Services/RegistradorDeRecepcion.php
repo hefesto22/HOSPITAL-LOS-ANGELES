@@ -5,15 +5,23 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Domain\Enums\TipoMovimiento;
+use App\Domain\Exceptions\PrecioNoDerivableException;
+use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\Exceptions\RecepcionException;
+use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaRecibida;
+use App\Domain\ValueObjects\Monto;
 use App\Models\Almacen;
+use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\Proveedor;
 use App\Models\Recepcion;
 use App\Models\RecepcionLinea;
+use App\Models\Tarifario;
 use App\Support\UsuarioAutenticado;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -51,6 +59,8 @@ final class RegistradorDeRecepcion
         private readonly RegistradorDeMovimiento $movimientos,
         private readonly ResolutorDeLote $lotes,
         private readonly CalculadoraDeCostoPromedio $costos,
+        private readonly CalculadoraDePrecioDeLista $preciosSugeridos,
+        private readonly FijadorDePrecio $precios,
     ) {}
 
     /**
@@ -118,6 +128,12 @@ final class RegistradorDeRecepcion
                 numero: $numero,
                 vencimiento: $linea->vencimiento,
                 proveedor: $proveedor?->nombre,
+
+                /*
+                 * El envase viaja hasta el lote para que la existencia se
+                 * pueda leer en frascos y no solo en mililitros.
+                 */
+                presentacion: $linea->presentacion,
             );
 
         $unidades = $linea->cantidadEnUnidades();
@@ -158,6 +174,127 @@ final class RegistradorDeRecepcion
             'fecha_vencimiento' => $linea->vencimiento?->toDateString(),
             'notas'             => $linea->notas,
         ]);
+
+        $this->sembrarLosPrecios($linea, $fecha);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL PRIMER INGRESO LE PONE PRECIO A LO QUE ENTRÓ
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Un medicamento que entra a bodega sin precio de lista NO SE PUEDE
+     * COBRAR: la caja lo busca, no lo encuentra, y o el paciente se va
+     * sin pagarlo o alguien inventa un número en el mostrador. Las dos
+     * cosas son plata que no vuelve, y las dos empiezan igual — nadie se
+     * acordó de ponerle precio después de recibirlo.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * UN SOLO PRECIO POR LÍNEA, EL DEL ENVASE QUE LLEGÓ
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Antes se sembraban dos: el del envase y uno «del producto entero»
+     * como respaldo. Eso le dejaba a cada producto un precio que no le
+     * correspondía a ninguna existencia — en acetaminofén se veían
+     * CUATRO precios para TRES frascos, y el cuarto salía del promedio
+     * del almacén, justo el número amontonado que se decidió no usar.
+     *
+     * 🔴 Y no era cosmético. `Tarifario::scopeResolviendoPara` cae al
+     * precio sin envase cuando el específico no existe, y no avisa. Un
+     * frasco nuevo cuyo precio no se pudo calcular —sin margen, costo en
+     * cero, la excepción que se traga más abajo— se cobraba al número
+     * del respaldo como si fuera suyo. El de 120 ML sale L 45.83 el
+     * mililitro y el de 80 ML sale L 91.67: el doble. Un respaldo
+     * equivocado no se ve en la factura, se ve en la utilidad del mes.
+     *
+     * El respaldo sigue existiendo, pero solo nace cuando hace falta:
+     * cuando la línea llegó SIN envase declarado —a granel, o un ítem
+     * que no maneja presentaciones—. Ahí es el único precio posible, y
+     * ahí sí le corresponde existencia real.
+     *
+     * ⚠️ Solo si NO existe todavía. Un precio ya fijado es una decisión
+     * de dirección con su fecha y su motivo: que una compra lo pisara
+     * sería cambiar la lista sin que nadie lo haya pedido, y el cambio
+     * aparecería recién en la utilidad del mes.
+     */
+    private function sembrarLosPrecios(LineaRecibida $linea, CarbonInterface $fecha): void
+    {
+        if (! $linea->item->tipo->precioDerivadoDelCosto()) {
+            return;
+        }
+
+        /*
+         * El costo es el de ESTA línea, no el promedio del almacén. El
+         * frasco de 60 ML costó L 16.67 el mililitro y el de 80 ML costó
+         * L 25.00: con el promedio, el margen del hospital dependería de
+         * cuál frasco estaba abierto y nadie lo sabría.
+         */
+        $this->sembrarSiFalta(
+            $linea->item,
+            $linea->presentacion,
+            $linea->costoUnitario(),
+            $fecha,
+        );
+    }
+
+    /**
+     * ⚠️ NUNCA frena la recepción. Si el tipo no deriva precio del costo,
+     * si no hay margen configurado para ese tipo, si el costo vino en
+     * cero —donaciones—, la mercadería igual entró al estante. Reventar
+     * acá dejaría el kardex sin la entrada por un problema de precios.
+     */
+    private function sembrarSiFalta(
+        Item $item,
+        ?ItemPresentacion $presentacion,
+        Decimal $costo,
+        CarbonInterface $fecha,
+    ): void {
+        $yaTienePrecio = Tarifario::query()
+            ->where('item_id', $item->id)
+            ->whereNull('convenio_id')
+            ->when(
+                $presentacion instanceof ItemPresentacion,
+                fn (Builder $consulta): Builder => $consulta->where('item_presentacion_id', $presentacion?->id),
+                fn (Builder $consulta): Builder => $consulta->whereNull('item_presentacion_id'),
+            )
+            ->vigentesEn($fecha)
+            ->exists();
+
+        if ($yaTienePrecio) {
+            return;
+        }
+
+        try {
+            $sugerido = $this->preciosSugeridos->para($item, Monto::de($costo), $fecha);
+
+            /*
+             * ⚠️ `motivo` es `varchar(255)`. El texto con el nombre del
+             * envase adentro se pasaba de largo y la recepción entera
+             * moría contra Postgres — la mercadería no entraba al estante
+             * por un renglón de explicación.
+             *
+             * Se acorta el texto Y se corta a 255: lo primero es lo que
+             * hace que quepa, lo segundo es lo que garantiza que un nombre
+             * de presentación largo no vuelva a tumbar una compra.
+             */
+            $porQue = 'Calculado en el primer ingreso a bodega'
+                .($presentacion instanceof ItemPresentacion ? ' de '.$presentacion->nombre : '')
+                .': costo '.$sugerido->costo->formateado()
+                .', margen '.$sugerido->margenObjetivoComoPorcentaje()
+                .', dividido por el descuento de ley más alto de la categoría para que sea piso.';
+
+            $this->precios->fijar(
+                item: $item,
+                convenio: null,
+                sede: null,
+                precio: $sugerido->lista,
+                motivo: mb_substr($porQue, 0, 255),
+                desde: $fecha,
+                presentacion: $presentacion,
+            );
+        } catch (PrecioNoDerivableException|PrecioNoFijableException) {
+            return;
+        }
     }
 
     /**

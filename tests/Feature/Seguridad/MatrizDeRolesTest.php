@@ -40,9 +40,9 @@ use Spatie\Permission\PermissionRegistrar;
  * real y no verifican nada sobre el módulo nuevo.
  */
 const SUJETOS_DE_SHIELD = [
-    'Activity', 'Almacen', 'Compra', 'Convenio', 'FusionDePersona', 'Item',
-    'MargenObjetivo', 'Persona', 'Proveedor', 'Recepcion', 'Role', 'Sede',
-    'Servicio', 'Unidad', 'User',
+    'Activity', 'Almacen', 'CategoriaItem', 'Compra', 'Convenio', 'FusionDePersona',
+    'Item', 'MargenObjetivo', 'Persona', 'Producto', 'Proveedor', 'Recepcion',
+    'Role', 'Sede', 'Servicio', 'Unidad', 'User',
 ];
 
 /**

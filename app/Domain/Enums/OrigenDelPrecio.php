@@ -25,12 +25,24 @@ enum OrigenDelPrecio: string
     /** La fila sin convenio: el precio que ve cualquiera. */
     case PrecioDeLista = 'precio_de_lista';
 
+    /**
+     * El número salió de un PRESUPUESTO, no de ninguna lista de precios
+     * (ADR-0009).
+     *
+     * Es el cargo del paquete quirúrgico: la familia acordó L 40,000 por
+     * la apendicectomía completa y ese monto no está —ni puede estar— en
+     * el tarifario, porque cada caso cotiza distinto. La factura tiene
+     * que poder explicar de dónde vino, y esto es lo que lo explica.
+     */
+    case Presupuestado = 'presupuestado';
+
     public function etiqueta(): string
     {
         return match ($this) {
             self::PrecioNegociado   => 'Precio negociado',
             self::PorcentajePactado => 'Porcentaje pactado',
             self::PrecioDeLista     => 'Precio de lista',
+            self::Presupuestado     => 'Acordado en el presupuesto',
         };
     }
 
@@ -52,6 +64,7 @@ enum OrigenDelPrecio: string
             self::PrecioNegociado   => 'info',
             self::PorcentajePactado => 'warning',
             self::PrecioDeLista     => 'gray',
+            self::Presupuestado     => 'success',
         };
     }
 }

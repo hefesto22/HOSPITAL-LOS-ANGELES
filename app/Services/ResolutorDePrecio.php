@@ -9,6 +9,7 @@ use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Convenio;
 use App\Models\ConvenioCondicion;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Sede;
 use App\Models\Tarifario;
 use Carbon\CarbonInterface;
@@ -52,10 +53,23 @@ final class ResolutorDePrecio
         Convenio $convenio,
         CarbonInterface $fechaServicio,
         ?Sede $sede = null,
+        ?ItemPresentacion $presentacion = null,
     ): PrecioResuelto {
+        /*
+         * 🔴 El envase viene del LOTE del que se está sirviendo, no de
+         * una elección de quien cobra.
+         *
+         * El frasco de 60 ML y el de 80 ML costaron distinto el
+         * mililitro; si los dos se cobraran igual, el margen del hospital
+         * dependería de cuál estaba abierto y nadie lo sabría. Con el
+         * envase acá, el precio sigue al mismo frasco que el costo.
+         *
+         * Nulo cae al precio del producto entero, que es lo que existía
+         * antes y sigue siendo el respaldo.
+         */
         $fila = Tarifario::query()
             ->where('item_id', $item->id)
-            ->resolviendoPara($convenio->id, $sede?->id)
+            ->resolviendoPara($convenio->id, $sede?->id, $presentacion?->id)
             ->vigentesEn($fechaServicio)
             ->first();
 
@@ -104,15 +118,19 @@ final class ResolutorDePrecio
      *
      * @throws PrecioNoDefinidoException
      */
-    public function deLista(Item $item, CarbonInterface $fechaServicio, ?Sede $sede = null): PrecioResuelto
-    {
+    public function deLista(
+        Item $item,
+        CarbonInterface $fechaServicio,
+        ?Sede $sede = null,
+        ?ItemPresentacion $presentacion = null,
+    ): PrecioResuelto {
         /*
          * `resolviendoPara(null, ...)` ya restringe a las filas sin
          * convenio: pasar el nulo es la forma de pedir la lista.
          */
         $fila = Tarifario::query()
             ->where('item_id', $item->id)
-            ->resolviendoPara(null, $sede?->id)
+            ->resolviendoPara(null, $sede?->id, $presentacion?->id)
             ->vigentesEn($fechaServicio)
             ->first();
 
@@ -133,11 +151,24 @@ final class ResolutorDePrecio
      * Para la pantalla, que necesita avisar antes de que alguien arme una
      * cuenta con un ítem sin precio.
      */
-    public function hayPrecio(Item $item, Convenio $convenio, CarbonInterface $fecha, ?Sede $sede = null): bool
-    {
+    public function hayPrecio(
+        Item $item,
+        Convenio $convenio,
+        CarbonInterface $fecha,
+        ?Sede $sede = null,
+        ?ItemPresentacion $presentacion = null,
+    ): bool {
+        /*
+         * ⚠️ El envase entra también acá, no solo en `para()`.
+         *
+         * Sin él, la pantalla preguntaba por el precio del producto
+         * entero, respondía «sí hay» y después `para()` resolvía el del
+         * frasco —que puede no existir—. Las dos preguntas tienen que
+         * mirar la misma fila.
+         */
         return Tarifario::query()
             ->where('item_id', $item->id)
-            ->resolviendoPara($convenio->id, $sede?->id)
+            ->resolviendoPara($convenio->id, $sede?->id, $presentacion?->id)
             ->vigentesEn($fecha)
             ->exists();
     }

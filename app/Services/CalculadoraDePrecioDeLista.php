@@ -33,6 +33,13 @@ use Carbon\CarbonInterface;
  * mayor. El resultado: L 29.33 de lista, y el adulto mayor paga
  * exactamente los L 22.00 que dejan el 120 %.
  *
+ * 🔴 El «peor descuento posible» incluye los que el hospital marcó en el
+ * ítem desde la pantalla de Descuentos, no solo el del Artículo 30. Un
+ * «Cuarta edad 40 %» marcado a mano contra un precio calculado con el
+ * 25 % de la ley regala quince puntos de margen en cada paciente de 80
+ * años — que es el agujero exacto que esta división existe para tapar.
+ * Por eso pregunta `maximoParaItem()` y no `maximoPara()`.
+ *
  * ─────────────────────────────────────────────────────────────────────
  * UN SOLO PRECIO PARA TODOS
  * ─────────────────────────────────────────────────────────────────────
@@ -79,7 +86,7 @@ final class CalculadoraDePrecioDeLista
             );
         }
 
-        $descuentoMaximo = $this->descuentos->maximoPara($item->categoria_legal_descuento, $fecha);
+        $descuentoMaximo = $this->descuentos->maximoParaItem($item, $fecha);
 
         $lista = $this->listaDesde($costoPromedio, $margen, $descuentoMaximo->fraccion);
 
@@ -107,7 +114,7 @@ final class CalculadoraDePrecioDeLista
 
         /*
          * Un descuento del 100 % dejaría el divisor en cero. Hoy el techo
-         * legal es 30 %, pero el dato viene de una tabla que alguien
+         * legal es 30 %, pero el dato viene de dos tablas que alguien
          * puede editar: si el divisor se anula, `Decimal::entre()` lo
          * rechaza con un mensaje claro en vez de dividir entre cero.
          */

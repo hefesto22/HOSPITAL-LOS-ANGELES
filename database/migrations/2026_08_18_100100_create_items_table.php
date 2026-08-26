@@ -103,9 +103,19 @@ return new class extends Migration
 
             /*
              * Bajo qué numeral del Art. 30 cae, para el descuento de
-             * adulto mayor. Es un eje PROPIO y no se deriva del tipo:
-             * consulta general y especializada son las dos honorarios y
-             * llevan 25 % y 30 %. Ver el enum.
+             * adulto mayor.
+             *
+             * ⚠️ Sigue siendo un eje PROPIO, aunque desde el 20-ago-2026
+             * el formulario del catálogo ya no lo pregunta y `Item` lo
+             * deduce del tipo cuando nadie lo escribe.
+             *
+             * La deducción NO es exacta y hay que saberlo: consulta
+             * general y consulta especializada son las dos `Honorario` y
+             * llevan 25 % y 30 %, así que todo honorario deducido cae en
+             * el 25 %. La diferencia se cubre marcándole al ítem un
+             * descuento propio en «Descuentos» —el resolutor se queda
+             * con el mayor de los dos—, o escribiendo la categoría a
+             * mano desde un seeder, que este bloque respeta.
              */
             $tabla->string('categoria_legal_descuento', 40);
 

@@ -100,8 +100,12 @@ class MatrizDePermisosSeeder extends Seeder
             'User'            => ['ViewAny', 'View'],
             'FusionDePersona' => ['ViewAny', 'View'],
             'Item'            => ['ViewAny', 'View'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View'],
             'Unidad'          => ['ViewAny', 'View'],
             'MargenObjetivo'  => ['ViewAny', 'View'],
+            'DescuentoLegal'  => ['ViewAny', 'View'],
+            'Descuento'       => ['ViewAny', 'View'],
             'Convenio'        => ['ViewAny', 'View'],
 
             /*
@@ -113,6 +117,32 @@ class MatrizDePermisosSeeder extends Seeder
             'Proveedor' => ['ViewAny', 'View'],
             'Compra'    => ['ViewAny', 'View'],
             'Recepcion' => ['ViewAny', 'View'],
+
+            /*
+             * Y los conteos y los ajustes, que son la otra mitad de la
+             * misma pregunta: qué SALIÓ sin venderse. Auditoría no queda
+             * restringida por tipo de almacén —no aparece en
+             * `sihla.inventario.almacenes_por_rol`— porque audita el
+             * hospital entero.
+             */
+            'Conteo' => ['ViewAny', 'View'],
+            'Ajuste' => ['ViewAny', 'View'],
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * LA CUENTA DEL PACIENTE ES EL OBJETO CENTRAL DE LA AUDITORÍA
+             * ─────────────────────────────────────────────────────────
+             *
+             * Es donde se cruza todo: qué se le hizo al paciente, a qué
+             * precio, con qué descuento y quién lo cargó. Sin verla, un
+             * reclamo de una aseguradora no se puede contestar.
+             *
+             * Solo lectura, como siempre: auditoría nunca crea un cargo
+             * ni anula uno. Eso es ser parte de lo auditado.
+             */
+            'Encuentro' => ['ViewAny', 'View'],
+            'Cuenta'    => ['ViewAny', 'View'],
+            'Cargo'     => ['ViewAny', 'View'],
         ],
 
         /*
@@ -143,33 +173,85 @@ class MatrizDePermisosSeeder extends Seeder
          * dirección, porque dar de alta un convenio incluye declarar sobre
          * qué monto se aplica el descuento del Art. 30, y esa es una
          * decisión con respaldo legal, no del turno.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * CUENTAS — QUIÉN LAS ABRE Y QUIÉN LES CARGA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Admisión abre el encuentro y su cuenta: es su trabajo. Y como
+         * en pacientes, enfermería también puede cargarle cosas, porque a
+         * las tres de la mañana no hay nadie de admisión y el hecho
+         * clínico ocurre igual.
+         *
+         * `Create:Cargo` es también el permiso de ANULAR, y no es un
+         * descuido: anular no borra nada, asienta una reversa. Quien
+         * puede cargar puede corregir lo que cargó — el control real es
+         * el motivo obligatorio y el rastro, no quitarle el botón.
+         *
+         * Sin `Update:Cargo` para nadie, ni siquiera dirección tocando el
+         * comodín: la policy lo niega y un trigger de la base lo rechaza.
          */
         'admision' => [
             'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
             'FusionDePersona' => ['ViewAny', 'View', 'Create', 'Update'],
             'Item'            => ['ViewAny', 'View'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View'],
             'Unidad'          => ['ViewAny', 'View'],
             'Convenio'        => ['ViewAny', 'View'],
+            'Encuentro'       => ['ViewAny', 'View', 'Create', 'Update'],
+            'Cuenta'          => ['ViewAny', 'View', 'Create', 'Update'],
+            'Cargo'           => ['ViewAny', 'View', 'Create'],
         ],
 
         'enfermeria' => [
             'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
             'FusionDePersona' => ['ViewAny', 'View', 'Create'],
             'Item'            => ['ViewAny', 'View'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View'],
             'Unidad'          => ['ViewAny', 'View'],
+            'Encuentro'       => ['ViewAny', 'View'],
+            'Cuenta'          => ['ViewAny', 'View', 'Create', 'Update'],
+            'Cargo'           => ['ViewAny', 'View', 'Create'],
         ],
 
+        /*
+         * El médico ve el encuentro —a quién está atendiendo y desde
+         * cuándo— pero NO la cuenta. §1.4 es explícito: el médico no ve
+         * costos, y la cuenta es precios en pantalla.
+         *
+         * No es desconfianza: es que la decisión clínica no debe estar
+         * contaminada por lo que cuesta, y porque el día que una
+         * aseguradora pregunte si se pidió un estudio por necesidad o por
+         * margen, la respuesta tiene que ser que el que lo pidió no podía
+         * ver el margen.
+         */
         'medico' => [
-            'Persona' => ['ViewAny', 'View'],
-            'Item'    => ['ViewAny', 'View'],
-            'Unidad'  => ['ViewAny', 'View'],
+            'Persona'       => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Encuentro'     => ['ViewAny', 'View'],
         ],
 
+        /*
+         * Caja es quien liquida: ve todo lo que tiene que cobrar y puede
+         * cargar lo que falte y corregir lo que esté mal. Lo que no puede
+         * —y no aparece acá— es tocar el tarifario ni el catálogo: eso
+         * cambiaría el precio hacia atrás en vez de cobrar el de hoy.
+         */
         'caja' => [
-            'Persona'  => ['ViewAny', 'View'],
-            'Item'     => ['ViewAny', 'View'],
-            'Unidad'   => ['ViewAny', 'View'],
-            'Convenio' => ['ViewAny', 'View'],
+            'Persona'       => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Convenio'      => ['ViewAny', 'View'],
+            'Encuentro'     => ['ViewAny', 'View', 'Update'],
+            'Cuenta'        => ['ViewAny', 'View', 'Create', 'Update'],
+            'Cargo'         => ['ViewAny', 'View', 'Create'],
         ],
 
         /*
@@ -179,30 +261,80 @@ class MatrizDePermisosSeeder extends Seeder
          * recibe físicamente.
          */
         'farmacia' => [
-            'Persona'   => ['ViewAny', 'View'],
-            'Item'      => ['ViewAny', 'View'],
-            'Unidad'    => ['ViewAny', 'View'],
-            'Proveedor' => ['ViewAny', 'View'],
-            'Compra'    => ['ViewAny', 'View'],
-            'Recepcion' => ['ViewAny', 'View'],
+            'Persona'       => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View', 'Create', 'Update'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Proveedor'     => ['ViewAny', 'View'],
+            'Compra'        => ['ViewAny', 'View'],
+            'Recepcion'     => ['ViewAny', 'View'],
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * FARMACIA CUENTA Y AJUSTA SU PROPIO ESTANTE
+             * ─────────────────────────────────────────────────────────
+             *
+             * Necesita ver `Almacen` para poder elegirlo, y el filtro por
+             * TIPO de almacén hace el resto: `almacenes_por_rol` la deja
+             * solo en la farmacia de venta y la interna. Que el permiso
+             * exista no le abre la bodega central.
+             *
+             * `Update:Conteo` es contar Y cerrar: Shield genera once
+             * acciones fijas y ninguna se llama «contar». El control no
+             * queda en el permiso sino en el CHECK de cuatro ojos, igual
+             * que en recepciones.
+             *
+             * Sin `Update:Ajuste`: un ajuste asentado no se edita nunca
+             * —la base lo impide con un trigger— así que conceder ese
+             * permiso sería mentir sobre lo que el sistema permite.
+             */
+            'Almacen' => ['ViewAny', 'View'],
+            'Conteo'  => ['ViewAny', 'View', 'Create', 'Update'],
+            'Ajuste'  => ['ViewAny', 'View', 'Create'],
+
+            /*
+             * Y carga a la cuenta lo que despacha. Es el mismo hecho
+             * visto de los dos lados: sale del estante y le llega al
+             * paciente. Que las dos mitades ocurran en la misma
+             * transacción es lo que impide el faltante silencioso.
+             */
+            'Encuentro' => ['ViewAny', 'View'],
+            'Cuenta'    => ['ViewAny', 'View'],
+            'Cargo'     => ['ViewAny', 'View', 'Create'],
         ],
 
+        /*
+         * Laboratorio e imágenes cargan al RECIBIR o PROCESAR, nunca al
+         * ordenar (§9.I16): cobrar al ordenar factura estudios cancelados
+         * y muestras rechazadas.
+         */
         'laboratorio' => [
-            'Persona' => ['ViewAny', 'View'],
-            'Item'    => ['ViewAny', 'View'],
-            'Unidad'  => ['ViewAny', 'View'],
+            'Persona'       => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Encuentro'     => ['ViewAny', 'View'],
+            'Cuenta'        => ['ViewAny', 'View'],
+            'Cargo'         => ['ViewAny', 'View', 'Create'],
         ],
 
         'imagenes' => [
-            'Persona' => ['ViewAny', 'View'],
-            'Item'    => ['ViewAny', 'View'],
-            'Unidad'  => ['ViewAny', 'View'],
+            'Persona'       => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Encuentro'     => ['ViewAny', 'View'],
+            'Cuenta'        => ['ViewAny', 'View'],
+            'Cargo'         => ['ViewAny', 'View', 'Create'],
         ],
 
         /*
          * Bodega LEE el catálogo pero no lo escribe, y no ve expediente:
          * quien recibe una compra no tiene por qué saber quién está
-         * internado.
+         * internado. Por lo mismo NO aparece en cuentas ni en cargos.
          *
          * ─────────────────────────────────────────────────────────────
          * `Update:Recepcion` ES TAMBIÉN EL PERMISO DE MARCAR REVISADA
@@ -230,11 +362,27 @@ class MatrizDePermisosSeeder extends Seeder
          * —solo un nombre y un RTN—.
          */
         'bodega' => [
-            'Item'      => ['ViewAny', 'View'],
-            'Unidad'    => ['ViewAny', 'View'],
-            'Almacen'   => ['ViewAny', 'View'],
-            'Proveedor' => ['ViewAny', 'View', 'Create', 'Update'],
-            'Recepcion' => ['ViewAny', 'View', 'Create', 'Update'],
+            'Item'          => ['ViewAny', 'View'],
+            'CategoriaItem' => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View'],
+            'Unidad'        => ['ViewAny', 'View'],
+            'Almacen'       => ['ViewAny', 'View'],
+            'Proveedor'     => ['ViewAny', 'View', 'Create', 'Update'],
+            'Recepcion'     => ['ViewAny', 'View', 'Create', 'Update'],
+
+            /*
+             * Contar y ajustar la bodega central y los stocks de
+             * servicio. El filtro por tipo de almacén la deja fuera de la
+             * farmacia, igual que a farmacia fuera de la bodega: quien
+             * responde por el estante es quien lo cuenta.
+             *
+             * Y como en recepciones, cerrar un conteo lo hace OTRA
+             * persona: el CHECK `conteos_cuatro_ojos` impide que cierre
+             * quien lo abrió. Con bodega, farmacia y dirección siempre
+             * hay quien firme.
+             */
+            'Conteo' => ['ViewAny', 'View', 'Create', 'Update'],
+            'Ajuste' => ['ViewAny', 'View', 'Create'],
         ],
     ];
 

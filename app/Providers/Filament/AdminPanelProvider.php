@@ -14,12 +14,14 @@ use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
 use Filament\Widgets\AccountWidget;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Throwable;
 
@@ -46,6 +48,7 @@ class AdminPanelProvider extends PanelProvider
             ->colors([
                 'primary' => self::primaryColorPalette(),
             ])
+            ->renderHook(PanelsRenderHook::HEAD_END, fn (): HtmlString => self::hojaDeEstilos())
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
@@ -76,6 +79,41 @@ class AdminPanelProvider extends PanelProvider
             ->databaseNotificationsPolling('30s')
             ->globalSearchKeyBindings(['command+k', 'ctrl+k'])
             ->sidebarCollapsibleOnDesktop();
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LO QUE SE TECLEA EN UN BUSCADOR SE VE EN MAYÚSCULAS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Todo el catálogo del hospital se guarda en mayúsculas —§10.4, y
+     * `CampoMayusculas` ya hace que se vean así mientras se escriben—.
+     * El hueco era el buscador de los desplegables: ahí se tecleaba
+     * «proporfol» en minúscula contra una lista de PROPOFOL, y la
+     * pantalla parecía estar hablando de otra cosa.
+     *
+     * Es SOLO visual, igual que en `CampoMayusculas`: lo que viaja al
+     * servidor es lo tecleado, y la búsqueda ignora mayúsculas y tildes.
+     * Nadie deja de encontrar nada por esto.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ ACÁ Y NO EN `resources/css/app.css`
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Porque el CSS del proyecto hay que compilarlo, y una regla de tres
+     * líneas que exige acordarse de correr el build es una regla que un
+     * día no está. Esto viaja con el panel y no depende de ningún paso.
+     *
+     * ⚠️ La clase la pone Filament, no nosotros: `fi-select-input-search-ctn`
+     * es el contenedor del buscador del desplegable (v5.7). Si una
+     * actualización la renombra, esto deja de aplicar —se ve minúscula
+     * otra vez— y no rompe nada más.
+     */
+    private static function hojaDeEstilos(): HtmlString
+    {
+        return new HtmlString(
+            '<style>.fi-select-input-search-ctn input{text-transform:uppercase}</style>'
+        );
     }
 
     /**

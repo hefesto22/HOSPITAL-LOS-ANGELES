@@ -43,7 +43,7 @@ const DIA_DEL_SERVICIO = '2026-08-18';
 |--------------------------------------------------------------------------
 */
 
-it('con costo 10 y margen 120 por ciento el precio de lista es 29.33', function (): void {
+it('con costo 10 y margen 120 por ciento el precio de lista es 36.67', function (): void {
     conLaPoliticaSembrada();
 
     $precio = calculadora()->para(
@@ -52,12 +52,28 @@ it('con costo 10 y margen 120 por ciento el precio de lista es 29.33', function 
         Carbon::parse(DIA_DEL_SERVICIO),
     );
 
-    expect($precio->lista)->toBeMonto('29.33')
+    expect($precio->lista)->toBeMonto('36.67')
         ->and($precio->margenObjetivoComoPorcentaje())->toBe('120 %')
-        ->and($precio->descuentoMaximo->comoPorcentaje())->toBe('25 %');
-})->note('lista = costo × (1 + margen) / (1 − descuento_máximo) = 10 × 2.20 / 0.75 = 29.3333… → 29.33');
+        ->and($precio->descuentoMaximo->comoPorcentaje())->toBe('40 %');
+})->note('🔴 El divisor pasó de 0.75 a 0.60 el 20-ago-2026: el Decreto 59-2023 le dio a la CUARTA edad 40 % en medicamentos, y el descuento máximo del Art. 30 es el que fija la lista. 10 × 2.20 / 0.60 = 36.6666… → 36.67. Con el 0.75 viejo daban 29.33 y el paciente de 80 años rompía el piso.');
 
-it('el adulto mayor paga 22.00 y el margen queda clavado en 120 por ciento', function (): void {
+it('la cuarta edad paga 22.00 y el margen queda clavado en 120 por ciento', function (): void {
+    conLaPoliticaSembrada();
+
+    $precio = calculadora()->para(
+        unMedicamento(),
+        Monto::de('10.00'),
+        Carbon::parse(DIA_DEL_SERVICIO),
+    );
+
+    $cuarta = $precio->escenarioDe(RangoEdad::Cuarta);
+
+    expect($cuarta?->paga)->toBeMonto('22.00')
+        ->and($cuarta?->margenComoPorcentaje())->toBe('120 %')
+        ->and($precio->cumpleElPiso())->toBeTrue();
+})->note('36.67 − 40 % = 22.002 → 22.00, y (22 − 10) / 10 es exactamente 1.20. El piso lo toca quien más descuento recibe: ahí es donde se prueba que es piso y no promedio.');
+
+it('la tercera edad queda por encima del piso, no clavada en el', function (): void {
     conLaPoliticaSembrada();
 
     $precio = calculadora()->para(
@@ -68,10 +84,9 @@ it('el adulto mayor paga 22.00 y el margen queda clavado en 120 por ciento', fun
 
     $tercera = $precio->escenarioDe(RangoEdad::Tercera);
 
-    expect($tercera?->paga)->toBeMonto('22.00')
-        ->and($tercera?->margenComoPorcentaje())->toBe('120 %')
-        ->and($precio->cumpleElPiso())->toBeTrue();
-})->note('29.33 − 25 % = 21.9975 → 22.00, y (22 − 10) / 10 es exactamente 1.20. El piso se toca, no se rompe.');
+    expect($tercera?->paga)->toBeMonto('27.50')
+        ->and($tercera?->margenComoPorcentaje())->toBe('175 %');
+})->note('36.67 − 25 % = 27.5025 → 27.50. Desde que la cuarta edad tiene su propio porcentaje, la tercera dejó de ser el peor caso y el hospital gana MÁS con ella que antes.');
 
 it('el paciente sin descuento paga la lista completa', function (): void {
     conLaPoliticaSembrada();
@@ -84,11 +99,11 @@ it('el paciente sin descuento paga la lista completa', function (): void {
 
     $normal = $precio->escenarioDe(RangoEdad::Normal);
 
-    expect($normal?->paga)->toBeMonto('29.33')
-        ->and($normal?->margenComoPorcentaje())->toBe('193.3 %');
+    expect($normal?->paga)->toBeMonto('36.67')
+        ->and($normal?->margenComoPorcentaje())->toBe('266.7 %');
 })->note('Nadie recibe un precio de lista distinto por su edad: el descuento cae sobre el mismo precio que ve cualquiera, así que el adulto mayor SÍ paga menos que quien va detrás en la fila.');
 
-it('la cuarta edad hereda el descuento de la tercera y tambien toca el piso', function (): void {
+it('🔴 la cuarta edad ya no hereda de la tercera: tiene su propio porcentaje', function (): void {
     conLaPoliticaSembrada();
 
     $precio = calculadora()->para(
@@ -97,8 +112,13 @@ it('la cuarta edad hereda el descuento de la tercera y tambien toca el piso', fu
         Carbon::parse(DIA_DEL_SERVICIO),
     );
 
-    expect($precio->escenarioDe(RangoEdad::Cuarta)?->paga)->toBeMonto('22.00');
-});
+    $tercera = $precio->escenarioDe(RangoEdad::Tercera);
+    $cuarta = $precio->escenarioDe(RangoEdad::Cuarta);
+
+    expect($cuarta?->paga)->toBeMonto('22.00')
+        ->and($tercera?->paga)->toBeMonto('27.50')
+        ->and($cuarta?->paga->valor())->not->toBe($tercera?->paga->valor());
+})->note('🔴 Hasta el 20-ago-2026 no había filas de cuarta edad y la escalera le daba lo de la tercera: 25 % donde el Decreto 59-2023 manda 40 %. Un paciente de 85 años pagaba 5.50 de más en cada compra de este medicamento, sin que nada avisara.');
 
 it('el peor escenario es el del descuento mas alto', function (): void {
     conLaPoliticaSembrada();
@@ -109,8 +129,8 @@ it('el peor escenario es el del descuento mas alto', function (): void {
         Carbon::parse(DIA_DEL_SERVICIO),
     );
 
-    expect($precio->peorEscenario()->rango)->toBe(RangoEdad::Tercera);
-})->note('Es el número que decide si la política se cumple. Mirar el margen del paciente sin descuento es mirar el que nunca está en riesgo.');
+    expect($precio->peorEscenario()->rango)->toBe(RangoEdad::Cuarta);
+})->note('Es el número que decide si la política se cumple. Mirar el margen del paciente sin descuento es mirar el que nunca está en riesgo. Desde el Decreto 59-2023 el peor caso es la cuarta edad, no la tercera.');
 
 /*
 |--------------------------------------------------------------------------
@@ -143,10 +163,11 @@ it('la lista se redondea una sola vez, al final', function (): void {
         Carbon::parse(DIA_DEL_SERVICIO),
     );
 
-    // 7.77 × 2.20 / 0.75 = 22.792  →  22.79
-    expect($precio->lista)->toBeMonto('22.79')
-        ->and($precio->escenarioDe(RangoEdad::Tercera)?->paga)->toBeMonto('17.09');
-})->note('§4.5: se redondea sobre la lista, y el descuento se aplica sobre la lista YA redondeada. 22.79 − 25 % = 17.0925 → 17.09.');
+    // 7.77 × 2.20 / 0.60 = 28.49  →  28.49
+    expect($precio->lista)->toBeMonto('28.49')
+        ->and($precio->escenarioDe(RangoEdad::Tercera)?->paga)->toBeMonto('21.37')
+        ->and($precio->escenarioDe(RangoEdad::Cuarta)?->paga)->toBeMonto('17.09');
+})->note('§4.5: se redondea sobre la lista, y el descuento se aplica sobre la lista YA redondeada. 28.49 − 25 % = 21.3675 → 21.37; 28.49 − 40 % = 17.094 → 17.09.');
 
 /*
 |--------------------------------------------------------------------------

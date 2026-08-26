@@ -43,7 +43,7 @@ class BrandingSettingsPage extends Page
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Sistema';
+        return 'Configuración del hospital';
     }
 
     public static function getNavigationSort(): ?int

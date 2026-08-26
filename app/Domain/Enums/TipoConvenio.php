@@ -34,6 +34,25 @@ enum TipoConvenio: string
     /** Hospital Militar, empresas con contrato de salud ocupacional, ONG. */
     case Institucional = 'institucional';
 
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * SEGURO EXTERNO: SE ANOTA, NO SE LE COBRA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La aseguradora con la que el hospital NO tiene convenio. El
+     * paciente paga todo en caja al precio de lista y después reclama él
+     * con la factura en la mano.
+     *
+     * 🔴 No es un pagador, y llamarlo así es el error caro: el sistema
+     * creería que hay algo que cobrarle y quedaría una cuenta por cobrar
+     * contra una aseguradora que nunca recibió una factura ni sabe que
+     * existe. Está acá para que la aseguradora se dé de alta UNA vez
+     * —nombre, RTN, contacto— y deje de escribirse de veinte formas
+     * distintas en un campo libre, y para que salga impresa junto a la
+     * póliza, que es lo que el paciente necesita para reclamar.
+     */
+    case Reembolso = 'reembolso';
+
     public function etiqueta(): string
     {
         return match ($this) {
@@ -41,6 +60,7 @@ enum TipoConvenio: string
             self::AseguradoraPrivada => 'Aseguradora privada',
             self::SeguridadSocial    => 'Seguridad social',
             self::Institucional      => 'Institucional',
+            self::Reembolso          => 'Seguro externo · reembolso',
         };
     }
 
@@ -53,7 +73,12 @@ enum TipoConvenio: string
      */
     public function pagaUnTercero(): bool
     {
-        return $this !== self::Contado;
+        /*
+         * El reembolso está de este lado junto al contado: el hospital le
+         * cobra al paciente. Que después él le reclame a su seguro es
+         * asunto suyo y no genera cuenta por cobrar acá.
+         */
+        return ! in_array($this, [self::Contado, self::Reembolso], true);
     }
 
     /**
@@ -75,6 +100,9 @@ enum TipoConvenio: string
                 .'institución, no el hospital.',
             self::Institucional => 'Contrato con una entidad —militar, empresa, ONG— que '
                 .'responde por las atenciones de su gente.',
+            self::Reembolso => 'El hospital NO tiene convenio con esta aseguradora. El paciente '
+                .'paga en caja al precio de lista y reclama él con la factura. Se registra para '
+                .'que salga impresa junto a la póliza.',
         };
     }
 
@@ -85,6 +113,7 @@ enum TipoConvenio: string
             self::AseguradoraPrivada => 'info',
             self::SeguridadSocial    => 'warning',
             self::Institucional      => 'gray',
+            self::Reembolso          => 'success',
         };
     }
 }

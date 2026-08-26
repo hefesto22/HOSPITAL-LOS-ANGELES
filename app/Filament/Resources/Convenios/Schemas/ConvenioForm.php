@@ -9,12 +9,14 @@ use App\Domain\Enums\TipoConvenio;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\RTNField;
 use App\Filament\Schemas\Components\TelefonoHondurasField;
+use App\Services\CopiadorDeBaseDePrecios;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -32,6 +34,22 @@ use Filament\Schemas\Schema;
  * explicación completa —por eso es `Radio` y no `Select`, que las
  * esconde detrás de un clic— y el fundamento es obligatorio.
  *
+ * ─────────────────────────────────────────────────────────────────────
+ * POR QUÉ COLUMNA PRINCIPAL Y BARRA LATERAL, Y NO DOS COLUMNAS SUELTAS
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Con secciones sueltas en una grilla de dos, Filament las va acomodando
+ * por orden de aparición: una sección corta al lado de una larguísima
+ * deja media pantalla en blanco, y el ojo tiene que saltar de izquierda
+ * a derecha para seguir un solo trámite.
+ *
+ * Acá hay dos columnas con roles distintos. En la ANCHA va lo que se
+ * lee y se decide —quién es, cuánto cubre, sobre qué monto corre el
+ * descuento de ley—. En la ANGOSTA va lo que se configura una vez y no
+ * se vuelve a mirar: de qué base hereda, si exige autorización, desde
+ * cuándo rige. Debajo de `lg` las dos se apilan en una sola columna,
+ * que es como se ve en una tablet en admisión.
+ *
  * ⚠️ Los closures de Filament reciben sus argumentos POR NOMBRE:
  * `$get`, `$set`, `$state`, `$record`. Un parámetro con otro nombre
  * recibe un objeto vacío del contenedor y falla EN SILENCIO.
@@ -40,20 +58,29 @@ final class ConvenioForm
 {
     public static function configure(Schema $schema): Schema
     {
-        return $schema->components([
-            self::identificacion(),
-            self::descuentoDeLey(),
-            self::condiciones(),
-            self::contacto(),
-            self::vigencia(),
-        ]);
+        return $schema
+            ->columns(3)
+            ->components([
+                Group::make([
+                    self::identificacion(),
+                    self::cobertura(),
+                    self::descuentoDeLey(),
+                    self::contacto(),
+                ])->columnSpan(2),
+
+                Group::make([
+                    self::inicializacion(),
+                    self::condiciones(),
+                    self::vigencia(),
+                ])->columnSpan(1),
+            ]);
     }
 
     private static function identificacion(): Section
     {
         return Section::make('Identificación')
             ->description('Cómo se llama este pagador y qué clase de pagador es.')
-            ->columns(2)
+            ->columns(3)
             ->schema([
                 CampoMayusculas::make('codigo')
                     ->label('Código')
@@ -65,7 +92,7 @@ final class ConvenioForm
                      * apuntando a un pagador que ya no se llama así.
                      */
                     ->disabledOn('edit')
-                    ->helperText('Corto, en mayúsculas y sin espacios: CONTADO, IHSS, MILITAR.')
+                    ->helperText('CONTADO, PALIG, IHSS, MILITAR.')
                     ->rule('regex:/^[A-Z0-9\-]{3,20}$/')
                     ->validationMessages([
                         'regex' => 'Solo letras mayúsculas, números y guiones, de 3 a 20 caracteres.',
@@ -74,7 +101,9 @@ final class ConvenioForm
                 CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
-                    ->maxLength(120),
+                    ->maxLength(120)
+                    ->helperText('El nombre completo, como aparece en el contrato.')
+                    ->columnSpan(2),
 
                 Select::make('tipo')
                     ->label('Tipo de pagador')
@@ -95,9 +124,105 @@ final class ConvenioForm
                         if ($tipo instanceof TipoConvenio && ! $tipo->admiteCredito()) {
                             $set('dias_credito', null);
                         }
+
+                        if ($tipo instanceof TipoConvenio && ! $tipo->pagaUnTercero()) {
+                            $set('cobertura_fraccion', 0);
+                            $set('tope_por_evento', null);
+                            $set('cubre_por_defecto', false);
+                        }
                     })
                     ->helperText(fn (mixed $state): ?string => self::tipoDe($state)?->explicacion())
                     ->columnSpanFull(),
+            ]);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * HEREDAR LA BASE DE PRECIOS EN EL MISMO ACTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Firmar con una aseguradora y cargarle sus ciento treinta precios
+     * son el mismo trabajo para quien lo hace. Separarlos deja el hueco
+     * de siempre: el convenio existe, nadie cargó los precios, y el
+     * primer paciente con esa póliza se atiende contra un «este ítem no
+     * tiene precio para este pagador».
+     *
+     * Solo al CREAR. En la edición no aparece: copiar sobre un pagador
+     * que ya opera es otra cosa —y bastante más peligrosa—, y para eso
+     * está la acción de la pantalla de bases de precios, que además
+     * respeta lo que ya estaba cargado.
+     *
+     * El selector solo ofrece bases que TIENEN precios; ver
+     * `CopiadorDeBaseDePrecios::opcionesDeOrigen()`.
+     */
+    private static function inicializacion(): Section
+    {
+        return Section::make('Base de precios')
+            ->description('Opcional. Copia el catálogo completo desde otra base como punto de partida.')
+            ->hiddenOn('edit')
+            ->schema([
+                Select::make('heredar_de')
+                    ->label('Heredar desde')
+                    ->native(false)
+                    ->live()
+                    ->default(CopiadorDeBaseDePrecios::ORIGEN_VACIO)
+                    ->selectablePlaceholder(false)
+                    ->options(fn (): array => app(CopiadorDeBaseDePrecios::class)
+                        ->opcionesDeOrigen(conVacio: true))
+                    ->helperText(
+                        'El precio de lista es el del hospital, sin pagador de por medio: '
+                        .'es el mismo que paga el paciente particular.'
+                    ),
+
+                TextInput::make('porcentaje_heredado')
+                    ->label('¿Qué porcentaje del origen?')
+                    ->numeric()
+                    ->default(100)
+                    ->minValue(1)
+                    ->maxValue(500)
+                    ->suffix('%')
+                    ->required(fn (Get $get): bool => ! app(CopiadorDeBaseDePrecios::class)
+                        ->noCopiaNada($get('heredar_de')))
+                    ->visible(fn (Get $get): bool => ! app(CopiadorDeBaseDePrecios::class)
+                        ->noCopiaNada($get('heredar_de')))
+                    ->helperText('100 = el mismo precio. 85 = un 15 % menos. 120 = un 20 % más.'),
+            ]);
+    }
+
+    /**
+     * Cuánto pone el pagador de cada cuenta (§8.6.3).
+     *
+     * ⚠️ Nace en CERO y no en el 80 % típico del mercado: un porcentaje
+     * puesto por defecto es el hospital regalando plata sin que nadie lo
+     * haya decidido. Con cero, el paciente aparece debiendo todo — que
+     * es visible y se corrige acá mismo.
+     */
+    private static function cobertura(): Section
+    {
+        return Section::make('Cobertura')
+            ->description('Qué parte de cada cargo paga este pagador y hasta cuánto.')
+            ->columns(3)
+            ->visible(fn (Get $get): bool => self::tipoDe($get('tipo'))?->pagaUnTercero() ?? false)
+            ->schema([
+                TextInput::make('cobertura_fraccion')
+                    ->label('Cobertura')
+                    ->numeric()
+                    ->default(0)
+                    ->minValue(0)
+                    ->maxValue(1)
+                    ->step('0.0001')
+                    ->helperText('0.80 es el 80 %. Cero = el paciente paga todo.'),
+
+                TextInput::make('tope_por_evento')
+                    ->label('Tope por evento')
+                    ->numeric()
+                    ->minValue(0.01)
+                    ->prefix('L')
+                    ->helperText('Vacío = sin tope. El excedente lo paga el paciente.'),
+
+                Toggle::make('cubre_por_defecto')
+                    ->label('Cubre lo que no tiene precio propio')
+                    ->helperText('Apagado: solo cubre lo que está declarado.'),
             ]);
     }
 
@@ -130,7 +255,7 @@ final class ConvenioForm
                     ->label('Con qué criterio se decidió')
                     ->required()
                     ->minLength(10)
-                    ->rows(4)
+                    ->rows(3)
                     ->helperText(
                         'Quedan las dos cosas: la opción elegida y por qué. Si hay dictamen del '
                         .'abogado o cláusula del contrato que lo respalde, citalo acá.'
@@ -141,7 +266,6 @@ final class ConvenioForm
     private static function condiciones(): Section
     {
         return Section::make('Condiciones')
-            ->columns(2)
             ->schema([
                 Toggle::make('requiere_autorizacion')
                     ->label('Exige autorización previa')
@@ -221,12 +345,13 @@ final class ConvenioForm
                     ->native(false)
                     ->displayFormat('d/m/Y')
                     ->afterOrEqual('vigencia_desde')
-                    ->helperText('Vacío = sigue vigente. Un convenio terminado se cierra acá, no se borra.'),
+                    ->placeholder('Sin fecha de fin'),
 
                 Textarea::make('notas')
                     ->label('Notas')
                     ->rows(3)
-                    ->columnSpanFull(),
+                    ->columnSpanFull()
+                    ->helperText('Un convenio terminado se cierra con la fecha de arriba, no se borra.'),
             ]);
     }
 }

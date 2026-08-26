@@ -8,6 +8,7 @@ use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Convenio;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Sede;
 use App\Models\Tarifario;
 use Carbon\CarbonInterface;
@@ -52,10 +53,30 @@ final class FijadorDePrecio
         Monto $precio,
         string $motivo,
         CarbonInterface $desde,
+        ?ItemPresentacion $presentacion = null,
     ): Tarifario {
+        /*
+         * 🔴 La regla vive acá y no en la pantalla: `BasesDePrecios` ya
+         * no ofrece farmacia cuando hay un convenio elegido, pero
+         * esconder una opción no es impedirla. El copiador de bases, un
+         * seeder o un comando de consola entran por esta puerta sin pasar
+         * por ningún formulario.
+         */
+        if ($convenio instanceof Convenio && $item->se_almacena) {
+            throw PrecioNoFijableException::esDeFarmacia($item->nombre, $convenio->nombre);
+        }
+
         $dia = $desde->copy()->startOfDay();
         $convenioId = $convenio?->id;
         $sedeId = $sede?->id;
+
+        /*
+         * El envase es parte de la LLAVE del precio, no un dato al
+         * costado: el frasco de 60 ML y el de 80 ML tienen su propia
+         * línea de tiempo. Cerrar el vigente del uno no puede cerrar el
+         * del otro.
+         */
+        $presentacionId = $presentacion?->id;
 
         /*
          * `DB::transaction()` está declarado devolviendo `mixed`, así que
@@ -69,13 +90,14 @@ final class FijadorDePrecio
             $convenio,
             $convenioId,
             $sedeId,
+            $presentacionId,
             $precio,
             $motivo,
             $dia,
         ): Tarifario {
             $posterior = Tarifario::query()
                 ->where('item_id', $item->id)
-                ->where(fn (Builder $sub): Builder => $this->deLaMismaLlave($sub, $convenioId, $sedeId))
+                ->where(fn (Builder $sub): Builder => $this->deLaMismaLlave($sub, $convenioId, $sedeId, $presentacionId))
                 ->whereDate('vigencia_desde', '>=', $dia->toDateString())
                 ->exists();
 
@@ -96,7 +118,7 @@ final class FijadorDePrecio
 
             $vigente = Tarifario::query()
                 ->where('item_id', $item->id)
-                ->where(fn (Builder $sub): Builder => $this->deLaMismaLlave($sub, $convenioId, $sedeId))
+                ->where(fn (Builder $sub): Builder => $this->deLaMismaLlave($sub, $convenioId, $sedeId, $presentacionId))
                 ->vigentesEn($dia)
                 ->first();
 
@@ -109,13 +131,14 @@ final class FijadorDePrecio
             $vigente?->update(['vigencia_hasta' => $dia->copy()->subDay()->toDateString()]);
 
             return Tarifario::query()->create([
-                'item_id'        => $item->id,
-                'convenio_id'    => $convenioId,
-                'sede_id'        => $sedeId,
-                'precio'         => $precio->cantidad()->paraBase(4),
-                'motivo'         => $motivo,
-                'vigencia_desde' => $dia->toDateString(),
-                'vigencia_hasta' => null,
+                'item_id'              => $item->id,
+                'item_presentacion_id' => $presentacionId,
+                'convenio_id'          => $convenioId,
+                'sede_id'              => $sedeId,
+                'precio'               => $precio->cantidad()->paraBase(4),
+                'motivo'               => $motivo,
+                'vigencia_desde'       => $dia->toDateString(),
+                'vigencia_hasta'       => null,
             ]);
         });
 
@@ -130,11 +153,19 @@ final class FijadorDePrecio
      *
      * @return Builder<Tarifario>
      */
-    private function deLaMismaLlave(Builder $consulta, ?int $convenioId, ?int $sedeId): Builder
-    {
+    private function deLaMismaLlave(
+        Builder $consulta,
+        ?int $convenioId,
+        ?int $sedeId,
+        ?int $presentacionId = null,
+    ): Builder {
         $consulta = $convenioId === null
             ? $consulta->whereNull('convenio_id')
             : $consulta->where('convenio_id', $convenioId);
+
+        $consulta = $presentacionId === null
+            ? $consulta->whereNull('item_presentacion_id')
+            : $consulta->where('item_presentacion_id', $presentacionId);
 
         return $sedeId === null
             ? $consulta->whereNull('sede_id')

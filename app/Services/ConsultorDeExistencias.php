@@ -8,6 +8,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Models\Almacen;
 use App\Models\Existencia;
 use App\Models\Item;
+use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,6 +42,36 @@ final class ConsultorDeExistencias
             ->sum('cantidad');
 
         return Decimal::de(self::comoTexto($suma));
+    }
+
+    /**
+     * Cuánto hay de ESTE lote en este almacén — o del ítem sin lote.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * ES EL NÚMERO QUE CONGELA UN CONTEO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Un conteo físico se cuenta al mismo nivel al que se guarda la
+     * existencia: (ítem, lote, almacén). Preguntar por el total del ítem
+     * y compararlo contra lo contado de un lote produciría una diferencia
+     * inventada del tamaño de los otros lotes.
+     *
+     * Cero cuando no hay fila todavía: no tener saldo registrado y tener
+     * saldo cero son lo mismo para quien está mirando el estante.
+     */
+    public function enElLote(Item $item, ?Lote $lote, Almacen $almacen): Decimal
+    {
+        $fila = Existencia::query()
+            ->where('item_id', $item->id)
+            ->where('almacen_id', $almacen->id)
+            ->where(fn (Builder $sub): Builder => $lote instanceof Lote
+                ? $sub->where('lote_id', $lote->id)
+                : $sub->whereNull('lote_id'))
+            ->first();
+
+        return $fila instanceof Existencia
+            ? $fila->cantidadDecimal()
+            : Decimal::cero();
     }
 
     /**

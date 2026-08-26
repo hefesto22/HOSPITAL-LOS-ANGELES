@@ -9,6 +9,11 @@ use App\Filament\Resources\Items\ItemResource;
 use App\Models\Item;
 use Filament\Resources\Pages\EditRecord;
 
+/**
+ * Los descuentos que se marcan en la pestaña «ISV y descuentos» son una
+ * relación de Filament: se sincronizan solos al guardar. Esta clase no
+ * tiene que sacarlos del formulario ni escribirlos.
+ */
 class EditItem extends EditRecord
 {
     protected static string $resource = ItemResource::class;

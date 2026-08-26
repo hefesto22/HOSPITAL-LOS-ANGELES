@@ -15,26 +15,41 @@ use Carbon\CarbonInterface;
  * ante Protección al Consumidor.
  *
  * ─────────────────────────────────────────────────────────────────────
- * EN SALUD HAY UN SOLO UMBRAL: 60 AÑOS
+ * 🔴 CORRECCIÓN: LA CUARTA EDAD SÍ LLEGÓ A SALUD
  * ─────────────────────────────────────────────────────────────────────
  *
- * Corregido el 18-ago-2026 contra la fuente primaria. El Decreto 45-2025
- * (La Gaceta 37,047, 19-ene-2026) reformó el **Artículo 31**, que es la
- * Sección II — Descuento al Pago de Servicios: energía, agua,
- * telecomunicaciones, cable, bienes inmuebles y salida aeroportuaria. Ahí
- * es donde vive la cuarta edad con 35 %.
+ * Este bloque decía lo contrario hasta hoy —«en salud hay un solo
+ * umbral: 60 años», «sin cuarta edad»— y era **falso**. Estaba escrito
+ * mirando un solo decreto de los dos que hay, y queda acá anotado para
+ * que nadie lo vuelva a deducir de la misma mitad:
  *
- * El **Artículo 30**, que es el de salud, quedó intacto: 25 % en
- * hospitales y clínicas privadas, medicamentos y consulta general; 30 %
- * en consulta especializada, cirugía, odontología, oftalmología,
- * radiología, laboratorio y medicina computarizada. **Sin cuarta edad.**
+ *   · **Decreto 45-2025** (vigente desde el 19-ene-2026) reformó el
+ *     **Artículo 31**, que es la Sección II — Descuento al Pago de
+ *     Servicios: energía, agua, telecomunicaciones, cable, bienes
+ *     inmuebles y salida aeroportuaria. **No es el de salud.**
  *
- * `Cuarta` se conserva de todos modos, y es deliberado: el día que el
- * Congreso la extienda a servicios médicos —que es lo que la prensa ya
- * daba por hecho en enero— tiene que ser una fila de configuración, no un
- * despliegue.
+ *   · **Decreto 59-2023** —no 59-2025, el número estaba mal acá hasta el
+ *     20-ago-2026— reformó los **Artículos 3 y 30**. El 3 agregó la
+ *     definición de «Adulto Mayor de la Cuarta Edad» (80 años o más) y el
+ *     30, que sí es el de salud, le dio porcentajes propios y más altos
+ *     que los de la tercera: servicios médicos, consultas, medicamentos,
+ *     intervenciones quirúrgicas y estudios.
+ *     Publicado en **La Gaceta el 14-feb-2024**.
  *
- * Detalle y fuentes: `docs/dominio-inventario-y-precios.md` §4.4.
+ * ⚠️ Los porcentajes NO se escriben acá y este comentario no los repite
+ * a propósito. Viven en `descuentos_legales` y en `descuentos`, con
+ * vigencia, porque son lo que cambia. Un número en un comentario es un
+ * número que se despega del que el sistema cobra, y el que queda mal es
+ * quien lee el comentario.
+ *
+ * ⚠️ Pendiente de contrastar contra La Gaceta antes de la primera
+ * facturación real: la fecha exacta de publicación del 59-2025 y el
+ * número de la línea de denuncias (la prensa menciona la 114 de la
+ * Fiscalía Especial de Protección al Consumidor y Adulto Mayor, y el
+ * resto del código dice 115).
+ *
+ * Detalle y fuentes: `docs/dominio-inventario-y-precios.md` §4.4 — que
+ * arrastra el mismo error y hay que corregir ahí también.
  *
  * Dos reglas que este enum hace cumplir:
  *
@@ -120,15 +135,21 @@ enum RangoEdad: string
      * UN PACIENTE DE 80 AÑOS TAMBIÉN TIENE 60
      * ─────────────────────────────────────────────────────────────────
      *
-     * Hoy la ley no le da nada específico a la cuarta edad en salud, así
-     * que un paciente de 80 tiene que recibir lo de la tercera — **no
-     * cero**. Buscar solo el rango exacto y rendirse al no encontrarlo
-     * sería negarle el descuento a quien más derecho tiene, y con la
-     * lógica pareciendo correcta.
+     * La escalera existe para que a un paciente de la cuarta edad al que
+     * le falte su fila le toque la de la tercera — **nunca cero**.
+     * Buscar solo el rango exacto y rendirse al no encontrarlo sería
+     * negarle el descuento a quien más derecho tiene, y con la lógica
+     * pareciendo correcta.
+     *
+     * Sigue haciendo falta aunque el Decreto 59-2025 ya le haya dado
+     * porcentajes propios a la cuarta edad: mientras esas filas no estén
+     * cargadas —o el día que una reforma agregue un rango más— la
+     * escalera es lo único que impide que un paciente de 85 años pague
+     * como uno de 40.
      *
      * El resolutor consulta todos estos rangos y se queda con el mayor.
-     * Además de cubrir el caso de hoy, protege contra un dato mal
-     * cargado: la ley no le puede dar menos a alguien por ser más viejo.
+     * Además de cubrir ese caso, protege contra un dato mal cargado: la
+     * ley no le puede dar menos a alguien por ser más viejo.
      *
      * @return list<self>
      */

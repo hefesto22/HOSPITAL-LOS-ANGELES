@@ -15,6 +15,28 @@ namespace App\Domain\Exceptions;
  */
 final class PrecioNoFijableException extends SihlaException
 {
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * A UN SEGURO NO SE LE PACTA PRECIO DE FARMACIA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El precio de un medicamento sale del costo por el margen, y el
+     * costo se mueve con cada compra. Un precio pactado con la
+     * aseguradora se queda quieto: el día que el proveedor sube, el
+     * hospital sigue cobrándole el número viejo y pone la diferencia de
+     * su bolsillo, sin que aparezca en ningún reporte hasta el cierre.
+     *
+     * Los seguros pagan farmacia al precio de lista. Lo que se pacta son
+     * los servicios, que sí tienen precio fijado por dirección.
+     */
+    public static function esDeFarmacia(string $item, string $convenio): self
+    {
+        return new self(
+            "«{$item}» es de farmacia y no lleva precio pactado. {$convenio} lo paga al precio de lista, ".
+            'que se recalcula solo con cada compra. Lo que se pacta con un seguro son los servicios.'
+        );
+    }
+
     public static function yaHayUnoPosterior(string $item, string $paraQuien, string $desde): self
     {
         return new self(

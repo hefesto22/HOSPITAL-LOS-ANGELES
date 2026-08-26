@@ -8,6 +8,7 @@ use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Convenio;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Sede;
 use App\Models\Tarifario;
 use App\Services\FijadorDePrecio;
@@ -73,6 +74,40 @@ class PreciosRelationManager extends RelationManager
                     ->description(fn (Tarifario $record): ?string => $record->esPrecioDeLista()
                         ? 'Vale para todo pagador sin precio propio'
                         : null),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * DE QUÉ ENVASE ES ESTE PRECIO
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * El frasco de 60 ML costó L 16.67 el mililitro y el de
+                 * 80 ML costó 18.75: con un solo precio para los dos, el
+                 * margen del hospital dependería de cuál estaba abierto y
+                 * nadie lo sabría. Acá se ve separado igual que en la
+                 * existencia.
+                 *
+                 * «Todo el producto» es el respaldo: se usa cuando se
+                 * dispensa de un lote que no declaró envase.
+                 */
+                TextColumn::make('presentacion.nombre')
+                    ->label('Presentación')
+                    /*
+                     * «Respaldo» y no «Todo el producto»: la fila sin
+                     * envase NO compite con las otras tres, se usa cuando
+                     * ninguna aplica. Llamarla como al producto entero
+                     * hacía parecer que había cuatro precios para elegir.
+                     */
+                    ->placeholder('Respaldo · sin envase')
+                    /*
+                     * Un solo `?->`, en `presentacion`: el nullsafe corta
+                     * toda la cadena, así que si no hay presentación esto
+                     * ya devuelve null sin tocar `unidad`. Y `unidad_id`
+                     * es NOT NULL, o sea que una presentación SIEMPRE
+                     * tiene unidad — poner `?->` ahí decía que puede no
+                     * tenerla, que es una mentira sobre el esquema.
+                     */
+                    ->description(fn (Tarifario $record): string => $record->presentacion?->unidad->codigo
+                        ?? 'Se usa si el lote no declaró envase'),
 
                 TextColumn::make('sede.nombre')
                     ->label('Sede')
@@ -155,6 +190,29 @@ class PreciosRelationManager extends RelationManager
                         .'negoció un precio distinto para este ítem.'
                     ),
 
+                Select::make('item_presentacion_id')
+                    ->label('De qué envase')
+                    ->options(function (): array {
+                        $item = $this->getOwnerRecord();
+
+                        if (! $item instanceof Item) {
+                            return [];
+                        }
+
+                        return ItemPresentacion::query()
+                            ->where('item_id', $item->id)
+                            ->orderBy('nombre')
+                            ->get()
+                            ->mapWithKeys(fn (ItemPresentacion $p): array => [$p->id => $p->nombre])
+                            ->all();
+                    })
+                    ->placeholder('Todo el producto')
+                    ->native(false)
+                    ->helperText(
+                        'Vacío = el precio de respaldo, el que se usa si el lote no declaró envase. '
+                        .'Elegí uno cuando ese frasco tenga su propio costo por unidad.'
+                    ),
+
                 Select::make('sede_id')
                     ->label('En qué sede')
                     ->options(fn (): array => Sede::query()
@@ -221,6 +279,7 @@ class PreciosRelationManager extends RelationManager
                         precio: Monto::de($precio),
                         motivo: $motivo,
                         desde: Carbon::parse($desde),
+                        presentacion: self::presentacionDe($data['item_presentacion_id'] ?? null),
                     );
                 } catch (PrecioNoFijableException $e) {
                     Notification::make()
@@ -255,6 +314,17 @@ class PreciosRelationManager extends RelationManager
         }
 
         return Convenio::query()->find((int) $id);
+    }
+
+    private static function presentacionDe(mixed $valor): ?ItemPresentacion
+    {
+        if (! is_numeric($valor)) {
+            return null;
+        }
+
+        $presentacion = ItemPresentacion::query()->find((int) $valor);
+
+        return $presentacion instanceof ItemPresentacion ? $presentacion : null;
     }
 
     private static function sedeDe(mixed $id): ?Sede

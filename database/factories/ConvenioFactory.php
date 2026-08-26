@@ -44,6 +44,24 @@ class ConvenioFactory extends Factory
         ];
     }
 
+    /**
+     * El seguro externo: se anota, no se le cobra.
+     *
+     * Sin crédito y sin cobertura porque la base lo exige — los dos CHECK
+     * lo alcanzan igual que al contado. Quien paga es el paciente.
+     */
+    public function reembolso(): self
+    {
+        return $this->state(fn (): array => [
+            'tipo'                 => TipoConvenio::Reembolso,
+            'base_descuento_legal' => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
+            'fundamento_descuento' => 'El paciente paga de su bolsillo y reclama él a su seguro: '
+                .'el descuento cae sobre lo que desembolsa.',
+            'requiere_autorizacion' => false,
+            'dias_credito'          => null,
+        ]);
+    }
+
     public function contado(): self
     {
         return $this->state(fn (): array => [
