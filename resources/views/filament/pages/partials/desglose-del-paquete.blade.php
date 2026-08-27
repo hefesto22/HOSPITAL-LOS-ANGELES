@@ -174,6 +174,23 @@
         </tbody>
     </table>
 
+    {{--
+        De dónde salió la rebaja del renglón de la cirugía.
+
+        Sin esto, quien abre la cuenta ve un descuento sobre una
+        apendicectomía y no tiene cómo saber que viene de los
+        medicamentos: el paquete no muestra sus precios.
+    --}}
+    @php($rebaja = (float) ($descuentoDeFarmacia ?? 0))
+
+    @if ($rebaja > 0)
+        <p class="sihla-desglose-pie">
+            Descuento del hospital sobre lo entregado de farmacia:
+            <strong>&minus; L {{ number_format($rebaja, 2) }}</strong>, ya rebajados del renglón de la cirugía.
+            Crece con cada medicamento que sale; lo presupuestado y no despachado no se descuenta.
+        </p>
+    @endif
+
     <p class="sihla-desglose-pie">
         Lo de esta lista ya está pagado dentro del paquete. Lo que se le dé y no esté acá se cobra aparte.
         El lote lo elige el sistema por FEFO: siempre sale primero el que está más cerca de vencer.

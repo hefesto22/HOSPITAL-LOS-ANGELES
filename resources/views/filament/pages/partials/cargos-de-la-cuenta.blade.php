@@ -186,6 +186,7 @@
                                     <td colspan="7">
                                         @include('filament.pages.partials.desglose-del-paquete', [
                                             'presupuesto' => $paquete,
+                                            'descuentoDeFarmacia' => $renglon->ultimaEntrega()?->descuento_comercial,
                                         ])
                                     </td>
                                 </tr>

@@ -409,6 +409,50 @@ class Presupuesto extends Model
         );
     }
 
+    /**
+     * Lo que YA SALIÓ DE FARMACIA dentro del paquete, valuado a los
+     * precios del presupuesto.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * PARA QUÉ EXISTE: EL DESCUENTO DEL HOSPITAL
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La rebaja del mostrador es solo para lo que sale de farmacia. Pero
+     * adentro del paquete los medicamentos NO tienen renglón propio —van
+     * incluidos en el precio de la cirugía—, así que no hay de dónde
+     * rebajarlos: la rebaja tiene que salir del renglón del paquete, y
+     * esta es su base.
+     *
+     * 🔴 A PRECIO DEL PRESUPUESTO, Y SOLO POR LO ENTREGADO.
+     *
+     *   · **Precio del presupuesto**, porque es el que la familia vio. Si
+     *     el papel decía L 10 la pastilla, el 10 % es L 1 aunque el
+     *     tarifario haya cambiado el martes.
+     *   · **Solo lo entregado**, porque descontar lo presupuestado y no
+     *     despachado sería rebajarle al paciente un medicamento que
+     *     nunca salió del estante.
+     *
+     * Lo que no mueve inventario —honorarios, quirófano, laboratorio— no
+     * entra nunca: el descuento del hospital tampoco los alcanza cuando
+     * se cobran sueltos.
+     */
+    public function farmaciaEntregada(): Decimal
+    {
+        $base = Decimal::cero();
+
+        foreach ($this->desglose() as $fila) {
+            if ($fila['estado'] === 'incluido') {
+                continue;
+            }
+
+            $base = $base->sumar(
+                Decimal::de($fila['linea']->precio_unitario)->por($fila['consumida'])
+            );
+        }
+
+        return $base;
+    }
+
     public function estaVencido(CarbonInterface $fecha): bool
     {
         return $this->vence_el !== null && $this->vence_el->lt($fecha->startOfDay());

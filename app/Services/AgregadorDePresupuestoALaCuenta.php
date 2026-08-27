@@ -57,6 +57,7 @@ final class AgregadorDePresupuestoALaCuenta
     public function __construct(
         private readonly RegistradorDeCargo $cargos,
         private readonly AnuladorDeCargo $anulador,
+        private readonly PoliticaDeDescuentoComercial $politicaDelHospital,
     ) {}
 
     /**
@@ -70,8 +71,9 @@ final class AgregadorDePresupuestoALaCuenta
         $cuenta = $this->cuentaAbiertaDe($presupuesto);
         $item = $this->itemDeCobro($presupuesto);
         $total = Decimal::de($presupuesto->total);
+        $descuento = $this->descuentoDeFarmacia($presupuesto, $cuenta, $total);
 
-        return DB::transaction(function () use ($presupuesto, $cuenta, $item, $total): ?Cargo {
+        return DB::transaction(function () use ($presupuesto, $cuenta, $item, $total, $descuento): ?Cargo {
             $vigente = $this->cargoVigente($presupuesto);
 
             if ($total->esCero()) {
@@ -83,19 +85,17 @@ final class AgregadorDePresupuestoALaCuenta
             }
 
             /*
-             * Idempotencia por monto: si el paquete no cambió, no se
-             * asienta nada. Es lo que permite llamar a esto cada vez que
-             * se toca un renglón sin llenar la bitácora de ruido.
+             * Idempotencia por monto Y por descuento: si ninguno cambió,
+             * no se asienta nada. Es lo que permite llamar a esto cada
+             * vez que se toca un renglón —o se entrega un medicamento—
+             * sin llenar la bitácora de ruido.
              */
-            if ($vigente instanceof Cargo && Decimal::de($vigente->total)->igualA($total)) {
+            if ($vigente instanceof Cargo && $this->estaAlDia($vigente, $total, $descuento)) {
                 return $vigente;
             }
 
             if ($vigente instanceof Cargo) {
-                $this->anulador->anular(
-                    $vigente,
-                    "El presupuesto {$presupuesto->numero} cambió de monto y se vuelve a asentar."
-                );
+                $this->anulador->anular($vigente, $this->porQueSeRehace($vigente, $presupuesto, $total, $descuento));
             }
 
             $cargos = $this->cargos->registrar($cuenta, new LineaDeCargo(
@@ -115,11 +115,46 @@ final class AgregadorDePresupuestoALaCuenta
                  *
                  * El monto va adentro a propósito: dos asientos del mismo
                  * presupuesto con montos distintos SON hechos distintos.
+                 *
+                 * 🔴 Y VA EL ID DEL CARGO QUE SE REEMPLAZA.
+                 *
+                 * Sin él, la clave describe un ESTADO y no un hecho, y el
+                 * estado se repite: se entregan 8 pastillas —el descuento
+                 * sube—, se deshace la entrega —el descuento vuelve a
+                 * donde estaba— y la clave sería idéntica a una ya
+                 * reclamada. El motor la reconocería como reintento y
+                 * devolvería el cargo VIEJO, que a esa altura ya está
+                 * anulado: la cuenta se quedaría sin el renglón del
+                 * paquete y el paciente sin sus L 40,000.
+                 *
+                 * Con el id adentro cada reasiento es único, y un
+                 * reintento del MISMO reasiento —la transacción se cayó y
+                 * se vuelve a intentar— sigue dando la misma clave, que es
+                 * justo lo que la idempotencia tiene que atajar.
+                 *
+                 * ⚠️ `->` y no `?->`: el `??` ya tiene semántica de
+                 * `isset` y atrapa el nulo solo.
                  */
                 claveIdempotencia: (string) Uuid::uuid5(
                     Uuid::NAMESPACE_OID,
-                    "presupuesto:{$presupuesto->id}:".$total->redondeado(2),
+                    "presupuesto:{$presupuesto->id}:".$total->redondeado(2)
+                        .':'.$descuento->redondeado(2)
+                        .':'.($vigente->id ?? 0),
                 ),
+
+                /*
+                 * 🔴 EL DESCUENTO DE FARMACIA VIAJA EN LEMPIRAS, NO EN
+                 * PORCENTAJE.
+                 *
+                 * El 10 % es de los MEDICAMENTOS, no de la cirugía. Ese
+                 * mismo 10 % aplicado sobre los L 40,000 del paquete
+                 * regalaría cuatro mil lempiras donde correspondían
+                 * ciento cincuenta. Lo que se manda es el monto ya
+                 * calculado sobre lo que salió de farmacia.
+                 */
+                descuentoComercial: $descuento->esCero() ? null : Monto::de($descuento->redondeado(2)),
+                motivoDescuento: $descuento->esCero() ? null : $this->motivoDelDescuento($cuenta),
+                autorizadoPor: $descuento->esCero() ? null : $cuenta->descuento_hospital_por,
                 ocurridoEn: now(),
                 precioAcordado: Monto::de($total->redondeado(2)),
                 referenciaAcordada: $presupuesto->numero,
@@ -229,6 +264,116 @@ final class AgregadorDePresupuestoALaCuenta
                 'vigencia_desde'            => now()->toDateString(),
             ],
         );
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL DESCUENTO DE FARMACIA TAMBIÉN ALCANZA AL PAQUETE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El hospital le da 10 % en medicamentos a esta cuenta. Afuera del
+     * paquete eso se aplica solo: cada cargo de farmacia nace rebajado.
+     * Adentro no había forma —los medicamentos van incluidos, sin
+     * renglón propio— y el paciente con paquete terminaba sin el
+     * beneficio que sí recibía el paciente sin paquete, por el mismo
+     * medicamento y el mismo día.
+     *
+     * Acá se cierra: si el presupuesto tenía pastillas a L 10 y se
+     * entregaron 150, el renglón de la apendicectomía baja L 150.
+     *
+     * ⚠️ Se recalcula desde CERO en cada sincronización, contra lo que
+     * hay entregado en ese momento. Por eso alcanza también a lo que ya
+     * se había despachado antes de que alguien pusiera el descuento: no
+     * se acumula, se vuelve a calcular.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * TOPADO POR LA MISMA POLÍTICA QUE EL MOSTRADOR
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * `CalculadoraDeCargo` verifica dos techos en cada cargo —el de la
+     * ley y el de la dirección— y RECHAZA el que se pase. Si el monto
+     * llegara sin topar, un paciente de cuarta edad —cuyo tope de
+     * política es 0 %, porque el 40 % de ley ya es el techo— haría
+     * fallar el asiento del paquete, y entonces una regla de facturación
+     * estaría bloqueando una entrega de farmacia. Eso no pasa acá
+     * (ADR-0008).
+     *
+     * Topar da el mismo resultado que la política quería: a quien no
+     * puede recibir rebaja comercial no se le da, y nadie se entera por
+     * un error rojo en la cara del paciente.
+     */
+    private function descuentoDeFarmacia(Presupuesto $presupuesto, Cuenta $cuenta, Decimal $bruto): Decimal
+    {
+        $fraccion = $cuenta->descuento_hospital;
+
+        if ($fraccion === null || $bruto->esCero()) {
+            return Decimal::cero();
+        }
+
+        $acumulado = Decimal::de(
+            $presupuesto->farmaciaEntregada()->por($fraccion)->redondeado(2)
+        );
+
+        $tope = $this->politicaDelHospital->topePara(
+            $cuenta->encuentro->persona->rangoDeEdadEn(now())
+        );
+
+        $maximo = Decimal::de($bruto->por($tope)->redondeado(2));
+
+        return $acumulado->mayorQue($maximo) ? $maximo : $acumulado;
+    }
+
+    /**
+     * ¿El renglón del paquete ya dice lo que tiene que decir?
+     *
+     * 🔴 SE COMPARA CONTRA `bruto`, NO CONTRA `total`.
+     *
+     * `total` es lo que queda DESPUÉS de los descuentos. Un paciente de
+     * tercera edad recibe el 25 % de ley por intervención quirúrgica, así
+     * que su paquete de L 40,000 tiene un total de L 30,000 — y comparar
+     * ese total contra los 40,000 del presupuesto daba siempre distinto:
+     * cada vez que alguien abría la pantalla, el paquete se anulaba y se
+     * volvía a asentar. Una cuenta que se rehace sola es una cuenta que
+     * nadie puede auditar.
+     *
+     * `bruto` es el monto acordado antes de rebajas: ese es el que tiene
+     * que coincidir con el presupuesto. El descuento se compara aparte.
+     */
+    private function estaAlDia(Cargo $vigente, Decimal $total, Decimal $descuento): bool
+    {
+        return Decimal::de($vigente->bruto)->igualA($total->redondeado(2))
+            && Decimal::de($vigente->descuento_comercial)->igualA($descuento->redondeado(2));
+    }
+
+    /**
+     * Por qué se rehace, en la bitácora. Son dos hechos distintos y el
+     * que lea la cuenta en el egreso necesita saber cuál fue.
+     */
+    private function porQueSeRehace(Cargo $vigente, Presupuesto $presupuesto, Decimal $total, Decimal $descuento): string
+    {
+        if (! Decimal::de($vigente->bruto)->igualA($total->redondeado(2))) {
+            return "El presupuesto {$presupuesto->numero} cambió de monto y se vuelve a asentar.";
+        }
+
+        return "Cambió el descuento de farmacia del paquete {$presupuesto->numero}: "
+            ."de L {$vigente->descuento_comercial} a L {$descuento->redondeado(2)}.";
+    }
+
+    /**
+     * El motivo que queda escrito en el cargo. Lleva el de la cuenta si
+     * lo hay —«Cliente frecuente»— más de dónde salió el número, porque
+     * un descuento en el renglón de una cirugía es lo primero que alguien
+     * va a preguntar de dónde vino.
+     *
+     * Se recorta a los 200 caracteres de la columna.
+     */
+    private function motivoDelDescuento(Cuenta $cuenta): string
+    {
+        $suyo = $cuenta->motivo_descuento_hospital;
+        $texto = ($suyo === null || trim($suyo) === '' ? 'Descuento del hospital' : trim($suyo))
+            .' · sobre lo entregado de farmacia dentro del paquete';
+
+        return mb_substr($texto, 0, 200);
     }
 
     private function diasDeVigencia(Presupuesto $presupuesto): int

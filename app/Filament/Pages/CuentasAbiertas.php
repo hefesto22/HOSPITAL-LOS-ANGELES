@@ -32,6 +32,7 @@ use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
 use App\Services\AbridorDeEncuentro;
+use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
 use App\Services\PoliticaDeDescuentoComercial;
@@ -1268,6 +1269,13 @@ class CuentasAbiertas extends Page
         $this->cancelarEntrega();
         $this->paqueteAbierto = true;
 
+        /*
+         * El renglón del paquete puede tener que moverse: si la cuenta
+         * lleva descuento del hospital, cada medicamento que sale de
+         * farmacia le rebaja su parte.
+         */
+        $this->ponerElPaqueteAlDia($presupuesto);
+
         $queda = $pendiente->restar($aEntregar);
 
         Notification::make()
@@ -1365,6 +1373,8 @@ class CuentasAbiertas extends Page
 
             return;
         }
+
+        $this->ponerElPaqueteAlDia($renglon->presupuesto);
 
         Notification::make()
             ->success()
@@ -1685,6 +1695,21 @@ class CuentasAbiertas extends Page
          * solo lo que NO tiene ya el descuento que corresponde. Sin esa
          * última condición, cada vez que alguien saliera del campo se
          * anularía y recargaría la cuenta entera para dejarla igual.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 LO ENTREGADO DENTRO DEL PAQUETE NO SE REHACE ACÁ
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Un medicamento presupuestado también es de farmacia, así que
+         * caía en este barrido — y volvía a nacer SIN `presupuesto_id`,
+         * sin `presupuesto_linea_id` y sin `IncluidoEnTarifa`. O sea:
+         * convertido en un cargo cobrable normal. Poner un descuento
+         * terminaba COBRÁNDOLE al paciente los medicamentos que ya
+         * estaban adentro del paquete, y de paso borraba los checks del
+         * desglose, que se cuentan por esas mismas columnas.
+         *
+         * Su rebaja no vive en esa línea: vive en el renglón del
+         * paquete, y se pone al día abajo con el agregador.
          */
         $lineas = $cuenta->cargos()
             ->with(['item', 'almacen'])
@@ -1692,9 +1717,12 @@ class CuentasAbiertas extends Page
             ->get()
             ->filter(fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta()
                 && $cargo->item?->se_almacena === true
+                && $cargo->presupuesto_linea_id === null
                 && ! $this->yaLoLleva($cargo, $fraccion));
 
-        if ($lineas->isEmpty()) {
+        $paquetes = $this->paquetesDe($cuenta);
+
+        if ($lineas->isEmpty() && $paquetes->isEmpty()) {
             return;
         }
 
@@ -1740,11 +1768,72 @@ class CuentasAbiertas extends Page
             return;
         }
 
+        /*
+         * Los paquetes se ponen al día DESPUÉS y uno por uno, fuera de
+         * la transacción de arriba: si el renglón de un paquete no se
+         * puede rehacer, eso no puede tumbar el descuento de las líneas
+         * de farmacia que ya quedaron bien.
+         */
+        foreach ($paquetes as $paquete) {
+            $this->ponerElPaqueteAlDia($paquete);
+        }
+
         Notification::make()
             ->success()
             ->title($fraccion instanceof Decimal ? 'Descuento aplicado a toda la cuenta' : 'Descuento quitado de toda la cuenta')
-            ->body($lineas->count().' línea(s) de farmacia quedaron al día.')
+            ->body(trim(
+                $lineas->count().' línea(s) de farmacia quedaron al día. '
+                .($paquetes->isEmpty()
+                    ? ''
+                    : $paquetes->count().' paquete(s) presupuestado(s) también: la rebaja de los medicamentos entregados adentro sale del renglón de la cirugía.')
+            ))
             ->send();
+    }
+
+    /**
+     * Los paquetes presupuestados que hoy tienen renglón vivo en esta
+     * cuenta.
+     *
+     * ⚠️ Solo los `pendiente`. Un paquete ya facturado no se rehace
+     * anulando: eso es nota de crédito, y el bloque 7 todavía no existe.
+     *
+     * @return ColeccionDeModelos<int, Presupuesto>
+     */
+    private function paquetesDe(Cuenta $cuenta): ColeccionDeModelos
+    {
+        /** @var ColeccionDeModelos<int, Presupuesto> $paquetes */
+        $paquetes = Presupuesto::query()
+            ->whereIn('id', $cuenta->cargos()
+                ->whereNotNull('presupuesto_id')
+                ->whereNull('presupuesto_linea_id')
+                ->where('estado', EstadoCargo::Pendiente->value)
+                ->distinct()
+                ->pluck('presupuesto_id'))
+            ->get();
+
+        return $paquetes;
+    }
+
+    /**
+     * Vuelve a calcular el renglón del paquete y lo deja al día.
+     *
+     * 🔴 NUNCA BLOQUEA LO QUE YA PASÓ. El medicamento salió del estante y
+     * el kardex ya lo dice; si el renglón del paquete no se pudo rehacer
+     * —la cuenta se cerró, el cargo ya se facturó— se avisa y se sigue.
+     * Una regla de facturación no detiene un acto clínico (ADR-0008).
+     */
+    private function ponerElPaqueteAlDia(Presupuesto $presupuesto): void
+    {
+        try {
+            app(AgregadorDePresupuestoALaCuenta::class)->sincronizar($presupuesto);
+        } catch (Throwable $e) {
+            Notification::make()
+                ->warning()
+                ->title('El renglón del paquete quedó sin actualizar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+        }
     }
 
     /**
