@@ -15,14 +15,18 @@
     propósito: la redundancia acá cuesta dos líneas y evita facturar mal.
 
     ─────────────────────────────────────────────────────────────────────
-    EL NÚMERO QUE IMPORTA ES EL DE «SIN PRECIO»
+    EL MISMO NÚMERO SIGNIFICA DOS COSAS DISTINTAS
     ─────────────────────────────────────────────────────────────────────
 
-    «131 con precio» tranquiliza y no sirve para nada. «8 sin precio» es
-    lo accionable: cada uno de esos ocho es una discusión en el mostrador
-    esperando a que alguien lo pida. Por eso es el único que se pinta en
-    rojo, y solo cuando no es cero. Para verlos está el filtro «solo los
-    que no tienen precio en esta base».
+    EN EL PRECIO DE LISTA, «8 sin precio» es lo accionable y va en rojo:
+    cada uno de esos ocho es una discusión en el mostrador esperando a
+    que alguien lo pida. «131 con precio» tranquiliza y no sirve de nada.
+
+    EN LA BASE DE UN SEGURO, ese mismo número NO es una alarma: es lo que
+    no se pactó, y lo que no se pactó se cobra al precio de lista, que es
+    lo correcto. Ahí se rotula «sin pactar» y va en gris. Pintarlo de
+    rojo empujaría a alguien a completarlo, y completar un tarifario que
+    nadie firmó es inventar un descuento.
 --}}
 <x-filament-panels::page>
     @php($bases = $this->bases())
@@ -56,9 +60,15 @@
                         <span class="sihla-cifra-rotulo">con precio</span>
                     </div>
 
-                    <div @class(['sihla-cifra', 'sihla-cifra-alerta' => $resumen['sinPrecio'] > 0])>
+                    <div @class([
+                        'sihla-cifra',
+                        'sihla-cifra-alerta' => $this->convenioId === null && $resumen['sinPrecio'] > 0,
+                        'sihla-cifra-tenue' => $this->convenioId !== null,
+                    ])>
                         <span class="sihla-cifra-valor">{{ number_format($resumen['sinPrecio']) }}</span>
-                        <span class="sihla-cifra-rotulo">sin precio</span>
+                        <span class="sihla-cifra-rotulo">
+                            {{ $this->convenioId === null ? 'sin precio' : 'sin pactar' }}
+                        </span>
                     </div>
 
                     <div class="sihla-cifra sihla-cifra-tenue">
@@ -68,6 +78,7 @@
                 </div>
 
                 <div class="sihla-acciones">
+                    {{ $this->agregarItemAction }}
                     {{ $this->copiarBaseAction }}
                 </div>
             </div>
@@ -77,9 +88,10 @@
                     Este es el precio del hospital: el que se le cobra a quien paga de su bolsillo
                     y a cualquier pagador que no tenga precio propio para el ítem.
                 @else
-                    Estos precios le ganan al de lista cuando el paciente viene por
-                    <strong>{{ $this->nombreDeLaBase() }}</strong>. Los que quedan vacíos se cobran
-                    al precio de lista.
+                    Acá está lo pactado con <strong>{{ $this->nombreDeLaBase() }}</strong>: estos
+                    precios le ganan al de lista cuando el paciente viene por ese pagador. Lo que
+                    no aparece en esta base no es un hueco — se cobra al precio de lista. Para
+                    sumar un ítem, «Agregar ítem».
                 @endif
             </p>
         </div>
@@ -220,7 +232,7 @@
         .sihla-cifra-tenue .sihla-cifra-valor { color: rgb(161 161 170); font-weight: 500; }
         .dark .sihla-cifra-tenue .sihla-cifra-valor { color: rgb(113 113 122); }
 
-        .sihla-acciones { flex-shrink: 0; }
+        .sihla-acciones { display: flex; flex-wrap: wrap; gap: .5rem; flex-shrink: 0; }
 
         .sihla-leyenda {
             font-size: .8125rem; line-height: 1.5; max-width: 60ch;

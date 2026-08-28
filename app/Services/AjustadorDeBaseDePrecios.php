@@ -89,6 +89,59 @@ final class AjustadorDeBaseDePrecios
         );
     }
 
+    /**
+     * Saca un ítem de la base de un pagador: desde hoy vuelve a cobrarse
+     * al precio de lista.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * DOS CAMINOS, Y LA FECHA DECIDE CUÁL
+     * ─────────────────────────────────────────────────────────────────
+     *
+     *   · SI EMPEZÓ HOY, se borra. Es la misma regla que `ajustar()`:
+     *     ese precio no estuvo vigente ni un día completo y nadie cobró
+     *     contra él, así que no hay historia que conservar. Es el caso
+     *     real: alguien tecleó un número donde no iba y lo quiere sacar.
+     *
+     *   · SI VENÍA DE ANTES, se CIERRA la vigencia ayer y la fila queda.
+     *     Con ella se explican las facturas que se emitieron mientras
+     *     estuvo vigente, y esas no se pueden quedar sin respaldo.
+     *
+     * ⚠️ Ayer y no hoy: `vigentesEn` incluye los dos extremos, así que
+     * cerrarla hoy la dejaría viva un día más.
+     *
+     * ⚠️ NO toca el precio de lista. Un ítem sin precio de lista no se
+     * puede cobrar en ninguna parte, así que quitarlo de ahí no es una
+     * corrección: es dejarlo mudo. Se retira el ítem, no su precio.
+     */
+    public function quitar(
+        Item $item,
+        Convenio $convenio,
+        string $motivo,
+        ?Sede $sede = null,
+        ?CarbonInterface $desde = null,
+    ): bool {
+        $dia = ($desde ?? now())->copy()->startOfDay();
+
+        $vigente = $this->vigente($item, $convenio, $sede, $dia);
+
+        if (! $vigente instanceof Tarifario) {
+            return false;
+        }
+
+        if ($vigente->vigencia_desde->isSameDay($dia)) {
+            $vigente->delete();
+
+            return true;
+        }
+
+        $vigente->update([
+            'vigencia_hasta' => $dia->copy()->subDay()->toDateString(),
+            'motivo'         => $motivo,
+        ]);
+
+        return true;
+    }
+
     private function vigente(
         Item $item,
         ?Convenio $convenio,

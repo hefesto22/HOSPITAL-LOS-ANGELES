@@ -48,9 +48,32 @@ use Illuminate\Support\Facades\Gate;
  * y eso se descubre a las once de la noche cuando el mostrador dice «este
  * ítem no tiene precio para este pagador».
  *
- * Acá se elige el pagador arriba y se ve el catálogo entero con SU
- * precio, editable en la propia fila. Los que no tienen precio se ven
- * vacíos, que es la única forma de saber qué falta sin ir a buscarlo.
+ * Acá se elige el pagador arriba y se ven sus precios, editables en la
+ * propia fila.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * LA LISTA MUESTRA TODO; LA DE UN SEGURO, SOLO LO PACTADO
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * No son la misma clase de cosa y por eso no se listan igual:
+ *
+ *   · EL PRECIO DE LISTA es obligatorio. Todo lo que el hospital ofrece
+ *     tiene que tener uno, así que ahí se ve el catálogo ENTERO y los
+ *     huecos son lo accionable.
+ *
+ *   · LA BASE DE UN SEGURO es un acuerdo firmado, y un acuerdo tiene las
+ *     líneas que tiene. Lo que no está pactado NO es un hueco: se cobra
+ *     al precio de lista, que es exactamente lo correcto.
+ *
+ * Mostrar el catálogo entero en la base de un seguro tenía dos costos.
+ * Uno de forma: cien filas vacías donde hay que buscar las que importan.
+ * Y uno de fondo: dejaba a mano un campo de precio en ítems que ahí no
+ * pintan nada —«PAQUETE PRESUPUESTADO», que se arma caso por caso—
+ * invitando a teclear un número que después le gana al de lista sin que
+ * nadie lo haya negociado.
+ *
+ * Para sumar uno está «Agregar ítem», que es un acto deliberado: se
+ * elige el ítem y se escribe SU precio para ese pagador.
  *
  * ─────────────────────────────────────────────────────────────────────
  * LA COLUMNA «VS LISTA» NO ES UN ADORNO
@@ -106,7 +129,9 @@ class BasesDePrecios extends Page implements HasTable
 
     public function getSubheading(): string
     {
-        return 'El catálogo completo con el precio de cada pagador. Se edita en la propia fila.';
+        return $this->convenioId === null
+            ? 'El catálogo completo con el precio del hospital. Se edita en la propia fila.'
+            : 'Lo pactado con este pagador. Lo que no está acá se cobra al precio de lista.';
     }
 
     public static function canAccess(): bool
@@ -323,13 +348,39 @@ class BasesDePrecios extends Page implements HasTable
                 /*
                  * El filtro que de verdad se usa: qué me falta cargar.
                  */
+                /*
+                 * ⚠️ Solo en el precio de lista. En la base de un pagador
+                 * la tabla ya lista únicamente lo pactado, así que este
+                 * filtro no devolvería nunca una sola fila.
+                 */
                 Filter::make('sin_precio')
                     ->label('Solo los que no tienen precio en esta base')
+                    ->visible(fn (): bool => $this->convenioId === null)
                     ->query(fn (Builder $query): Builder => $query->whereNotExists(
                         fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)
                     )),
             ])
-            ->recordActions([])
+            /*
+             * La contraparte de «Agregar»: sacar un ítem de la base de un
+             * pagador. Solo del lado de un pagador —del precio de lista
+             * no se saca nada: un ítem sin precio de lista no se puede
+             * cobrar en ninguna parte—.
+             */
+            ->recordActions([
+                Action::make('quitarDeLaBase')
+                    ->label('Quitar')
+                    ->icon(Heroicon::OutlinedXMark)
+                    ->color('gray')
+                    ->iconButton()
+                    ->tooltip('Sacarlo de esta base: vuelve a cobrarse al precio de lista.')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Item $record): string => 'Quitar '.$record->codigo.' de esta base')
+                    ->modalDescription(fn (): string => 'Desde hoy se vuelve a cobrar al precio de lista. '
+                        .'Las facturas ya emitidas no cambian: cada cargo lleva su propio precio congelado.')
+                    ->modalSubmitActionLabel('Quitar')
+                    ->visible(fn (): bool => $this->convenioId !== null)
+                    ->action(fn (Item $record) => $this->quitar($record)),
+            ])
             ->toolbarActions([]);
     }
 
@@ -359,6 +410,16 @@ class BasesDePrecios extends Page implements HasTable
          */
         if ($this->convenioId !== null) {
             $query->where('items.se_almacena', false);
+
+            /*
+             * ⚠️ Y SOLO LO QUE YA TIENE PRECIO EN ESTA BASE. Ver el
+             * encabezado: la base de un seguro es un acuerdo, no el
+             * catálogo con huecos. Lo que falta se agrega a mano con el
+             * botón, no tecleando en una fila que estaba ahí de paso.
+             */
+            $query->whereExists(
+                fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)
+            );
         }
 
         /*
@@ -511,6 +572,175 @@ class BasesDePrecios extends Page implements HasTable
         }
 
         return str_starts_with($texto, '-') ? 'warning' : 'success';
+    }
+
+    // ── Sumar un ítem a la base de un pagador ─────────────────────────
+
+    /**
+     * «Agregar ítem»: la única puerta para que algo entre a la base de un
+     * pagador.
+     *
+     * Antes esa puerta era cada fila vacía de una tabla de cien —lo cual
+     * significa que no había puerta, había cien—. Acá se elige el ítem y
+     * se escribe su precio en el mismo acto, que es como se firma un
+     * tarifario: renglón por renglón y a propósito.
+     *
+     * ⚠️ El desplegable solo ofrece lo que TODAVÍA NO está en la base.
+     * Ofrecer algo que ya tiene precio invitaría a pisarlo desde acá, sin
+     * ver el número anterior ni la diferencia contra la lista, que es
+     * justo para lo que sirve la tabla de al lado.
+     */
+    public function agregarItemAction(): Action
+    {
+        return Action::make('agregarItem')
+            ->label('Agregar ítem')
+            ->icon(Heroicon::OutlinedPlus)
+            ->color('gray')
+            ->visible(fn (): bool => $this->convenioId !== null && Gate::allows('create', Item::class))
+            ->modalHeading(fn (): string => 'Agregar a la base de '.$this->nombreDeLaBase())
+            ->modalDescription(
+                'Se suma el ítem a esta base con el precio que se le pactó a este pagador. '
+                .'Lo que no está en la base se sigue cobrando al precio de lista.'
+            )
+            ->modalSubmitActionLabel('Agregar')
+            ->schema([
+                Select::make('item_id')
+                    ->label('¿Qué ítem?')
+                    ->native(false)
+                    ->searchable()
+                    ->required()
+                    ->options(fn (): array => $this->opcionesParaAgregar())
+                    ->helperText('Solo aparece lo que todavía no tiene precio en esta base.'),
+
+                TextInput::make('precio')
+                    ->label('Precio para este pagador')
+                    ->numeric()
+                    ->required()
+                    ->minValue(0)
+                    ->prefix('L')
+                    ->helperText('Cero se puede: es una cortesía declarada. Negativo no.'),
+            ])
+            ->action(function (array $data): void {
+                $this->agregar($data);
+            });
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function agregar(array $data): void
+    {
+        $convenio = $this->baseActual();
+
+        if (! $convenio instanceof Convenio) {
+            return;
+        }
+
+        $item = Item::query()->find(is_numeric($data['item_id'] ?? null) ? (int) $data['item_id'] : 0);
+
+        if (! $item instanceof Item) {
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $item), 403);
+
+        $numero = NumeroDeFormulario::aDecimal($data['precio'] ?? null);
+
+        if (! $numero instanceof Decimal || $numero->esNegativo()) {
+            Notification::make()
+                ->danger()
+                ->title('Ese precio no se entiende')
+                ->body('Escribí solo números, con punto para los decimales. Ejemplo: 1250.50')
+                ->send();
+
+            return;
+        }
+
+        try {
+            app(AjustadorDeBaseDePrecios::class)->ajustar(
+                item: $item,
+                convenio: $convenio,
+                precio: Monto::de($numero->redondeado(4)),
+                motivo: 'Ítem agregado a la base de '.$convenio->nombre.'.',
+            );
+        } catch (PrecioNoFijableException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo agregar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->resetTable();
+
+        Notification::make()
+            ->success()
+            ->title($item->codigo.' agregado')
+            ->body('Ya tiene precio propio en '.$convenio->nombre.'.')
+            ->send();
+    }
+
+    private function quitar(Item $item): void
+    {
+        $convenio = $this->baseActual();
+
+        if (! $convenio instanceof Convenio) {
+            return;
+        }
+
+        abort_unless(Gate::allows('update', $item), 403);
+
+        $quitado = app(AjustadorDeBaseDePrecios::class)->quitar(
+            item: $item,
+            convenio: $convenio,
+            motivo: 'Retirado de la base de '.$convenio->nombre.'.',
+        );
+
+        $this->resetTable();
+
+        if (! $quitado) {
+            Notification::make()
+                ->warning()
+                ->title('No había nada que quitar')
+                ->body($item->codigo.' ya no tenía precio vigente en '.$convenio->nombre.'.')
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->success()
+            ->title($item->codigo.' quitado')
+            ->body('Desde hoy se cobra al precio de lista cuando el paciente viene por '.$convenio->nombre.'.')
+            ->send();
+    }
+
+    /**
+     * Lo que se puede agregar: vigente, de lo que no lleva existencia, y
+     * todavía sin precio en esta base.
+     *
+     * ⚠️ Farmacia no entra, por lo mismo que no se lista: a un seguro no
+     * se le pacta el precio de un medicamento, que se recalcula solo con
+     * cada compra. `FijadorDePrecio` lo rechazaría igual; esto es para
+     * que no haga falta intentarlo.
+     *
+     * @return array<int, string>
+     */
+    private function opcionesParaAgregar(): array
+    {
+        return Item::query()
+            ->vigentesEn(now())
+            ->where('se_almacena', false)
+            ->whereNotExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId))
+            ->orderBy('codigo')
+            ->get()
+            ->mapWithKeys(fn (Item $item): array => [
+                $item->getKey() => $item->codigo.' · '.$item->nombre,
+            ])
+            ->all();
     }
 
     // ── Copiar una base entera ────────────────────────────────────────
