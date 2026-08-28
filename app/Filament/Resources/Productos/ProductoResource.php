@@ -95,6 +95,12 @@ class ProductoResource extends Resource
             'categoria:id,codigo,nombre,ambito,orden',
             'unidadDispensacion:id,codigo,nombre,simbolo',
             'unidadFraccion:id,codigo,nombre,simbolo',
+            /*
+             * Para la columna «Se envasa en». Sin esto, la lista dispara
+             * una consulta por fila —veinticinco por página— y el N+1 no
+             * se ve: la tabla se dibuja igual, solo más lenta.
+             */
+            'presentaciones:id,item_id,nombre,es_predeterminada',
         ]);
     }
 

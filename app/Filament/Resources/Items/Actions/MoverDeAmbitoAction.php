@@ -100,8 +100,15 @@ final class MoverDeAmbitoAction
                         ->all())
                     ->helperText('En qué unidad se cuenta y se descuenta. La más chica que se dispensa.'),
             ])
-            ->action(function (array $data, Item $record): void {
-                self::mover($record, $data);
+            /*
+             * `halt()` cuando el movimiento no se hizo: sin eso, la
+             * acción se da por buena y la ficha redirige al listado
+             * llevándose por delante el aviso de por qué no se pudo.
+             */
+            ->action(function (array $data, Item $record, Action $action): void {
+                if (! self::mover($record, $data)) {
+                    $action->halt();
+                }
             });
     }
 
@@ -145,13 +152,16 @@ final class MoverDeAmbitoAction
      * `se_almacena`, y si la categoría elegida fuera del lado equivocado
      * la FK compuesta `items_categoria_fk` rechaza el UPDATE entero.
      *
+     * Devuelve si se movió: `false` es «tiene inventario escrito», y
+     * quien la llama tiene que frenar ahí.
+     *
      * @param array<string, mixed> $data
      */
-    private static function mover(Item $record, array $data): void
+    private static function mover(Item $record, array $data): bool
     {
         $destinoEsFarmacia = ! $record->se_almacena;
 
-        DB::transaction(function () use ($record, $data, $destinoEsFarmacia): void {
+        $movido = DB::transaction(function () use ($record, $data, $destinoEsFarmacia): bool {
             /*
              * Re-check DENTRO de la transacción: entre que se abrió el
              * modal y se apretó Mover, otra pantalla pudo recibir una
@@ -176,7 +186,7 @@ final class MoverDeAmbitoAction
                     ->persistent()
                     ->send();
 
-                return;
+                return false;
             }
 
             $fresco->se_almacena = $destinoEsFarmacia;
@@ -189,7 +199,13 @@ final class MoverDeAmbitoAction
             }
 
             $fresco->save();
+
+            return true;
         });
+
+        if ($movido !== true) {
+            return false;
+        }
 
         Notification::make()
             ->success()
@@ -198,5 +214,7 @@ final class MoverDeAmbitoAction
                 ? 'Ya lleva existencia y aparece en los conteos. Cargale la primera compra para que tome costo.'
                 : 'Dejó de llevar existencia. Su precio se fija a mano en el tarifario.')
             ->send();
+
+        return true;
     }
 }
