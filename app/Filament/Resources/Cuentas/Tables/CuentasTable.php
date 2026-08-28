@@ -13,6 +13,8 @@ use Filament\Actions\ViewAction;
 use Filament\Support\Enums\FontFamily;
 use Filament\Tables\Columns\ColumnGroup;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Enums\FiltersLayout;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
@@ -209,6 +211,38 @@ final class CuentasTable
                 ])->alignEnd(),
             ])
             ->filters([
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * EL INTERRUPTOR VA PRIMERO Y A LA VISTA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * «¿Qué hay abierto ahora mismo?» es la pregunta con la
+                 * que se entra a esta pantalla la mitad de las veces, y
+                 * estaba escondida adentro de un desplegable de estados
+                 * junto a «anulada» y «congelada». Un interruptor
+                 * arriba, prendido de un clic.
+                 *
+                 * Arranca APAGADO: esta pantalla es el histórico
+                 * completo —lo dice su propio subtítulo— y la de atender
+                 * es «Cuentas abiertas», que ya solo muestra las vivas.
+                 *
+                 * ⚠️ Incluye las CONGELADAS. Una cuenta congelada sigue
+                 * viva —admite cargos tardíos y todavía se factura—; en
+                 * el mostrador «abierta» quiere decir «todavía no se
+                 * cerró», no el valor exacto de la columna.
+                 *
+                 * ⚠️ El parámetro se llama `$query`. Con otro nombre
+                 * Filament entrega un Builder vacío del contenedor y el
+                 * filtro deja de filtrar EN SILENCIO. Hay una prueba de
+                 * arquitectura que lo vigila.
+                 */
+                Filter::make('solo_abiertas')
+                    ->label('Solo las abiertas')
+                    ->toggle()
+                    ->query(function (Builder $query): void {
+                        self::soloAbiertas($query);
+                    }),
+
                 SelectFilter::make('estado')
                     ->label('Estado')
                     ->options(fn (): array => collect(EstadoCuenta::cases())
@@ -240,7 +274,7 @@ final class CuentasTable
                             self::soloSaldadas($query);
                         },
                     ),
-            ])
+            ], layout: FiltersLayout::AboveContent)
             ->recordActions([
                 ViewAction::make()->label('Ver'),
             ])
@@ -267,6 +301,19 @@ final class CuentasTable
             }],
             'total',
         );
+    }
+
+    /**
+     * Lo que todavía no se cerró: abiertas y congeladas.
+     *
+     * @param Builder<Cuenta> $consulta
+     */
+    private static function soloAbiertas(Builder $consulta): void
+    {
+        $consulta->whereIn('estado', [
+            EstadoCuenta::Abierta->value,
+            EstadoCuenta::Congelada->value,
+        ]);
     }
 
     /**
