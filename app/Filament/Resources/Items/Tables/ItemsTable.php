@@ -90,6 +90,26 @@ final class ItemsTable
                     ->getTitleFromRecordUsing(fn (Item $record): string => $record->categoria->nombre
                         ?? 'Sin categoría')
                     ->collapsible(),
+
+                /*
+                 * La segunda forma de mirar lo mismo. «Agrupar por» con
+                 * una sola opción es un desplegable que promete algo que
+                 * no tiene: se abre, hay un ítem, y se cierra.
+                 *
+                 * Por tipo es la agrupación de la otra pregunta. La
+                 * categoría es la HOJA DEL TARIFARIO —hospitalización,
+                 * rayos X, laboratorio—, que es como está impreso el
+                 * papel. El tipo es QUÉ CLASE DE COSA ES —servicio,
+                 * estancia, procedimiento, honorario médico—, que es lo
+                 * que decide cómo se cobra y cómo paga ISV.
+                 *
+                 * ⚠️ `getTitleFromRecordUsing` y no el valor pelado: sin
+                 * eso los encabezados salen «honorario_medico».
+                 */
+                Group::make('tipo')
+                    ->label('Tipo')
+                    ->getTitleFromRecordUsing(fn (Item $record): string => $record->tipo->etiqueta())
+                    ->collapsible(),
             ])
             ->defaultGroup('categoria.nombre')
             /*

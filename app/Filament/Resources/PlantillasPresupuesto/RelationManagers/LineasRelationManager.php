@@ -38,17 +38,47 @@ class LineasRelationManager extends RelationManager
     public function form(Schema $schema): Schema
     {
         return $schema->components([
+            /*
+             * ─────────────────────────────────────────────────────────
+             * ACÁ TAMBIÉN SE PUEDE ESCANEAR
+             * ─────────────────────────────────────────────────────────
+             *
+             * `searchable(['codigo', 'nombre'])` es el buscador que arma
+             * Filament solo: un LIKE sobre esas dos columnas. Con eso,
+             * pasar el lector por la caja de un medicamento no devolvía
+             * NADA, y no por un error visible — la lista simplemente
+             * salía vacía y parecía que el producto no estaba cargado.
+             *
+             * El código de barras del fabricante no vive en el ítem sino
+             * en su PRESENTACIÓN: la caja de 100 y el blíster de 12
+             * tienen cada uno el suyo. `Item::scopeBuscar` ya sabe eso
+             * —lo compara exacto y sin canonizar, porque un `%like%`
+             * sobre un EAN devuelve el producto equivocado— además de
+             * buscar por nombre con trigramas, que es lo que hace que
+             * «acetaminofen» sin tilde encuentre ACETAMINOFÉN.
+             *
+             * Así que la búsqueda se delega ahí y no se reimplementa: es
+             * el mismo buscador del mostrador, y tiene que comportarse
+             * igual en las dos pantallas.
+             *
+             * ⚠️ `soloVigentes: true`: un ítem retirado del catálogo no
+             * puede entrar a una plantilla nueva. Los que ya están en
+             * plantillas viejas se siguen viendo — eso lo resuelve la
+             * relación, no el buscador.
+             */
             Select::make('item_id')
                 ->label('Ítem del catálogo')
                 ->relationship('item', 'nombre')
                 ->getOptionLabelFromRecordUsing(
                     fn (Item $record): string => "{$record->codigo} — {$record->nombre}"
                 )
-                ->searchable(['codigo', 'nombre'])
+                ->searchable()
+                ->getSearchResultsUsing(fn (string $search): array => self::buscarEnElCatalogo($search))
                 ->preload()
                 ->required()
                 ->columnSpanFull()
-                ->helperText('Buscá por código o por nombre. Si no está en el catálogo, primero hay que darlo de alta ahí.'),
+                ->helperText('Escaneá el código de barras, o escribí código o nombre. '
+                    .'Si no está en el catálogo, primero hay que darlo de alta ahí.'),
 
             TextInput::make('cantidad')
                 ->label('Cantidad típica')
@@ -75,6 +105,20 @@ class LineasRelationManager extends RelationManager
                 ->columnSpanFull()
                 ->helperText('Para quien arma la plantilla, no para el paciente.'),
         ]);
+    }
+
+    /**
+     * El buscador del mostrador, tal cual, para que escanear encuentre.
+     *
+     * @return array<int, string>
+     */
+    private static function buscarEnElCatalogo(string $termino): array
+    {
+        return Item::buscar($termino, limite: 30, soloVigentes: true)
+            ->mapWithKeys(fn (Item $item): array => [
+                $item->getKey() => "{$item->codigo} — {$item->nombre}",
+            ])
+            ->all();
     }
 
     public function table(Table $table): Table
