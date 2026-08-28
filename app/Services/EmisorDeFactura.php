@@ -234,13 +234,32 @@ final class EmisorDeFactura
     }
 
     /**
-     * Anula una factura emitida.
+     * Anula una factura emitida y devuelve la cuenta a como estaba.
      *
      * ⚠️ Anular NO es lo mismo que devolverle plata al cliente. Se usa
      * para el papel que se arruinó o que salió con el cliente
      * equivocado, y solo mientras no haya salido del hospital. Deshacer
      * una factura ya entregada es una NOTA DE CRÉDITO, que es otro
      * documento y todavía no existe.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * LO QUE SE DESHACE Y LO QUE NO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * SE DESHACE lo que hizo `emitir()` del lado de la cuenta: los
+     * cargos vuelven a `pendiente` y la cuenta vuelve a `abierta`. Sin
+     * esto, anular dejaba la cuenta muerta —cerrada y con todo
+     * facturado— y volver a cobrarle a esa paciente obligaba a abrir una
+     * cuenta nueva y recargarle a mano lo que ya tenía.
+     *
+     * NO SE DESHACE el número fiscal: el correlativo queda consumido y
+     * la próxima factura sale con el siguiente. El SAR audita la
+     * secuencia y un hueco es una factura que alguien escondió.
+     *
+     * NO SE DESHACEN los abonos. La plata entró de verdad y sigue
+     * abonada a la cuenta, así que al volver a facturar la cuenta ya
+     * está saldada y no hay que cobrar dos veces. Devolver plata es
+     * anular el abono: otro hecho, con el turno de caja abierto.
      */
     public function anular(Factura $factura, string $motivo, ?int $quien = null): Factura
     {
@@ -272,8 +291,96 @@ final class EmisorDeFactura
                 'motivo_anulacion' => trim($motivo),
             ]);
 
+            $this->devolverLaCuentaAComoEstaba($bloqueada);
+
             return $bloqueada->refresh();
         });
+    }
+
+    /**
+     * Deja la cuenta como estaba antes de que se emitiera esta factura.
+     *
+     * Dos pasos, en este orden:
+     *
+     *  1. Los cargos que ESTA factura se llevó vuelven a `pendiente`.
+     *     Se identifican por el detalle de la factura y no por «todos
+     *     los facturados de la cuenta»: si algún día se factura de a
+     *     partes, anular una no puede devolver los renglones de otra.
+     *
+     *  2. La cuenta vuelve a `abierta`, pero solo si no le queda otra
+     *     factura viva. Anular la primera de dos no puede reabrir una
+     *     cuenta que la segunda todavía está sosteniendo.
+     *
+     * ⚠️ `cuentas_una_abierta_por_encuentro` deja UNA sola cuenta
+     * abierta por encuentro. Si mientras tanto se abrió otra —el caso
+     * del cambio de pagador— la reapertura se saltea en vez de reventar
+     * con un error de índice único: la factura igual queda anulada, que
+     * es lo que se pidió, y la cuenta se resuelve a mano.
+     */
+    private function devolverLaCuentaAComoEstaba(Factura $factura): void
+    {
+        $cuenta = Cuenta::query()->whereKey($factura->cuenta_id)->lockForUpdate()->first();
+
+        if (! $cuenta instanceof Cuenta) {
+            return;
+        }
+
+        /*
+         * ⚠️ `cargos` está particionada y su PK es `(id,
+         * fecha_operacion)`, así que `factura_lineas.cargo_id` es un id
+         * suelto sin FK. Por eso además del id se exige `cuenta_id`: es
+         * lo que impide que un id repetido de otra partición se cuele.
+         */
+        $ids = $factura->detalle()
+            ->pluck('cargo_id')
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($ids !== []) {
+            Cargo::query()
+                ->whereIn('id', $ids)
+                ->where('cuenta_id', $cuenta->getKey())
+                ->where('estado', EstadoCargo::Facturado->value)
+                ->update(['estado' => EstadoCargo::Pendiente->value]);
+        }
+
+        if ($cuenta->estado !== EstadoCuenta::Cerrada) {
+            return;
+        }
+
+        $otraViva = Factura::query()
+            ->where('cuenta_id', $cuenta->getKey())
+            ->whereKeyNot($factura->getKey())
+            ->where('estado', EstadoFactura::Emitida->value)
+            ->exists();
+
+        if ($otraViva) {
+            return;
+        }
+
+        $yaHayOtraAbierta = Cuenta::query()
+            ->where('encuentro_id', $cuenta->encuentro_id)
+            ->whereKeyNot($cuenta->getKey())
+            ->where('estado', EstadoCuenta::Abierta->value)
+            ->exists();
+
+        if ($yaHayOtraAbierta) {
+            return;
+        }
+
+        /*
+         * `forceFill` por lo mismo que en `emitir()`: `cerrada_en` y
+         * `cerrada_por` no son fillable, y `update()` los descartaría en
+         * silencio dejando la cuenta abierta con fecha de cierre. El
+         * CHECK `cuentas_cierre_completo` mira la otra dirección, así
+         * que ese silencio no lo atajaría nadie.
+         */
+        $cuenta->forceFill([
+            'estado'      => EstadoCuenta::Abierta->value,
+            'cerrada_en'  => null,
+            'cerrada_por' => null,
+        ])->save();
     }
 
     /**

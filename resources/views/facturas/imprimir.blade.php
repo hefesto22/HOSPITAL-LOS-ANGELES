@@ -38,6 +38,14 @@
             font-family: Arial, Helvetica, sans-serif; font-size: 10px;
         }
 
+        /*
+         * Incrustada en el modal la hoja arranca pegada arriba: el
+         * margen del visor lo pone el modal, y duplicarlo deja una
+         * franja gris que parece un error de carga.
+         */
+        body.incrustada { background: #fff; }
+        body.incrustada .hoja { margin: 0 auto; box-shadow: none; }
+
         .hoja { width: 216mm; margin: 0 auto; padding: 10mm; background: #fff; }
 
         @media print {
@@ -94,11 +102,13 @@
         }
     </style>
 </head>
-<body>
-    <div class="barra no-imprime">
-        <button type="button" onclick="window.print()">Imprimir</button>
-        <a href="{{ url()->previous() }}">Volver</a>
-    </div>
+<body class="{{ ($incrustada ?? false) ? 'incrustada' : '' }}">
+    @unless ($incrustada ?? false)
+        <div class="barra no-imprime">
+            <button type="button" onclick="window.print()">Imprimir</button>
+            <a href="{{ url()->previous() }}">Volver</a>
+        </div>
+    @endunless
 
     <div class="hoja">
         {{-- ── Encabezado ───────────────────────────────────────────── --}}

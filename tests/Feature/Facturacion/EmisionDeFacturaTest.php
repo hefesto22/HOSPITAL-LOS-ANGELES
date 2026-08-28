@@ -330,3 +330,78 @@ it('no se puede anular dos veces', function (): void {
     app(EmisorDeFactura::class)->anular($factura, 'Se arruinó el papel al imprimirlo.', quienAnula());
     app(EmisorDeFactura::class)->anular($factura->refresh(), 'Otra vez, por error.', quienAnula());
 })->throws(FacturaException::class, 'ya está anulada');
+
+/*
+|--------------------------------------------------------------------------
+| Anular deshace el cierre, no el número
+|--------------------------------------------------------------------------
+*/
+
+it('anular devuelve los cargos y vuelve a abrir la cuenta', function (): void {
+    $cuenta = unaCuentaCon(elContado());
+    unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('350.0000'));
+    saldar($cuenta);
+
+    $factura = facturar($cuenta);
+
+    expect($cuenta->refresh()->estado)->toBe(EstadoCuenta::Cerrada);
+
+    app(EmisorDeFactura::class)->anular($factura, 'Salió con el cliente equivocado.', quienAnula());
+
+    $cuenta->refresh();
+
+    expect($cuenta->estado)->toBe(EstadoCuenta::Abierta)
+        ->and($cuenta->cerrada_en)->toBeNull()
+        ->and($cuenta->cerrada_por)->toBeNull()
+        ->and($cuenta->cargos()->where('estado', EstadoCargo::Facturado->value)->count())->toBe(0)
+        ->and($cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->count())->toBe(1);
+})->note('Sin esto, anular dejaba la cuenta muerta: cerrada y con todo facturado. Volver a cobrarle a esa paciente obligaba a abrir una cuenta nueva y recargarle a mano lo que ya tenía.');
+
+it('despues de anular se le vuelve a facturar a la misma paciente', function (): void {
+    $cuenta = unaCuentaCon(elContado());
+    $rango = unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('350.0000'));
+    saldar($cuenta);
+
+    $primera = facturar($cuenta);
+
+    app(EmisorDeFactura::class)->anular($primera, 'Se arrugó el papel en la impresora.', quienAnula());
+
+    /*
+     * Sin volver a cobrar: el abono sigue aplicado —la plata entró de
+     * verdad— así que la cuenta ya está saldada y la segunda emisión
+     * pasa el control de saldo sin que nadie pague dos veces.
+     */
+    $segunda = facturar($cuenta->refresh());
+
+    expect($segunda->correlativo)->toBe(2)
+        ->and($segunda->numero)->toBe('000-001-01-00000002')
+        ->and($segunda->total)->toBe('350.00')
+        ->and($rango->refresh()->siguiente)->toBe(3)
+        ->and($cuenta->refresh()->estado)->toBe(EstadoCuenta::Cerrada);
+})->note('El número anulado queda consumido y la reemisión sale con el siguiente: la secuencia del SAR no tiene huecos ni repetidos.');
+
+it('la cuenta reabierta vuelve a admitir cargos', function (): void {
+    $cuenta = unaCuentaCon(elContado());
+    unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('350.0000'));
+    saldar($cuenta);
+
+    $factura = facturar($cuenta);
+
+    app(EmisorDeFactura::class)->anular($factura, 'Faltaba cargarle la curación.', quienAnula());
+
+    /*
+     * Lo que se pidió, en una línea: la cuenta vuelve a estar viva y se
+     * le puede seguir cargando antes de facturarla de nuevo. Con la
+     * cuenta cerrada esto tiraba `laCuentaNoEstaViva`.
+     */
+    cargarle($cuenta->refresh(), unItemFacturable('120.0000'));
+
+    expect($cuenta->refresh()->total)->toBe('470.00')
+        ->and($cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->count())->toBe(2);
+})->note('Anular y volver a facturar sirve de poco si en el medio no se le puede agregar lo que faltaba, que es justo por lo que se anula la mayoría de las veces.');

@@ -515,6 +515,31 @@ it('el estado solo transiciona por caminos legales', function (): void {
     $cuenta = unaCuentaCon($contado);
     $cargo = unCargo($cuenta, unItemAPrecio('100.0000'));
 
+    /*
+     * ⚠️ El camino ilegal de esta prueba es `trasladado → pendiente`, y
+     * NO `facturado → pendiente`: ese último se volvió legal el día que
+     * anular una factura pasó a devolver la cuenta a como estaba (ver
+     * la migración `la_factura_anulada_devuelve_la_cuenta`).
+     *
+     * Un cargo trasladado ya vive en OTRA cuenta. Devolverlo a
+     * `pendiente` acá lo dejaría cobrable en las dos a la vez.
+     */
+    DB::table('cargos')
+        ->where('id', $cargo->id)
+        ->where('fecha_operacion', $cargo->fecha_operacion->toDateString())
+        ->update(['estado' => EstadoCargo::Trasladado->value]);
+
+    DB::table('cargos')
+        ->where('id', $cargo->id)
+        ->where('fecha_operacion', $cargo->fecha_operacion->toDateString())
+        ->update(['estado' => EstadoCargo::Pendiente->value]);
+})->throws(QueryException::class, 'Transición no permitida');
+
+it('un cargo facturado vuelve a pendiente cuando se anula la factura', function (): void {
+    $contado = Convenio::factory()->contado()->create();
+    $cuenta = unaCuentaCon($contado);
+    $cargo = unCargo($cuenta, unItemAPrecio('100.0000'));
+
     DB::table('cargos')
         ->where('id', $cargo->id)
         ->where('fecha_operacion', $cargo->fecha_operacion->toDateString())
@@ -524,7 +549,9 @@ it('el estado solo transiciona por caminos legales', function (): void {
         ->where('id', $cargo->id)
         ->where('fecha_operacion', $cargo->fecha_operacion->toDateString())
         ->update(['estado' => EstadoCargo::Pendiente->value]);
-})->throws(QueryException::class, 'Transición no permitida');
+
+    expect($cargo->refresh()->estado)->toBe(EstadoCargo::Pendiente);
+})->note('Sin esta transición, anular una factura dejaba la cuenta muerta: cerrada y con todo facturado, sin forma de volver a cobrarle a la misma paciente salvo abriendo una cuenta nueva a mano.');
 
 /*
 |--------------------------------------------------------------------------

@@ -26,6 +26,7 @@ use App\Models\PrincipioActivo;
 use App\Models\Sede;
 use App\Support\NumeroEnLetras;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -194,7 +195,7 @@ Route::middleware(['web', 'auth'])->group(function (): void {
     | del emisor: el hospital no cambia de nombre entre dos impresiones,
     | y si cambia, es el nombre de hoy el que corresponde.
     */
-    Route::get('/facturas/{factura}/imprimir', function (Factura $factura) {
+    Route::get('/facturas/{factura}/imprimir', function (Factura $factura, Request $peticion) {
         abort_unless(auth()->user()?->can('view', $factura) ?? false, 403);
 
         $factura->load(['detalle', 'cuenta:id,numero', 'rangoCai']);
@@ -205,6 +206,14 @@ Route::middleware(['web', 'auth'])->group(function (): void {
             'factura'  => $factura,
             'sede'     => $sede,
             'enLetras' => NumeroEnLetras::lempiras($factura->total),
+
+            /*
+             * Adentro del modal la misma página se muestra en un iframe.
+             * Ahí la barra de arriba sobra y encima estorba: «Volver»
+             * navegaría el iframe y dejaría el modal mostrando la
+             * pantalla anterior, adentro de sí mismo.
+             */
+            'incrustada' => $peticion->boolean('incrustada'),
 
             /*
              * El rango autorizado también va impreso: es lo que permite
