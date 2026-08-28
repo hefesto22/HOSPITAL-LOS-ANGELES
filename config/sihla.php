@@ -338,6 +338,19 @@ return [
         'consumidor_final' => 'CONSUMIDOR FINAL',
 
         /*
+         * ⚠️ LEYENDAS DE LA FACTURA — CONFIRMAR CON EL SAR.
+         *
+         * El texto exacto que debe llevar impreso un documento fiscal lo
+         * fija la normativa, y es parte de lo que sigue abierto en la
+         * pregunta #1 de `docs/dominio.md`. Están acá, en config, para
+         * que corregirlas el día que el SAR conteste sea editar una
+         * línea y no tocar una vista.
+         */
+        'leyendas' => [
+            'La factura es beneficio de todos, exíjala',
+        ],
+
+        /*
          * TOPE DEL DESCUENTO DEL HOSPITAL, cuando no hay uno de ley del
          * cual colgarse.
          *

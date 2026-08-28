@@ -8,14 +8,19 @@ use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\EstadoFactura;
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\RegimenIsv;
+use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDocumentoDeVenta;
 use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Cargo;
+use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Factura;
 use App\Models\RangoCai;
+use App\Models\User;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\Facades\DB;
 
@@ -90,7 +95,7 @@ final class EmisorDeFactura
 
             $totales = $this->sumar($cargos);
 
-            $this->exigirRtnSiCorresponde($cliente, $totales['total']);
+            $this->exigirDocumentoSiCorresponde($cliente, $totales['total']);
 
             /*
              * 🔴 EL LOCK DEL CORRELATIVO, AL FINAL.
@@ -134,13 +139,29 @@ final class EmisorDeFactura
                 'bruto'               => $totales['bruto']->redondeado(2),
                 'descuento_legal'     => $totales['descuento_legal']->redondeado(2),
                 'descuento_comercial' => $totales['descuento_comercial']->redondeado(2),
+                'exonerado'           => $totales['exonerado']->redondeado(2),
                 'exento'              => $totales['exento']->redondeado(2),
                 'gravado'             => $totales['gravado']->redondeado(2),
+                'gravado_15'          => $totales['gravado_15']->redondeado(2),
+                'gravado_18'          => $totales['gravado_18']->redondeado(2),
                 'isv'                 => $totales['isv']->redondeado(2),
+                'isv_15'              => $totales['isv_15']->redondeado(2),
+                'isv_18'              => $totales['isv_18']->redondeado(2),
                 'total'               => $totales['total']->redondeado(2),
 
-                'lineas' => $cargos->count(),
-                'nota'   => $nota === null || trim($nota) === '' ? null : trim($nota),
+                /*
+                 * Términos y vencimiento salen del convenio: contado
+                 * vence el mismo día, y un convenio con crédito a
+                 * treinta vence a treinta. Es desde ahí que se cuenta la
+                 * mora, así que se congela en el papel.
+                 */
+                'terminos'   => $this->terminosDe($bloqueada->convenio),
+                'vence_el'   => $this->venceEl($bloqueada->convenio, $ahora)->toDateString(),
+                'facturador' => $this->nombreDelFacturador($quien),
+
+                'lineas'      => $cargos->count(),
+                'nota'        => $nota === null || trim($nota) === '' ? null : trim($nota),
+                'comentarios' => $nota === null || trim($nota) === '' ? null : trim($nota),
             ], $cliente->paraGuardar()));
 
             $orden = 1;
@@ -149,6 +170,9 @@ final class EmisorDeFactura
                 $factura->detalle()->create([
                     'orden'    => $orden++,
                     'cargo_id' => $cargo->id,
+
+                    /* La primera columna del papel. */
+                    'codigo' => $cargo->item?->codigo,
 
                     /*
                      * El texto congelado del cargo, no el nombre actual
@@ -184,11 +208,26 @@ final class EmisorDeFactura
                 ->where('politica_cargo', PoliticaCargo::Cobrable->value)
                 ->update(['estado' => EstadoCargo::Facturado->value]);
 
-            $bloqueada->update([
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 `forceFill`, NO `update`
+             * ─────────────────────────────────────────────────────────
+             *
+             * `cerrada_en` y `cerrada_por` NO están en el `$fillable` de
+             * `Cuenta`, y eso es a propósito: los escribe el motor, no
+             * un formulario. Con `update()` Laravel los descarta EN
+             * SILENCIO —sin excepción y sin log— y la cuenta quedaba en
+             * `cerrada` sin fecha de cierre.
+             *
+             * Lo atajó el CHECK `cuentas_cierre_completo` de la base, que
+             * es exactamente para lo que está: defensa en profundidad
+             * contra lo que el framework deja pasar callado.
+             */
+            $bloqueada->forceFill([
                 'estado'      => EstadoCuenta::Cerrada->value,
                 'cerrada_en'  => $ahora,
                 'cerrada_por' => $quien,
-            ]);
+            ])->save();
 
             return $factura;
         });
@@ -207,6 +246,15 @@ final class EmisorDeFactura
     {
         if (mb_strlen(trim($motivo)) < 10) {
             throw FacturaException::faltaElMotivo();
+        }
+
+        /*
+         * ⚠️ Se verifica ACÁ y no se deja llegar al CHECK de la base.
+         * Los dos rechazan, pero uno dice qué hacer y el otro sale como
+         * un error de PostgreSQL en la cara de quien está cobrando.
+         */
+        if ($quien === null) {
+            throw FacturaException::sinQuienAnula();
         }
 
         return DB::transaction(function () use ($factura, $motivo, $quien): Factura {
@@ -229,6 +277,52 @@ final class EmisorDeFactura
     }
 
     /**
+     * «Contado» o el nombre del pagador, tal como sale impreso.
+     */
+    private function terminosDe(?Convenio $convenio): string
+    {
+        if (! $convenio instanceof Convenio) {
+            return 'Contado';
+        }
+
+        $dias = $convenio->dias_credito;
+
+        if (is_int($dias) && $dias > 0) {
+            return $convenio->nombre.' · crédito '.$dias.' días';
+        }
+
+        return $convenio->tipo === TipoConvenio::Contado ? 'Contado' : $convenio->nombre;
+    }
+
+    /**
+     * Cuándo vence. Sin crédito pactado, el mismo día.
+     */
+    private function venceEl(?Convenio $convenio, CarbonInterface $emision): CarbonInterface
+    {
+        $dias = $convenio?->dias_credito;
+
+        return is_int($dias) && $dias > 0 ? $emision->copy()->addDays($dias) : $emision->copy();
+    }
+
+    /**
+     * Quién emitió, congelado con nombre y apellido.
+     *
+     * `created_by` guarda el id, pero un usuario se puede renombrar o
+     * desactivar y el papel impreso no cambia. En la factura va el
+     * nombre que tenía ese día.
+     */
+    private function nombreDelFacturador(?int $quien): ?string
+    {
+        if ($quien === null) {
+            return null;
+        }
+
+        $usuario = User::query()->find($quien);
+
+        return $usuario instanceof User ? $usuario->name : null;
+    }
+
+    /**
      * Lo que se imprime: cobrable y todavía sin facturar.
      *
      * Lo `IncluidoEnTarifa` NO va —ya está adentro del renglón del
@@ -241,6 +335,7 @@ final class EmisorDeFactura
     {
         /** @var ColeccionDeModelos<int, Cargo> $cargos */
         $cargos = $cuenta->cargos()
+            ->with('item:id,codigo')
             ->where('estado', EstadoCargo::Pendiente->value)
             ->where('politica_cargo', PoliticaCargo::Cobrable->value)
             ->orderBy('id')
@@ -260,9 +355,14 @@ final class EmisorDeFactura
             'bruto'               => Decimal::cero(),
             'descuento_legal'     => Decimal::cero(),
             'descuento_comercial' => Decimal::cero(),
+            'exonerado'           => Decimal::cero(),
             'exento'              => Decimal::cero(),
             'gravado'             => Decimal::cero(),
+            'gravado_15'          => Decimal::cero(),
+            'gravado_18'          => Decimal::cero(),
             'isv'                 => Decimal::cero(),
+            'isv_15'              => Decimal::cero(),
+            'isv_18'              => Decimal::cero(),
             'total'               => Decimal::cero(),
         ];
 
@@ -270,10 +370,41 @@ final class EmisorDeFactura
             $totales['bruto'] = $totales['bruto']->sumar($cargo->bruto);
             $totales['descuento_legal'] = $totales['descuento_legal']->sumar($cargo->descuento_legal);
             $totales['descuento_comercial'] = $totales['descuento_comercial']->sumar($cargo->descuento_comercial);
-            $totales['exento'] = $totales['exento']->sumar($cargo->base_exenta);
+            $totales['total'] = $totales['total']->sumar($cargo->total);
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL DESGLOSE SE ARMA POR RÉGIMEN, RENGLÓN POR RENGLÓN
+             * ─────────────────────────────────────────────────────────
+             *
+             * El formulario del SAR tiene seis casillas separadas
+             * —exonerado, exento, gravado 15, gravado 18, ISV 15, ISV
+             * 18— y las pide separadas. Sumar todo en una sola columna
+             * «gravado» hace imposible desglosarlo después: el impuesto
+             * termina declarado en la casilla equivocada, que es un
+             * hallazgo con multa.
+             *
+             * ⚠️ `exonerado` es OTRA cosa que `exento`: exento es el
+             * producto (la salud lo es); exonerado es el CLIENTE, que
+             * presentó su constancia. El cargo ya trae su régimen
+             * congelado y ahí se decide.
+             */
+            if ($cargo->regimen_isv === RegimenIsv::Exonerado) {
+                $totales['exonerado'] = $totales['exonerado']->sumar($cargo->base_exenta);
+            } else {
+                $totales['exento'] = $totales['exento']->sumar($cargo->base_exenta);
+            }
+
             $totales['gravado'] = $totales['gravado']->sumar($cargo->base_gravada);
             $totales['isv'] = $totales['isv']->sumar($cargo->isv);
-            $totales['total'] = $totales['total']->sumar($cargo->total);
+
+            if ($cargo->regimen_isv === RegimenIsv::Gravado18) {
+                $totales['gravado_18'] = $totales['gravado_18']->sumar($cargo->base_gravada);
+                $totales['isv_18'] = $totales['isv_18']->sumar($cargo->isv);
+            } else {
+                $totales['gravado_15'] = $totales['gravado_15']->sumar($cargo->base_gravada);
+                $totales['isv_15'] = $totales['isv_15']->sumar($cargo->isv);
+            }
         }
 
         return $totales;
@@ -281,10 +412,16 @@ final class EmisorDeFactura
 
     /**
      * 🔴 Arriba del umbral, «CONSUMIDOR FINAL» no es una opción.
+     *
+     * ⚠️ Se exige que haya DOCUMENTO, no específicamente RTN: mucha
+     * gente nunca sacó uno, y dejar sin factura a un paciente por eso es
+     * peor que la duda de forma. Si el contador confirma que el SAR
+     * exige RTN y solo RTN, la línea que cambia es esta: pedir
+     * `$cliente->tipoDocumento === TipoIdentificador::Rtn`.
      */
-    private function exigirRtnSiCorresponde(ClienteDeFactura $cliente, Decimal $total): void
+    private function exigirDocumentoSiCorresponde(ClienteDeFactura $cliente, Decimal $total): void
     {
-        if ($cliente->tieneRtn()) {
+        if ($cliente->tieneDocumento()) {
             return;
         }
 
@@ -292,7 +429,7 @@ final class EmisorDeFactura
         $umbral = Decimal::de(is_string($configurado) ? $configurado : '10000.00');
 
         if ($total->mayorQue($umbral)) {
-            throw FacturaException::faltaElRtn($umbral->redondeado(2));
+            throw FacturaException::faltaElDocumento($umbral->redondeado(2));
         }
     }
 

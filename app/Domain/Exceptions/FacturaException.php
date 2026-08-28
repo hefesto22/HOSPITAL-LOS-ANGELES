@@ -36,17 +36,33 @@ final class FacturaException extends SihlaException
         );
     }
 
-    public static function faltaElRtn(string $umbral): self
+    public static function faltaElDocumento(string $umbral): self
     {
         return new self(
             "Arriba de L {$umbral} el SAR exige los datos del cliente: no se puede facturar a CONSUMIDOR FINAL. "
-            .'Pedí el RTN y el nombre tal como lo tiene registrado.'
+            .'Pedile el RTN, y si no tiene, su identidad o pasaporte.'
         );
     }
 
-    public static function elRtnNoTieneFormato(): self
+    public static function faltaElTipoDeDocumento(): self
     {
-        return new self('El RTN son 14 dígitos, sin guiones ni espacios. Copialo del documento del cliente.');
+        return new self('Decí qué documento es: RTN, identidad o pasaporte. El papel imprime la etiqueta que corresponde.');
+    }
+
+    public static function eseDocumentoNoIdentificaAlCliente(string $tipo): self
+    {
+        return new self(
+            "En la factura no se puede usar «{$tipo}» para identificar al cliente. "
+            .'Sirven el RTN, la identidad y el pasaporte.'
+        );
+    }
+
+    public static function elDocumentoNoTieneFormato(string $tipo): self
+    {
+        return new self(
+            "Ese número no tiene forma de {$tipo}. El RTN y la identidad son solo dígitos, sin guiones ni espacios; "
+            .'copialo del documento del cliente.'
+        );
     }
 
     public static function noHayCaiVigente(string $tipo): self
@@ -87,6 +103,18 @@ final class FacturaException extends SihlaException
     public static function faltaElMotivo(): self
     {
         return new self('Escribí por qué se anula, con al menos diez caracteres. Una factura anulada sin motivo es lo primero que pregunta una auditoría.');
+    }
+
+    /**
+     * 🔴 Anular sin autor no existe.
+     *
+     * Lo exige el CHECK `facturas_anulacion_completa` de la base, y con
+     * razón: una factura anulada es lo primero que pregunta una
+     * auditoría, y «no se sabe quién» no es una respuesta.
+     */
+    public static function sinQuienAnula(): self
+    {
+        return new self('No se pudo identificar quién anula la factura. Volvé a entrar al sistema e intentá de nuevo.');
     }
 
     public static function laFacturaYaEstaAnulada(string $numero): self

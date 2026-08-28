@@ -12,6 +12,7 @@ use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Enums\TipoDiagnostico;
 use App\Domain\Enums\TipoEncuentro;
+use App\Domain\Enums\TipoIdentificador;
 use App\Domain\Exceptions\CargoException;
 use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\DiagnosticoException;
@@ -1614,11 +1615,55 @@ class CuentasAbiertas extends Page
         $this->mountAction('facturar', ['cuenta' => $cuenta]);
     }
 
+    /**
+     * Los documentos que sirven para identificar al cliente en la
+     * factura. El carnet del IHSS identifica al paciente, no al
+     * contribuyente.
+     *
+     * @return array<string, string>
+     */
+    private static function tiposDeDocumento(): array
+    {
+        $opciones = [];
+
+        foreach (ClienteDeFactura::tiposAceptados() as $tipo) {
+            $opciones[$tipo->value] = $tipo === TipoIdentificador::Dni ? 'Identidad' : $tipo->etiqueta();
+        }
+
+        return $opciones;
+    }
+
+    /**
+     * El documento que el paciente ya tiene registrado, si tiene alguno.
+     *
+     * Prefiere el RTN —es el que el SAR espera— y cae a la identidad.
+     *
+     * @return array{tipo: string|null, numero: string|null}
+     */
+    private function documentoDelPaciente(): array
+    {
+        $persona = $this->cuentaFacturando()?->encuentro->persona ?? null;
+
+        if (! $persona instanceof Persona) {
+            return ['tipo' => null, 'numero' => null];
+        }
+
+        foreach (ClienteDeFactura::tiposAceptados() as $tipo) {
+            $identificador = $persona->identificadores->firstWhere('tipo', $tipo);
+
+            if ($identificador !== null) {
+                return ['tipo' => $tipo->value, 'numero' => (string) $identificador->valor];
+            }
+        }
+
+        return ['tipo' => null, 'numero' => null];
+    }
+
     private function cuentaFacturando(): ?Cuenta
     {
         return $this->cuentaAFacturar === null
             ? null
-            : Cuenta::query()->with('encuentro.persona')->find($this->cuentaAFacturar);
+            : Cuenta::query()->with('encuentro.persona.identificadores')->find($this->cuentaAFacturar);
     }
 
     /**
@@ -1694,14 +1739,33 @@ class CuentasAbiertas extends Page
                             : (string) config('sihla.facturacion.consumidor_final', 'CONSUMIDOR FINAL');
                     }),
 
-                TextInput::make('cliente_rtn')
-                    ->label('RTN')
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 NO TODO PACIENTE TIENE RTN
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Y arriba del umbral igual hay que identificarlo. Se
+                 * acepta RTN, identidad o pasaporte, precargado con lo
+                 * que el paciente ya tiene en su expediente: en el
+                 * mostrador nadie debería teclear un número que el
+                 * sistema ya conoce.
+                 */
+                Select::make('cliente_documento_tipo')
+                    ->label('Documento')
+                    ->options(fn (): array => self::tiposDeDocumento())
+                    ->native(false)
+                    ->default(fn (): ?string => $this->documentoDelPaciente()['tipo'])
+                    ->requiredWith('cliente_documento'),
+
+                TextInput::make('cliente_documento')
+                    ->label('Número')
                     ->maxLength(20)
+                    ->default(fn (): ?string => $this->documentoDelPaciente()['numero'])
                     ->helperText(function (): string {
                         $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
 
                         return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
-                            .' el SAR lo exige: no se puede facturar a consumidor final.';
+                            .' el SAR exige identificar al cliente. Si no tiene RTN, sirve la identidad.';
                     }),
 
                 TextInput::make('cliente_direccion')
@@ -1727,7 +1791,10 @@ class CuentasAbiertas extends Page
                         cuenta: $cuenta,
                         cliente: new ClienteDeFactura(
                             nombre: is_string($data['cliente_nombre'] ?? null) ? $data['cliente_nombre'] : '',
-                            rtn: is_string($data['cliente_rtn'] ?? null) ? $data['cliente_rtn'] : null,
+                            documento: is_string($data['cliente_documento'] ?? null) ? $data['cliente_documento'] : null,
+                            tipoDocumento: TipoIdentificador::tryFrom(
+                                is_string($data['cliente_documento_tipo'] ?? null) ? $data['cliente_documento_tipo'] : ''
+                            ),
                             direccion: is_string($data['cliente_direccion'] ?? null) ? $data['cliente_direccion'] : null,
                         ),
                         quien: UsuarioAutenticado::id(),

@@ -9,7 +9,6 @@ use App\Domain\Enums\OrigenLineaPresupuesto;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoCorrelativo;
 use App\Domain\ValueObjects\Decimal;
-use App\Domain\ValueObjects\DescuentoAplicable;
 use App\Models\Convenio;
 use App\Models\Encuentro;
 use App\Models\Expediente;
@@ -38,8 +37,12 @@ use Illuminate\Support\Facades\DB;
  * obligaría a inventarle una `CoberturaAplicada` falsa a cada línea.
  *
  * Lo que SÍ comparte, porque tiene que dar el mismo número: el
- * `ResolutorDePrecio` (mismo tarifario, mismo convenio, misma vigencia),
- * el `ResolutorDeDescuentoLegal` y el régimen de ISV del ítem.
+ * `ResolutorDePrecio` —mismo tarifario, mismo convenio, misma vigencia—
+ * y el régimen de ISV del ítem.
+ *
+ * ⚠️ El descuento del Art. 30 NO se comparte, y es a propósito: el
+ * presupuesto cotiza en BRUTO y la ley se aplica una sola vez, en el
+ * cargo. Aplicarla en los dos lados cobraba el 25 % dos veces.
  *
  * ─────────────────────────────────────────────────────────────────────
  * EL NÚMERO SE GASTA AL CREAR, NO AL EMITIR
@@ -56,7 +59,6 @@ final class CotizadorDePresupuesto
 {
     public function __construct(
         private readonly ResolutorDePrecio $precios,
-        private readonly ResolutorDeDescuentoLegal $descuentosDeLey,
         private readonly AsignadorDeCorrelativo $correlativos,
     ) {}
 
@@ -189,10 +191,33 @@ final class CotizadorDePresupuesto
         }
 
         $precio = $this->precios->para($item, $convenio, $fecha, $sede, $presentacion);
-        $descuentoLegal = $this->descuentoLegalPara($presupuesto, $item, $fecha);
 
         $bruto = $precio->precio->cantidad()->por($cantidad);
-        $descuento = $bruto->por($descuentoLegal->fraccion);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL PRESUPUESTO COTIZA EN BRUTO. LA LEY SE APLICA UNA VEZ,
+         * EN LA CUENTA.
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Antes cada renglón restaba acá el descuento del Art. 30, y
+         * después el cargo del paquete se lo volvía a aplicar sobre el
+         * total YA neto: a un paciente de 65 años, un presupuesto de
+         * L 40,000 terminaba cobrándose L 23,400. El hospital regalaba
+         * casi ocho mil sin que nadie lo decidiera.
+         *
+         * Ahora el descuento vive donde está el dinero de verdad —el
+         * cargo—, se calcula una sola vez y con la categoría del renglón
+         * que se factura, y sale IMPRESO en la factura, que es donde el
+         * adulto mayor puede verificar que se lo dieron.
+         *
+         * ⚠️ Consecuencia visible: el papel del presupuesto muestra el
+         * precio de lista. Para un paciente de 60+ la cuenta va a salir
+         * MENOR que el presupuesto — nunca mayor, que es el lado seguro
+         * del error. Falta agregarle al papel una línea informativa que
+         * lo anticipe.
+         */
+        $descuento = Decimal::cero();
 
         return $this->escribirLinea(
             presupuesto: $presupuesto,
@@ -210,8 +235,14 @@ final class CotizadorDePresupuesto
             nota: $nota,
             tarifarioId: $precio->fila?->id,
             origenPrecio: $precio->origen->value,
-            categoriaLegal: $descuentoLegal->aplica() ? $item->categoria_legal_descuento->value : null,
-            fraccionLegal: $descuentoLegal->fraccion,
+            /*
+             * La categoría SÍ se guarda: dice bajo qué numeral del Art.
+             * 30 cae este renglón, y es lo que explica el descuento que
+             * después aparece en la factura. La fracción queda en cero
+             * porque acá no se aplica ninguna.
+             */
+            categoriaLegal: $item->categoria_legal_descuento->value,
+            fraccionLegal: null,
             presentacionId: $presentacion?->id,
         );
     }
@@ -423,59 +454,6 @@ final class CotizadorDePresupuesto
         ]);
 
         return $presupuesto->refresh();
-    }
-
-    /**
-     * La revisión: se complicó la cirugía y ahora son 60,000.
-     *
-     * Copia las líneas a un presupuesto NUEVO y deja el viejo como
-     * `sustituido`. No edita el emitido: ese papel ya lo leyó la familia.
-     */
-    public function revisar(Presupuesto $viejo, string $motivo, CarbonInterface $fecha): Presupuesto
-    {
-        return DB::transaction(function () use ($viejo, $motivo, $fecha): Presupuesto {
-            $nuevo = $this->abrirBorrador(
-                expediente: $viejo->expediente,
-                convenio: $viejo->convenio,
-                sede: $viejo->sede,
-                titulo: $viejo->titulo,
-                encuentro: $viejo->encuentro,
-                plantilla: $viejo->plantilla,
-            );
-
-            $nuevo->update([
-                'presupuesto_anterior_id' => $viejo->id,
-                'motivo_revision'         => $motivo,
-            ]);
-
-            foreach ($viejo->detalle()->get() as $linea) {
-                $copia = $linea->replicate(['presupuesto_id']);
-                $copia->presupuesto_id = $nuevo->id;
-                $copia->save();
-            }
-
-            $viejo->update(['estado' => EstadoPresupuesto::Sustituido]);
-
-            unset($fecha);
-
-            return $this->recalcular($nuevo);
-        });
-    }
-
-    // ── Interno ───────────────────────────────────────────────────────
-
-    private function descuentoLegalPara(
-        Presupuesto $presupuesto,
-        Item $item,
-        CarbonInterface $fecha,
-    ): DescuentoAplicable {
-        $rango = $presupuesto->persona->rangoDeEdadEn($fecha);
-
-        if ($rango === null) {
-            return DescuentoAplicable::ninguno();
-        }
-
-        return $this->descuentosDeLey->para($item, $rango, $fecha);
     }
 
     /**

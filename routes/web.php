@@ -19,9 +19,12 @@ declare(strict_types=1);
 | /horizon, etc.) las gestiona Filament automáticamente.
 */
 
+use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
+use App\Models\Sede;
+use App\Support\NumeroEnLetras;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Route;
 
@@ -175,4 +178,43 @@ Route::middleware(['web', 'auth'])->group(function (): void {
             $principio->tambien_llamado,
         );
     })->name('etiquetas.principio');
+
+    /*
+    |------------------------------------------------------------------
+    | La factura, para papel
+    |------------------------------------------------------------------
+    |
+    | Misma decisión que las etiquetas: una página que se abre y se
+    | imprime con Ctrl+P. Un PDF armado en el servidor agrega una
+    | dependencia, tarda, y falla justo a las once de la noche con la
+    | familia esperando el papel para irse.
+    |
+    | 🔴 TODO lo que se imprime sale de la fila de la factura, congelado
+    | el día de la emisión. Lo único que se lee del sistema son los datos
+    | del emisor: el hospital no cambia de nombre entre dos impresiones,
+    | y si cambia, es el nombre de hoy el que corresponde.
+    */
+    Route::get('/facturas/{factura}/imprimir', function (Factura $factura) {
+        abort_unless(auth()->user()?->can('view', $factura) ?? false, 403);
+
+        $factura->load(['detalle', 'cuenta:id,numero', 'rangoCai']);
+
+        $sede = Sede::query()->findOrFail($factura->sede_id);
+
+        return view('facturas.imprimir', [
+            'factura'  => $factura,
+            'sede'     => $sede,
+            'enLetras' => NumeroEnLetras::lempiras($factura->total),
+
+            /*
+             * El rango autorizado también va impreso: es lo que permite
+             * verificar de un vistazo que este número cae adentro de lo
+             * que el SAR autorizó.
+             */
+            'rango' => $factura->rangoCai === null
+                ? '—'
+                : $factura->rangoCai->numeroDe($factura->rangoCai->desde)
+                    .' a la '.$factura->rangoCai->numeroDe($factura->rangoCai->hasta),
+        ]);
+    })->name('facturas.imprimir');
 });

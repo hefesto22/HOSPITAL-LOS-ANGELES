@@ -45,8 +45,8 @@ class FacturasTable
                      * de un vistazo, sin abrir nada.
                      */
                     ->description(fn (Factura $record): string => $record->esConsumidorFinal()
-                        ? 'sin RTN'
-                        : 'RTN '.$record->cliente_rtn),
+                        ? 'sin documento'
+                        : $record->rotuloDelDocumento().' '.$record->cliente_documento),
 
                 TextColumn::make('cuenta.numero')
                     ->label('Cuenta')
@@ -77,15 +77,26 @@ class FacturasTable
                     ->label('Estado')
                     ->options(EstadoFactura::class),
 
-                Filter::make('sin_rtn')
-                    ->label('Sin RTN (consumidor final)')
-                    ->query(fn (Builder $query): Builder => $query->whereNull('cliente_rtn')),
+                Filter::make('sin_documento')
+                    ->label('Sin documento (consumidor final)')
+                    ->query(fn (Builder $query): Builder => $query->whereNull('cliente_documento')),
 
                 Filter::make('hoy')
                     ->label('Solo las de hoy')
                     ->query(fn (Builder $query): Builder => $query->whereDate('fecha_operacion', now()->toDateString())),
             ])
             ->recordActions([
+                /*
+                 * Abre en pestaña nueva: la lista se queda donde estaba y
+                 * quien imprime vuelve sin perder el filtro ni la página.
+                 */
+                Action::make('imprimir')
+                    ->label('Imprimir')
+                    ->icon(Heroicon::OutlinedPrinter)
+                    ->color('gray')
+                    ->url(fn (Factura $record): string => route('facturas.imprimir', $record))
+                    ->openUrlInNewTab(),
+
                 /*
                  * ⚠️ Anular NO devuelve plata ni libera el número: el
                  * rango sigue consumido y el SAR audita la secuencia.

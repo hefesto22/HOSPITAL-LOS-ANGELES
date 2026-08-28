@@ -18,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $factura_id
  * @property int $orden
  * @property int|null $cargo_id
+ * @property string|null $codigo
  * @property string $descripcion
  * @property numeric-string $cantidad
  * @property numeric-string $precio_unitario
@@ -40,7 +41,7 @@ class FacturaLinea extends Model
 
     /** @var list<string> */
     protected $fillable = [
-        'factura_id', 'orden', 'cargo_id', 'descripcion', 'cantidad', 'precio_unitario',
+        'factura_id', 'orden', 'cargo_id', 'codigo', 'descripcion', 'cantidad', 'precio_unitario',
         'bruto', 'descuento_legal', 'descuento_comercial',
         'regimen_isv', 'tasa_isv', 'exento', 'gravado', 'isv', 'total',
     ];

@@ -90,6 +90,16 @@ final class CajaException extends SihlaException
         );
     }
 
+    /**
+     * 🔴 Lo mismo que en la factura: el CHECK
+     * `abonos_anulacion_completa` exige autor, y un recibo anulado por
+     * nadie es un faltante sin explicación.
+     */
+    public static function sinQuienAnula(): self
+    {
+        return new self('No se pudo identificar quién anula el recibo. Volvé a entrar al sistema e intentá de nuevo.');
+    }
+
     public static function faltaElMotivo(): self
     {
         return new self('Escribí por qué se anula, con al menos diez caracteres. Un recibo anulado sin motivo es un faltante sin explicación.');

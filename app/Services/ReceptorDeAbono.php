@@ -158,6 +158,10 @@ final class ReceptorDeAbono
             throw CajaException::faltaElMotivo();
         }
 
+        if ($quien === null) {
+            throw CajaException::sinQuienAnula();
+        }
+
         return DB::transaction(function () use ($abono, $motivo, $quien): Abono {
             /** @var Abono $bloqueado */
             $bloqueado = Abono::query()->whereKey($abono->id)->lockForUpdate()->firstOrFail();
