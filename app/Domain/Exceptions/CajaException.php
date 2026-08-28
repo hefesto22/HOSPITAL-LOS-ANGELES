@@ -36,6 +36,30 @@ final class CajaException extends SihlaException
         );
     }
 
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LA GAVETA ES UNA SOLA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Si el turno A se fue sin cerrar, el turno B no puede empezar a
+     * recibir plata en la misma gaveta: al final de la noche habría un
+     * solo montón de billetes con dos personas responsables, que es
+     * exactamente lo que el arqueo existe para impedir.
+     *
+     * ⚠️ Bloquea ABRIR TURNO, no el acceso al sistema. Quien llega
+     * igual puede consultar una cuenta o reimprimir una factura; lo que
+     * no puede es cobrar hasta que el anterior cuadre lo suyo. Cerrarle
+     * el sistema entero termina en que use la clave de otro, y ahí se
+     * pierde el rastro que todo esto sostiene.
+     */
+    public static function otraPersonaTieneLaGaveta(string $persona, string $numero, string $desde): self
+    {
+        return new self(
+            "{$persona} tiene el turno {$numero} abierto desde las {$desde}. La gaveta es una sola: "
+            .'tiene que cerrar su arqueo antes de que abras el tuyo.'
+        );
+    }
+
     public static function elTurnoYaEstaCerrado(string $numero): self
     {
         return new self("El turno {$numero} ya está cerrado. Su arqueo no se vuelve a tocar.");

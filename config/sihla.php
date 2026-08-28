@@ -538,6 +538,19 @@ return [
          * un texto de esta lista no reescribe los abonos viejos, y está
          * bien: el recibo dice a qué banco se depositó ese día.
          */
+        /*
+         * Cómo se llaman los turnos acá. Se usan para asignarlos al
+         * usuario y para nombrar el turno de caja al abrirlo.
+         *
+         * Texto, no enum: el día que abran un turno de fin de semana es
+         * una línea más, no una migración.
+         */
+        'turnos' => [
+            'Turno A',
+            'Turno B',
+            'Turno C',
+        ],
+
         'bancos' => [
             'Banco Atlántida',
             'Banco de Occidente',

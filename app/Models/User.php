@@ -52,6 +52,7 @@ class User extends Authenticatable implements FilamentUser
         // y eso se valida en el formulario, no con un NOT NULL que dejaría
         // al sistema sin poder crear al primer administrador.
         'sede_id',
+        'turno',
         'name',
         'email',
         'password',

@@ -63,6 +63,32 @@ final class AbridorDeTurnoDeCaja
                 throw CajaException::yaTenesUnTurnoAbierto($abierto->numero);
             }
 
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 Y TAMPOCO SI OTRO DEJÓ EL SUYO ABIERTO.
+             * ─────────────────────────────────────────────────────────
+             *
+             * Una sede, una gaveta. Dos turnos abiertos a la vez
+             * terminan en un solo montón de billetes con dos personas
+             * responsables — y ningún arqueo que se pueda defender.
+             *
+             * ⚠️ Se verifica en el servicio y no con un índice único
+             * por sede a propósito: el día que el hospital abra una
+             * segunda ventanilla con su propia gaveta, esto es una
+             * condición que se afloja; un índice sería una migración
+             * con datos vivos adentro.
+             */
+            $ajeno = $this->otroTurnoAbiertoEn($sede, $usuario);
+
+            if ($ajeno instanceof TurnoDeCaja) {
+                throw CajaException::otraPersonaTieneLaGaveta(
+                    /* `->` y no `?->`: el `??` ya atrapa el nulo solo. */
+                    $ajeno->usuario->name ?? 'Otra persona',
+                    $ajeno->numero,
+                    $ajeno->abierto_en->format('H:i'),
+                );
+            }
+
             $ahora = now();
 
             return TurnoDeCaja::query()->create([
@@ -127,6 +153,20 @@ final class AbridorDeTurnoDeCaja
 
             return $bloqueado->refresh();
         });
+    }
+
+    /**
+     * El turno abierto de OTRA persona en esta sede, si lo hay.
+     */
+    private function otroTurnoAbiertoEn(Sede $sede, User $usuario): ?TurnoDeCaja
+    {
+        return TurnoDeCaja::query()
+            ->with('usuario:id,name')
+            ->where('sede_id', $sede->id)
+            ->where('usuario_id', '<>', $usuario->id)
+            ->where('estado', EstadoTurnoDeCaja::Abierto->value)
+            ->orderBy('id')
+            ->first();
     }
 
     /**

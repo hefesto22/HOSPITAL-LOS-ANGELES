@@ -95,6 +95,27 @@ class UserForm
                             ->preload()
                             ->searchable()
                             ->placeholder('Seleccionar roles'),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * A QUÉ TURNO PERTENECE
+                         * ─────────────────────────────────────────────
+                         *
+                         * No es el turno de caja —ese es un hecho, con
+                         * su arqueo—: es la asignación. Al abrir la
+                         * gaveta, el nombre del turno ya viene puesto
+                         * desde acá y la cajera no teclea nada.
+                         *
+                         * Se puede cambiar también desde la propia fila
+                         * del listado, que es como se hace cuando rotan
+                         * al personal.
+                         */
+                        Select::make('turno')
+                            ->label('Turno')
+                            ->options(fn (): array => self::turnos())
+                            ->native(false)
+                            ->placeholder('Sin turno asignado')
+                            ->helperText('Se propone al abrir la caja. Se puede cambiar desde el listado.'),
                     ]),
 
                 Section::make('Estado de la Cuenta')
@@ -110,5 +131,26 @@ class UserForm
                             ->helperText('Si se desactiva, el usuario no podrá iniciar sesión en el panel.'),
                     ]),
             ]);
+    }
+
+    /**
+     * Los turnos que definió el hospital, de la configuración.
+     *
+     * @return array<string, string>
+     */
+    private static function turnos(): array
+    {
+        $configurados = config('sihla.caja.turnos');
+        $opciones = [];
+
+        if (is_array($configurados)) {
+            foreach ($configurados as $turno) {
+                if (is_string($turno) && trim($turno) !== '') {
+                    $opciones[$turno] = $turno;
+                }
+            }
+        }
+
+        return $opciones;
     }
 }

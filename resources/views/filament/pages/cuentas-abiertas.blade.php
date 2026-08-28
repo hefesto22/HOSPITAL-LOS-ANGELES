@@ -28,6 +28,12 @@
                 />
             </label>
 
+            {{--
+                El turno vive en el ENCABEZADO de la página, arriba a la
+                derecha: es el estado de quien cobra, no una acción sobre
+                las cuentas. Acá abajo competía con el botón que sí se
+                usa todo el día.
+            --}}
             {{ $this->abrirCuentaAction }}
         </div>
 

@@ -15,6 +15,7 @@ use Filament\Actions\RestoreAction;
 use Filament\Actions\RestoreBulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\ImageColumn;
+use Filament\Tables\Columns\SelectColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -53,6 +54,20 @@ class UsersTable
                     ->searchable()
                     ->placeholder('—')
                     ->toggleable(isToggledHiddenByDefault: true),
+                /*
+                 * 🔴 EDITABLE EN LA FILA.
+                 *
+                 * Rotar turnos pasa seguido y toca a varias personas a
+                 * la vez. Entrar a editar cada ficha para cambiar una
+                 * palabra es lo que hace que al final nadie lo
+                 * actualice — y entonces el dato deja de servir.
+                 */
+                SelectColumn::make('turno')
+                    ->label('Turno')
+                    ->options(fn (): array => self::turnos())
+                    ->selectablePlaceholder(true)
+                    ->placeholder('Sin turno'),
+
                 TextColumn::make('roles.name')
                     ->label('Roles')
                     ->badge()
@@ -133,5 +148,26 @@ class UsersTable
             ->modifyQueryUsing(fn (Builder $query) => $query->withoutGlobalScopes([
                 SoftDeletingScope::class,
             ]));
+    }
+
+    /**
+     * Los turnos que definió el hospital, de la configuración.
+     *
+     * @return array<string, string>
+     */
+    private static function turnos(): array
+    {
+        $configurados = config('sihla.caja.turnos');
+        $opciones = [];
+
+        if (is_array($configurados)) {
+            foreach ($configurados as $turno) {
+                if (is_string($turno) && trim($turno) !== '') {
+                    $opciones[$turno] = $turno;
+                }
+            }
+        }
+
+        return $opciones;
     }
 }
