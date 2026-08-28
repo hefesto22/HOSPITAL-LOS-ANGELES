@@ -7,7 +7,9 @@ namespace App\Filament\Resources\Items\Pages;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Resources\Items\ItemResource;
+use App\Models\CategoriaItem;
 use App\Models\Item;
+use App\Services\AsignadorDeCodigoDeItem;
 use App\Services\FijadorDePrecio;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -72,6 +74,31 @@ class CreateItem extends CreateRecord
             : null;
 
         unset($data['precio_de_lista']);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL CÓDIGO SE ASIGNA ACÁ, NO EN EL FORMULARIO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El formulario ya no lo pide: es un correlativo interno con el
+         * prefijo de la categoría, y el sistema sabe cuál es el
+         * siguiente libre.
+         *
+         * Se calcula en el ÚLTIMO momento a propósito. Cuando se
+         * proponía al elegir la categoría, dos personas cargando al
+         * mismo tiempo veían el mismo número y la segunda chocaba contra
+         * el índice único al guardar —después de haber llenado toda la
+         * ficha—.
+         */
+        if (! isset($data['codigo']) || ! is_string($data['codigo']) || trim($data['codigo']) === '') {
+            $categoria = is_numeric($data['categoria_id'] ?? null)
+                ? CategoriaItem::query()->find((int) $data['categoria_id'])
+                : null;
+
+            if ($categoria instanceof CategoriaItem) {
+                $data['codigo'] = app(AsignadorDeCodigoDeItem::class)->siguiente($categoria);
+            }
+        }
 
         return $data;
     }

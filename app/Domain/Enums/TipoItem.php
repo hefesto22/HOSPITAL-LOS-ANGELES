@@ -195,11 +195,24 @@ enum TipoItem: string
         return $opciones;
     }
 
+    /**
+     * ⚠️ `Procedimiento` NO es «la cirugía».
+     *
+     * Lo que vive bajo este tipo es el USO SALA DE OPERACIONES 2H, la
+     * sala de procedimientos, la sala de labor y parto, el
+     * electrocardiograma: los renglones que van ADENTRO del presupuesto
+     * de una cirugía. La apendicectomía como tal nunca fue un ítem del
+     * catálogo — se cotiza (ADR-0008) y entra a la cuenta como un
+     * paquete de un solo renglón (ADR-0009).
+     *
+     * Por eso la etiqueta dejó de decir «o cirugía»: era una invitación
+     * a cargar una cirugía suelta, sin presupuesto y sin desglose.
+     */
     public function etiqueta(): string
     {
         return match ($this) {
             self::Servicio           => 'Servicio',
-            self::Procedimiento      => 'Procedimiento o cirugía',
+            self::Procedimiento      => 'Procedimiento (sala, quirófano, equipo)',
             self::Medicamento        => 'Medicamento',
             self::Insumo             => 'Insumo o material (jeringas, tubos, gasas)',
             self::EstudioLaboratorio => 'Estudio de laboratorio',

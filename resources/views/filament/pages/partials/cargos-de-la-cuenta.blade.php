@@ -286,6 +286,38 @@
                 </div>
 
                 {{--
+                    ─────────────────────────────────────────────────────
+                    LO QUE YA PAGARON
+                    ─────────────────────────────────────────────────────
+
+                    Solo aparece si hay abonos. Con la cuenta sin pagar,
+                    «Abonado 0.00» y un saldo igual al total serían dos
+                    renglones que no dicen nada, y el pie ya es largo.
+
+                    El saldo es DERIVADO: total menos los abonos vivos.
+                    Anular un recibo lo cambia en el acto.
+                --}}
+                @php($abonado = $cuenta->abonado())
+
+                @if (! $abonado->esCero())
+                    @php($saldo = $cuenta->saldoPendiente())
+
+                    <div class="sihla-pie-linea">
+                        <span>Abonado</span>
+                        <span>&minus; {{ number_format((float) $abonado->redondeado(2), 2) }}</span>
+                    </div>
+
+                    <div class="sihla-pie-linea sihla-pie-total">
+                        <span>{{ $saldo->esNegativo() ? 'SALDO A FAVOR' : 'SALDO' }}</span>
+                        <span>
+                            {{ number_format((float) ($saldo->esNegativo()
+                                ? $cuenta->saldoAFavor()->redondeado(2)
+                                : $saldo->redondeado(2)), 2) }}
+                        </span>
+                    </div>
+                @endif
+
+                {{--
                     El descuento que está puesto arriba pero todavía no tocó
                     ninguna línea.
 

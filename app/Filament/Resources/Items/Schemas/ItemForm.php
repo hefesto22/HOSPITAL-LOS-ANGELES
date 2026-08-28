@@ -132,10 +132,31 @@ final class ItemForm
         return Tab::make('Identificación')
             ->icon('heroicon-o-rectangle-stack')
             ->schema([
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL CÓDIGO NO SE PIDE: LO PONE EL SISTEMA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Es un correlativo interno del hospital —HOS-013,
+                 * LAB-0042— y nadie de afuera lo audita. Pedirlo era
+                 * pedirle a quien carga el catálogo que resuelva algo
+                 * que el sistema sabe mejor: cuál es el siguiente libre
+                 * de esa categoría.
+                 *
+                 * Se genera al GUARDAR (`CreateItem`), no al elegir la
+                 * categoría: dos personas cargando a la vez veían el
+                 * mismo número propuesto y la segunda chocaba contra el
+                 * índice único al grabar.
+                 *
+                 * En edición sí se muestra, y apagado: es lo que la
+                 * gente se dicta por teléfono —«cargale el HOS-010»— y
+                 * cambiarlo rompería lo que ya está impreso en cuentas
+                 * viejas.
+                 */
                 CampoMayusculas::make('codigo')
                     ->label('Código')
-                    ->required()
                     ->maxLength(30)
+                    ->hiddenOn('create')
                     ->disabledOn('edit')
                     /*
                      * ⚠️ La regla apunta a `Item` y NO al modelo del
@@ -146,7 +167,7 @@ final class ItemForm
                      * un error de SQL en la cara del usuario.
                      */
                     ->unique(Item::class, 'codigo', ignoreRecord: true)
-                    ->helperText('Se propone solo al elegir la categoría. Podés pisarlo si el producto ya trae código del proveedor. Después de guardar no se cambia.'),
+                    ->helperText('Lo asigna el sistema con el prefijo de la categoría. No se cambia.'),
 
                 /*
                  * ─────────────────────────────────────────────────────

@@ -143,6 +143,23 @@ class MatrizDePermisosSeeder extends Seeder
             'Encuentro' => ['ViewAny', 'View'],
             'Cuenta'    => ['ViewAny', 'View'],
             'Cargo'     => ['ViewAny', 'View'],
+
+            /*
+             * Y la caja. Es lo primero que mira cualquier auditoría de
+             * verdad: qué entró, quién lo recibió y si el turno cuadró.
+             * Un arqueo con faltante repetido en la misma persona es un
+             * hallazgo que solo se ve mirando muchos turnos seguidos.
+             */
+            'TurnoDeCaja' => ['ViewAny', 'View'],
+            'Abono'       => ['ViewAny', 'View'],
+
+            /*
+             * Y lo fiscal. Es la mitad del trabajo de auditar un
+             * hospital: qué se facturó, con qué CAI y si la secuencia
+             * tiene huecos.
+             */
+            'RangoCai' => ['ViewAny', 'View'],
+            'Factura'  => ['ViewAny', 'View'],
         ],
 
         /*
@@ -252,6 +269,44 @@ class MatrizDePermisosSeeder extends Seeder
             'Encuentro'     => ['ViewAny', 'View', 'Update'],
             'Cuenta'        => ['ViewAny', 'View', 'Create', 'Update'],
             'Cargo'         => ['ViewAny', 'View', 'Create'],
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * LA PLATA: RECIBIRLA Y CUADRARLA
+             * ─────────────────────────────────────────────────────────
+             *
+             * `Create:TurnoDeCaja` es abrir su turno y `Update` es
+             * cerrarlo con el arqueo. No es un permiso peligroso: el
+             * servicio solo encuentra el turno ABIERTO de quien está
+             * operando, así que nadie cierra el de otro.
+             *
+             * `Create:Abono` es recibir plata y `Update:Abono` es anular
+             * un recibo mal hecho —solo con el turno todavía abierto—.
+             * Van juntos por la misma razón que en `Cargo`: quien puede
+             * cobrar tiene que poder corregir lo que cobró mal hace dos
+             * minutos, con la familia enfrente. El control es el motivo
+             * obligatorio y el arqueo, no quitarle el botón.
+             */
+            'TurnoDeCaja' => ['ViewAny', 'View', 'Create', 'Update'],
+            'Abono'       => ['ViewAny', 'View', 'Create', 'Update'],
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * FACTURAR SÍ; CARGAR EL CAI, NO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Caja emite y anula facturas —`Create` y `Update`— pero
+             * solo LEE los rangos de CAI. Cargar una resolución del SAR
+             * es teclear el CAI, el rango autorizado y la fecha límite:
+             * un dígito mal escrito ahí son todas las facturas del mes
+             * emitidas con un número que no corresponde. Eso es de
+             * dirección, con el papel del SAR en la mano.
+             *
+             * Verlo sí, y hace falta: es la respuesta a «¿por qué no me
+             * deja facturar?» a las once de la noche.
+             */
+            'RangoCai' => ['ViewAny', 'View'],
+            'Factura'  => ['ViewAny', 'View', 'Create', 'Update'],
         ],
 
         /*

@@ -159,6 +159,37 @@
                         respuesta cambia el módulo entero, no un campo.
                     --}}
                     <div class="sihla-tarjeta-acciones">
+                        {{--
+                            Abonar vive acá, junto al saldo, y no en una
+                            pantalla de caja aparte: quien recibe la plata
+                            está mirando este número.
+                        --}}
+                        <button
+                            type="button"
+                            wire:click="prepararAbono({{ $cuenta->id }})"
+                            wire:loading.attr="disabled"
+                            class="sihla-accion-clinica"
+                        >
+                            <x-filament::icon icon="heroicon-o-banknotes" class="sihla-icono-chico" />
+                            <span>Abonar</span>
+                        </button>
+
+                        {{--
+                            🔴 Facturar CIERRA la cuenta y consume un
+                            número del SAR. Va acá, al lado del saldo,
+                            porque es la última cosa que se hace con una
+                            cuenta abierta.
+                        --}}
+                        <button
+                            type="button"
+                            wire:click="prepararFactura({{ $cuenta->id }})"
+                            wire:loading.attr="disabled"
+                            class="sihla-accion-clinica"
+                        >
+                            <x-filament::icon icon="heroicon-o-document-text" class="sihla-icono-chico" />
+                            <span>Facturar</span>
+                        </button>
+
                         <button
                             type="button"
                             @if ($puedeDiagnosticar)
@@ -277,18 +308,39 @@
          * caja: son del expediente, no de la cuenta, y el borde lo dice
          * sin necesidad de un rótulo.
          */
+        /*
+         * 🔴 GRID Y NO FLEX, DESDE QUE SON TRES BOTONES.
+         *
+         * Con `display:flex` los hijos no bajan de su ancho de contenido
+         * —`min-width` vale `auto` por defecto— así que «Tratamiento» se
+         * salía de la tarjeta y pisaba la de al lado. Tres columnas de
+         * `minmax(0, 1fr)` reparten el ancho en partes iguales y dejan
+         * que el texto se recorte adentro en vez de empujar hacia afuera.
+         */
+        /*
+         * Dos por fila desde que son cuatro. Con `repeat(4, …)` los
+         * rótulos quedaban en «Diagn…» y «Trata…», que es justo lo que
+         * hay que leer para no equivocarse de botón.
+         */
         .sihla-tarjeta-acciones {
-            display: flex; gap: .4rem; margin-top: .75rem; padding-top: .7rem;
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .4rem; margin-top: .75rem; padding-top: .7rem;
             border-top: 1px solid rgb(244 244 245);
         }
 
         .sihla-accion-clinica {
-            display: flex; align-items: center; justify-content: center; gap: .35rem;
-            flex: 1 1 0; padding: .45rem .6rem; border-radius: .5rem;
+            display: flex; align-items: center; justify-content: center; gap: .3rem;
+            min-width: 0; padding: .45rem .35rem; border-radius: .5rem;
             border: 1px solid rgb(228 228 231); background: rgb(250 250 250);
-            font-size: .8rem; font-weight: 500; color: rgb(63 63 70); cursor: pointer;
+            font-size: .75rem; font-weight: 500; color: rgb(63 63 70); cursor: pointer;
             transition: border-color .15s ease, background .15s ease;
         }
+
+        /* El rótulo se recorta adentro del botón; el icono nunca se encoge. */
+        .sihla-accion-clinica > span:not(.sihla-contador) {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .sihla-accion-clinica .sihla-icono-chico { flex: none; }
         .sihla-accion-clinica:hover:not(:disabled) {
             border-color: rgb(161 161 170); background: rgb(244 244 245);
         }

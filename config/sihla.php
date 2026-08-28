@@ -318,6 +318,26 @@ return [
         'alerta_cai_dias_restantes'   => 30,
 
         /*
+         * 🔴 ARRIBA DE ESTE MONTO, LA FACTURA EXIGE RTN.
+         *
+         * El §8.6 lo dice y el SAR lo revisa: se permite «CONSUMIDOR
+         * FINAL» salvo cuando la venta supera este umbral, donde los
+         * datos del cliente son obligatorios. En un hospital se cruza
+         * constantemente —una sola noche de hospitalización lo pasa—, y
+         * por eso el sistema BLOQUEA la emisión, no avisa.
+         *
+         * Es configurable porque es un número de la ley, y los números
+         * de la ley cambian sin avisarle a nadie.
+         */
+        'umbral_rtn_obligatorio' => '10000.00',
+
+        /*
+         * Cómo se llama el cliente cuando no da sus datos y la venta no
+         * llega al umbral.
+         */
+        'consumidor_final' => 'CONSUMIDOR FINAL',
+
+        /*
          * TOPE DEL DESCUENTO DEL HOSPITAL, cuando no hay uno de ley del
          * cual colgarse.
          *
@@ -486,6 +506,37 @@ return [
          * antes resolver que pasa a las 3 am cuando el autorizador duerme.
          */
         'bloquea_al_exceder' => false,
+    ],
+
+    /*
+     |--------------------------------------------------------------------
+     | Caja
+     |--------------------------------------------------------------------
+     */
+    'caja' => [
+        /*
+         * Los bancos a los que la familia puede depositar.
+         *
+         * Vive en config y no en un enum ni en una tabla: la lista cambia
+         * cuando el hospital abre o cierra una cuenta bancaria, y eso no
+         * merece una migracion. Agregar uno es una linea acá.
+         *
+         * ⚠️ El nombre que se elija queda ESCRITO en el recibo. Cambiar
+         * un texto de esta lista no reescribe los abonos viejos, y está
+         * bien: el recibo dice a qué banco se depositó ese día.
+         */
+        'bancos' => [
+            'Banco Atlántida',
+            'Banco de Occidente',
+            'Ficohsa',
+            'BAC Credomatic',
+            'Banpaís',
+            'Banco Popular',
+            'Banrural',
+            'Lafise',
+            'Davivienda',
+            'Banco Azteca',
+        ],
     ],
 
 ];

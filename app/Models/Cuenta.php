@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\PoliticaCargo;
@@ -310,6 +311,18 @@ class Cuenta extends Model
 
     // ── Montos ────────────────────────────────────────────────────────
 
+    /**
+     * ⚠️ SE LLAMA `saldo` PERO DEVUELVE EL TOTAL, y así lo usan la tabla
+     * de cuentas, el infolist y el pie de la pantalla de cargos: en los
+     * tres el rótulo dice TOTAL.
+     *
+     * Nació antes de que existieran los abonos, cuando total y saldo
+     * eran el mismo número. Ya no lo son: lo que falta por cobrar es
+     * `saldoPendiente()`, más abajo, que descuenta lo abonado.
+     *
+     * No se renombra hoy —son catorce llamadas repartidas en pantallas
+     * que funcionan— pero el nombre correcto de esto es `total()`.
+     */
     public function saldo(): Monto
     {
         return Monto::de($this->total);
@@ -448,6 +461,75 @@ class Cuenta extends Model
             'total_aseguradora' => Monto::de((string) $suma->getAttribute('aseguradora'))->valor(),
             'lineas'            => (int) $suma->getAttribute('lineas'),
         ];
+    }
+
+    // ── La plata que ya entró ─────────────────────────────────────────
+
+    /**
+     * @return HasMany<Abono, $this>
+     */
+    public function abonos(): HasMany
+    {
+        return $this->hasMany(Abono::class)->orderBy('id');
+    }
+
+    /**
+     * Lo que la familia ya dejó: la suma de los abonos vivos.
+     *
+     * 🔴 DERIVADO, NUNCA UNA COLUMNA. Un `total_abonado` que alguien va
+     * incrementando es el `UPDATE productos SET existencia` del §9.G1:
+     * el día que un recibo se anule y el incremento no se deshaga, la
+     * cuenta va a decir que el paciente pagó algo que no pagó — y eso se
+     * descubre en la ventanilla, con la familia enfrente.
+     */
+    public function abonado(): Decimal
+    {
+        /** @var mixed $suma */
+        $suma = $this->abonos()
+            ->where('estado', EstadoAbono::Aplicado->value)
+            ->sum('total');
+
+        return is_numeric($suma) ? Decimal::de((string) $suma) : Decimal::cero();
+    }
+
+    /**
+     * Lo que falta por cobrar.
+     *
+     * Se mide contra el TOTAL de la cuenta —decisión del negocio, la
+     * misma del ADR-0008 con el presupuesto—: se le dice al cliente el
+     * total y ya los seguros arreglan después qué paga cada quien. Lo
+     * que le tocaría al paciente vive aparte, en `total_paciente`, y la
+     * pantalla lo muestra al lado cuando hay aseguradora.
+     *
+     * ⚠️ Puede dar NEGATIVO, y está bien: es saldo a favor. Se recibe un
+     * anticipo de L 20,000 el día del ingreso, cuando la cuenta todavía
+     * no tiene un solo cargo. Recortarlo a cero escondería justo la
+     * plata que hay que devolver al egreso.
+     */
+    public function saldoPendiente(): Decimal
+    {
+        return Decimal::de($this->total)->restar($this->abonado());
+    }
+
+    /**
+     * ¿Ya está pagada? Es la condición que el bloque 7 va a mirar antes
+     * de dejar emitir la factura.
+     */
+    public function estaSaldada(): bool
+    {
+        $saldo = $this->saldoPendiente();
+
+        return $saldo->esCero() || $saldo->esNegativo();
+    }
+
+    /**
+     * Lo que sobra cuando pagaron de más. Cero si no sobra nada.
+     */
+    public function saldoAFavor(): Decimal
+    {
+        $saldo = $this->saldoPendiente();
+
+        return $saldo->esNegativo() ? Decimal::cero()->restar($saldo) : Decimal::cero();
     }
 
     public function etiqueta(): string

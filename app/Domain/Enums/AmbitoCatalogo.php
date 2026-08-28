@@ -120,7 +120,23 @@ enum AmbitoCatalogo: string
                 TipoItem::EstudioImagen,
                 TipoItem::Honorario,
                 TipoItem::Estancia,
-                TipoItem::Paquete,
+
+                /*
+                 * 🔴 `Paquete` NO se ofrece acá, y el tipo sigue
+                 * existiendo igual.
+                 *
+                 * Un paquete no se da de alta a mano: nace cuando un
+                 * presupuesto entra a la cuenta y el agregador crea su
+                 * ítem técnico (ADR-0009). Ofrecerlo en esta pantalla
+                 * invitaría a inventar «CIRUGIA DE APENDICE» como
+                 * servicio con precio fijo — que es exactamente lo que
+                 * el presupuesto existe para reemplazar: acá no hay
+                 * precio fijo, hay un estimado que se negocia caso por
+                 * caso.
+                 *
+                 * El enum lo conserva porque los ítems que YA existen
+                 * con ese tipo tienen que poder leerse y mostrarse.
+                 */
                 TipoItem::Otro,
             ],
         };

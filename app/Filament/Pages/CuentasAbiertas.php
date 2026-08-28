@@ -6,6 +6,7 @@ namespace App\Filament\Pages;
 
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\FormaDePago;
 use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RangoEdad;
@@ -16,8 +17,12 @@ use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
+use App\Domain\Exceptions\SihlaException;
+use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
+use App\Domain\ValueObjects\MedioDePago;
+use App\Models\Abono;
 use App\Models\Almacen;
 use App\Models\Cargo;
 use App\Models\Cie10;
@@ -25,17 +30,21 @@ use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Diagnostico;
 use App\Models\Expediente;
+use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Persona;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
+use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
+use App\Services\EmisorDeFactura;
 use App\Services\PoliticaDeDescuentoComercial;
+use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
 use App\Support\AlmacenesDelUsuario;
@@ -44,6 +53,9 @@ use App\Support\NumeroDeFormulario;
 use App\Support\UsuarioAutenticado;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -57,8 +69,10 @@ use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 use Throwable;
@@ -597,15 +611,35 @@ class CuentasAbiertas extends Page
                          * carga la línea sin tocar el mouse.
                          */
                         BarcodeInput::make('escaneo')
-                            ->label('Escaneá el código')
+                            ->label('Escaneá el código o escribí el nombre')
                             ->live()
                             ->autofocus()
                             ->columnSpanFull()
                             ->helperText(
-                                'Con la pistola o con la cámara. El del envase carga el producto; el de '
-                                .'la gaveta —PA-0001— acota la lista a lo que lleva ese principio activo.'
+                                'Pistola, cámara o teclado. El código del envase carga el producto; el de '
+                                .'la gaveta —PA-0001— acota la lista al principio activo; y si escribís un '
+                                .'nombre, busca en el catálogo.'
                             )
                             ->afterStateUpdated(fn (mixed $state, Set $set) => $this->resolverEscaneo($state, $set)),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * LO QUE ENCONTRÓ, EN UNA LÍNEA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Después de pasar la pistola, el único lugar
+                         * donde se veía qué producto quedó elegido era el
+                         * desplegable de abajo, y una notificación que se
+                         * va sola a los pocos segundos. Con el paciente
+                         * enfrente eso se lee mal: acá queda fijo el
+                         * nombre, la presentación de la que se leyó y por
+                         * qué unidad se está cobrando.
+                         */
+                        Placeholder::make('lo_encontrado')
+                            ->hiddenLabel()
+                            ->columnSpanFull()
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
+                            ->content(fn (Get $get): HtmlString => $this->resumenDeLoElegido($get)),
 
                         Select::make('item_id')
                             ->label('¿Qué se le agrega?')
@@ -633,7 +667,7 @@ class CuentasAbiertas extends Page
                              * tres o cuatro, sin teclear nada. Sin gaveta
                              * queda vacía y manda la búsqueda de siempre.
                              */
-                            ->options(fn (): array => $this->productosDelPrincipioEscaneado())
+                            ->options(fn (): array => $this->opcionesDelSelector())
                             ->getSearchResultsUsing(fn (string $search): array => $this->resultadosDeBusqueda($search))
                             ->getOptionLabelUsing(fn (mixed $value): ?string => $this->itemDe($value)?->etiqueta())
                             /*
@@ -1503,6 +1537,602 @@ class CuentasAbiertas extends Page
      * de cobro; el diagnóstico se consulta veinte años después, cuando la
      * factura ya se pagó y se archivó.
      */
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * RECIBIR PLATA A CUENTA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El paciente está internado, la cuenta va creciendo y la familia
+     * deja L 5,000 hoy y L 3,000 mañana. Esto es eso, y por eso vive
+     * ACÁ y no en una pantalla de caja aparte: el saldo está en esta
+     * pantalla, y quien recibe la plata está mirando este número.
+     *
+     * 🔴 EXIGE TURNO DE CAJA ABIERTO. No es burocracia: el efectivo entra
+     * a una gaveta que alguien cuenta al final del turno. El servicio lo
+     * verifica y el mensaje dice qué hacer.
+     *
+     * El repetidor de formas de pago ES el pago mixto: «una parte en
+     * tarjeta y otra en efectivo» son dos renglones del mismo recibo, no
+     * una forma de pago llamada «mixto».
+     */
+    /**
+     * La cuenta a la que se le está por abonar.
+     *
+     * 🔴 EXISTE PORQUE `$arguments` NO LLEGA A LOS CAMPOS.
+     *
+     * Filament inyecta los argumentos de la acción en SUS closures
+     * —`modalHeading`, `action`— pero no en los de un componente del
+     * formulario: ahí adentro `$arguments` no se puede resolver y el
+     * contenedor tira `BindingResolutionException` en la cara del
+     * usuario. Los tres números del encabezado y el total en vivo leen
+     * esta propiedad, que se pone al abrir el modal.
+     */
+    /**
+     * Lo que se escribió en el campo de escaneo cuando no era un código.
+     *
+     * Sirve para que el selector de abajo se abra ya con los resultados:
+     * quien está en el mostrador escribe «acetamin», presiona Enter y
+     * elige — sin volver a teclear lo mismo en otro campo.
+     */
+    public ?string $busquedaEscrita = null;
+
+    public ?int $cuentaDelAbono = null;
+
+    /**
+     * Abre el modal de abono para una cuenta. Se llama desde la tarjeta
+     * en vez de `mountAction` directo para dejar la cuenta anotada antes
+     * de que el formulario se arme.
+     */
+    public function prepararAbono(int $cuenta): void
+    {
+        $this->cuentaDelAbono = $cuenta;
+
+        $this->mountAction('abonar', ['cuenta' => $cuenta]);
+    }
+
+    /**
+     * La cuenta del modal abierto, releída para que los totales estén al
+     * día aunque se haya cargado algo mientras el modal estaba abierto.
+     */
+    private function cuentaAbonando(): ?Cuenta
+    {
+        return $this->cuentaDelAbono === null
+            ? null
+            : Cuenta::query()->find($this->cuentaDelAbono);
+    }
+
+    /**
+     * La cuenta que se está por facturar. Misma razón que
+     * `$cuentaDelAbono`: `$arguments` no llega a los campos.
+     */
+    public ?int $cuentaAFacturar = null;
+
+    public function prepararFactura(int $cuenta): void
+    {
+        $this->cuentaAFacturar = $cuenta;
+
+        $this->mountAction('facturar', ['cuenta' => $cuenta]);
+    }
+
+    private function cuentaFacturando(): ?Cuenta
+    {
+        return $this->cuentaAFacturar === null
+            ? null
+            : Cuenta::query()->with('encuentro.persona')->find($this->cuentaAFacturar);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EMITIR LA FACTURA — Y CON ESO, CERRAR LA CUENTA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * 🔴 Es irreversible. Consume un número del rango autorizado por el
+     * SAR, marca los cargos como facturados y cierra la cuenta. Ese
+     * número no se libera ni aunque después se anule el papel.
+     *
+     * Lo que llegue después es un cargo tardío: el sistema SIEMPRE lo
+     * acepta —jamás se rechaza un hecho clínico— y se resuelve con una
+     * factura complementaria.
+     */
+    public function facturarAction(): Action
+    {
+        return Action::make('facturar')
+            ->label('Facturar')
+            ->icon(Heroicon::OutlinedDocumentText)
+            ->color('primary')
+            ->modalWidth('2xl')
+            ->modalHeading(function (array $arguments): string {
+                $cuenta = $this->cuentaDe($arguments);
+
+                return 'Emitir la factura'.($cuenta instanceof Cuenta ? ' · '.$cuenta->numero : '');
+            })
+            ->modalDescription(
+                'Se consume un número del rango del SAR, los cargos pasan a facturados y la cuenta se cierra. '
+                .'El número no se libera aunque después se anule el papel.'
+            )
+            ->modalSubmitActionLabel('Emitir')
+            ->visible(fn (): bool => Gate::allows('create', Factura::class))
+            ->schema([
+                Placeholder::make('resumen_a_facturar')
+                    ->hiddenLabel()
+                    ->content(function (): HtmlString {
+                        $cuenta = $this->cuentaFacturando();
+
+                        if (! $cuenta instanceof Cuenta) {
+                            return new HtmlString('&nbsp;');
+                        }
+
+                        $saldo = $cuenta->saldoPendiente();
+
+                        $texto = 'Total <strong>L '.number_format((float) $cuenta->total, 2).'</strong>';
+
+                        $texto .= $saldo->mayorQue('0')
+                            ? ' · <span style="color:rgb(220 38 38)">debe L '
+                                .number_format((float) $saldo->redondeado(2), 2)
+                                .', hay que recibir el abono antes de facturar</span>'
+                            : ' · <span style="color:rgb(22 163 74)">saldada</span>';
+
+                        return new HtmlString('<span style="font-size:.95rem">'.$texto.'</span>');
+                    }),
+
+                /*
+                 * ⚠️ A nombre de quién sale NO es siempre el paciente: la
+                 * factura puede ir a la empresa que lo mandó o al
+                 * familiar que paga. Se propone el paciente y se puede
+                 * cambiar.
+                 */
+                TextInput::make('cliente_nombre')
+                    ->label('A nombre de')
+                    ->required()
+                    ->maxLength(200)
+                    ->default(function (): string {
+                        $cuenta = $this->cuentaFacturando();
+                        $persona = $cuenta?->encuentro->persona ?? null;
+
+                        return $persona instanceof Persona
+                            ? $persona->nombreCompleto()
+                            : (string) config('sihla.facturacion.consumidor_final', 'CONSUMIDOR FINAL');
+                    }),
+
+                TextInput::make('cliente_rtn')
+                    ->label('RTN')
+                    ->maxLength(20)
+                    ->helperText(function (): string {
+                        $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
+
+                        return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
+                            .' el SAR lo exige: no se puede facturar a consumidor final.';
+                    }),
+
+                TextInput::make('cliente_direccion')
+                    ->label('Dirección')
+                    ->maxLength(250),
+
+                Textarea::make('nota')
+                    ->label('Nota')
+                    ->rows(2)
+                    ->maxLength(300),
+            ])
+            ->action(function (array $arguments, array $data): void {
+                $cuenta = $this->cuentaDe($arguments);
+
+                if (! $cuenta instanceof Cuenta) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('create', Factura::class), 403);
+
+                try {
+                    $factura = app(EmisorDeFactura::class)->emitir(
+                        cuenta: $cuenta,
+                        cliente: new ClienteDeFactura(
+                            nombre: is_string($data['cliente_nombre'] ?? null) ? $data['cliente_nombre'] : '',
+                            rtn: is_string($data['cliente_rtn'] ?? null) ? $data['cliente_rtn'] : null,
+                            direccion: is_string($data['cliente_direccion'] ?? null) ? $data['cliente_direccion'] : null,
+                        ),
+                        quien: UsuarioAutenticado::id(),
+                        nota: is_string($data['nota'] ?? null) ? $data['nota'] : null,
+                    );
+                } catch (SihlaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo facturar')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title('Factura '.$factura->numero)
+                    ->body('L '.number_format((float) $factura->total, 2).'. La cuenta quedó cerrada.')
+                    ->persistent()
+                    ->send();
+            });
+    }
+
+    public function abonarAction(): Action
+    {
+        return Action::make('abonar')
+            ->label('Abonar')
+            ->icon(Heroicon::OutlinedBanknotes)
+            ->color('success')
+            ->modalWidth('3xl')
+            ->modalHeading(function (array $arguments): string {
+                $cuenta = $this->cuentaDe($arguments);
+
+                return 'Recibir un abono'.($cuenta instanceof Cuenta ? ' · '.$cuenta->numero : '');
+            })
+            ->modalSubmitActionLabel('Recibir')
+            ->visible(fn (): bool => Gate::allows('create', Abono::class))
+            ->schema([
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * LOS TRES NÚMEROS, ARRIBA Y GRANDES
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Antes iban en una frase en la descripción del modal.
+                 * Quien está cobrando con la familia enfrente no lee una
+                 * frase: mira el número que falta y teclea. Estos tres
+                 * son los que decide todo lo demás.
+                 *
+                 * ⚠️ Los estilos van EN LÍNEA. El CSS de Filament viene
+                 * precompilado y las clases que el panel no usa no
+                 * existen (§9.A7); dentro de un modal no hay dónde poner
+                 * un `<style>` propio.
+                 */
+                Section::make('Cómo va la cuenta')
+                    ->compact()
+                    ->columns(3)
+                    ->schema([
+                        Placeholder::make('resumen_total')
+                            ->label('Total de la cuenta')
+                            ->content(function (): HtmlString {
+                                $cuenta = $this->cuentaAbonando();
+
+                                return self::numeroGrande($cuenta instanceof Cuenta ? $cuenta->total : '0');
+                            }),
+
+                        Placeholder::make('resumen_abonado')
+                            ->label('Ya abonado')
+                            ->content(function (): HtmlString {
+                                $cuenta = $this->cuentaAbonando();
+
+                                return self::numeroGrande(
+                                    $cuenta instanceof Cuenta ? $cuenta->abonado()->redondeado(2) : '0',
+                                    'rgb(22 163 74)',
+                                );
+                            }),
+
+                        Placeholder::make('resumen_saldo')
+                            ->label(function (): string {
+                                $cuenta = $this->cuentaAbonando();
+
+                                return $cuenta instanceof Cuenta && $cuenta->saldoPendiente()->esNegativo()
+                                    ? 'A favor del paciente'
+                                    : 'Falta por pagar';
+                            })
+                            ->content(function (): HtmlString {
+                                $cuenta = $this->cuentaAbonando();
+
+                                if (! $cuenta instanceof Cuenta) {
+                                    return self::numeroGrande('0');
+                                }
+
+                                $saldo = $cuenta->saldoPendiente();
+
+                                return $saldo->esNegativo()
+                                    ? self::numeroGrande($cuenta->saldoAFavor()->redondeado(2), 'rgb(22 163 74)')
+                                    : self::numeroGrande($saldo->redondeado(2), 'rgb(217 119 6)');
+                            }),
+                    ]),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * EL REPETIDOR, EN TABLA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Cada forma de pago era una tarjeta gris enorme con su
+                 * manija de arrastre: dos formas llenaban la pantalla y
+                 * el botón de Recibir quedaba abajo del pliegue. En
+                 * tabla, tres filas ocupan lo que antes ocupaba una.
+                 *
+                 * Sin reordenar: el orden de las formas de pago dentro
+                 * de un recibo no significa nada, y la manija sobraba.
+                 */
+                Repeater::make('medios')
+                    ->label('¿Con qué paga?')
+                    ->table([
+                        TableColumn::make('Forma de pago')->width('38%')->markAsRequired(),
+                        TableColumn::make('Monto')->width('27%')->markAsRequired(),
+                        TableColumn::make('¿A qué banco?')->width('35%'),
+                    ])
+                    ->addActionLabel('Agregar otra forma de pago')
+                    ->reorderable(false)
+                    ->defaultItems(1)
+                    ->minItems(1)
+                    ->live()
+                    ->schema([
+                        Select::make('forma')
+                            ->hiddenLabel()
+                            ->options(FormaDePago::paraSelector())
+                            ->default(FormaDePago::Efectivo->value)
+                            ->native(false)
+                            ->required()
+                            ->live(),
+
+                        TextInput::make('monto')
+                            ->hiddenLabel()
+                            ->prefix('L')
+                            ->inputMode('decimal')
+                            ->required()
+                            ->live(onBlur: true),
+
+                        /*
+                         * 🔴 SE DESHABILITA, NO SE ESCONDE.
+                         *
+                         * En una tabla, un campo que aparece y desaparece
+                         * desalinea la fila con su encabezado. Y un campo
+                         * deshabilitado no se deshidrata: el banco nunca
+                         * llega al recibo cuando la forma no lo pide, que
+                         * es justo lo que el CHECK de la base exige.
+                         */
+                        Select::make('banco')
+                            ->hiddenLabel()
+                            ->options(self::bancos())
+                            ->native(false)
+                            ->searchable()
+                            ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
+                                ? 'Elegí el banco'
+                                : '—')
+                            ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
+                            ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
+                    ]),
+
+                /*
+                 * Lo que se está recibiendo AHORA y cómo queda la cuenta
+                 * si se aprieta Recibir. Es la verificación que hoy la
+                 * cajera hace de cabeza con el paciente esperando.
+                 */
+                Placeholder::make('recibiendo')
+                    ->hiddenLabel()
+                    ->content(function (Get $get): HtmlString {
+                        $cuenta = $this->cuentaAbonando();
+                        $suma = $this->sumaDeMedios($get('medios'));
+
+                        if (! $cuenta instanceof Cuenta || $suma->esCero()) {
+                            return new HtmlString('&nbsp;');
+                        }
+
+                        $queda = $cuenta->saldoPendiente()->restar($suma);
+
+                        $texto = 'Recibiendo <strong>L '.number_format((float) $suma->redondeado(2), 2).'</strong> · ';
+
+                        $texto .= $queda->esNegativo()
+                            ? 'quedarían L '.number_format((float) Decimal::cero()->restar($queda)->redondeado(2), 2).' a favor del paciente'
+                            : ($queda->esCero()
+                                ? 'la cuenta queda saldada'
+                                : 'faltarían L '.number_format((float) $queda->redondeado(2), 2));
+
+                        return new HtmlString(
+                            '<span style="font-size:.95rem">'.$texto.'</span>'
+                        );
+                    }),
+
+                /*
+                 * Casi siempre lo deja el paciente, así que ese es el
+                 * default y no hay nada que teclear. Cuando lo deja otro
+                 * —la hija, el patrón, el vecino— ahí sí se pide el
+                 * nombre: es la primera pregunta cuando alguien reclama
+                 * un recibo perdido.
+                 */
+                Section::make()
+                    ->compact()
+                    ->columns(2)
+                    ->schema([
+                        Select::make('quien_entrega')
+                            ->label('¿Quién deja la plata?')
+                            ->options([
+                                'paciente' => 'El paciente',
+                                'otro'     => 'Otra persona',
+                            ])
+                            ->default('paciente')
+                            ->native(false)
+                            ->live(),
+
+                        TextInput::make('entregado_por')
+                            ->label('¿Quién?')
+                            ->maxLength(120)
+                            ->required()
+                            ->placeholder('Nombre de quien deja el dinero')
+                            ->visible(fn (Get $get): bool => $get('quien_entrega') === 'otro'),
+
+                        Textarea::make('nota')
+                            ->label('Nota')
+                            ->rows(2)
+                            ->maxLength(300)
+                            ->columnSpanFull(),
+                    ]),
+            ])
+            ->action(function (array $arguments, array $data): void {
+                $cuenta = $this->cuentaDe($arguments);
+                $usuario = Auth::user();
+
+                if (! $cuenta instanceof Cuenta || ! $usuario instanceof User) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('create', Abono::class), 403);
+
+                try {
+                    $medios = $this->mediosDelFormulario($data['medios'] ?? []);
+
+                    $abono = app(ReceptorDeAbono::class)->recibir(
+                        cuenta: $cuenta,
+                        medios: $medios,
+                        quienRecibe: $usuario,
+                        /*
+                         * `null` = lo dejó el paciente. Guardar «El
+                         * paciente» como texto sería repetir en cada
+                         * recibo un dato que la cuenta ya tiene.
+                         */
+                        entregadoPor: ($data['quien_entrega'] ?? 'paciente') === 'otro'
+                            && is_string($data['entregado_por'] ?? null)
+                                ? $data['entregado_por']
+                                : null,
+                        nota: is_string($data['nota'] ?? null) ? $data['nota'] : null,
+                    );
+                } catch (SihlaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo recibir el abono')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                $saldo = $cuenta->refresh()->saldoPendiente();
+
+                Notification::make()
+                    ->success()
+                    ->title('Abono recibido · '.$abono->numero)
+                    ->body('L '.number_format((float) $abono->total, 2).'. '
+                        .($saldo->esNegativo() || $saldo->esCero()
+                            ? 'La cuenta queda saldada.'
+                            : 'Falta L '.number_format((float) $saldo->redondeado(2), 2).'.'))
+                    ->send();
+            });
+    }
+
+    /**
+     * Un monto en grande, para los tres números de arriba del modal.
+     *
+     * ⚠️ Estilo en línea a propósito: el CSS de Filament viene
+     * precompilado y las clases de Tailwind que el panel no usa no
+     * existen (§9.A7).
+     */
+    private static function numeroGrande(string $monto, ?string $color = null): HtmlString
+    {
+        $estilo = 'font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums';
+
+        if ($color !== null) {
+            $estilo .= ';color:'.$color;
+        }
+
+        return new HtmlString('<span style="'.$estilo.'">L '.number_format((float) $monto, 2).'</span>');
+    }
+
+    /**
+     * Lo que suman las formas de pago tecleadas hasta ahora.
+     *
+     * Se usa solo para MOSTRAR el avance mientras se llena el formulario.
+     * El monto que se guarda lo vuelve a sumar el servicio desde los
+     * medios ya validados: este número es de pantalla, no de dominio.
+     */
+    private function sumaDeMedios(mixed $filas): Decimal
+    {
+        if (! is_array($filas)) {
+            return Decimal::cero();
+        }
+
+        $suma = Decimal::cero();
+
+        foreach ($filas as $fila) {
+            if (! is_array($fila)) {
+                continue;
+            }
+
+            $monto = NumeroDeFormulario::aDecimal($fila['monto'] ?? null);
+
+            if ($monto instanceof Decimal && ! $monto->esNegativo()) {
+                $suma = $suma->sumar($monto);
+            }
+        }
+
+        return $suma;
+    }
+
+    /**
+     * Los bancos a los que se puede depositar, de la configuración.
+     *
+     * Vive en `config/sihla.php` y no en un enum: la lista cambia cuando
+     * el hospital abre o cierra una cuenta bancaria, y eso no merece una
+     * migración.
+     *
+     * @return array<string, string>
+     */
+    private static function bancos(): array
+    {
+        $configurados = config('sihla.caja.bancos');
+
+        if (! is_array($configurados)) {
+            return [];
+        }
+
+        $opciones = [];
+
+        foreach ($configurados as $banco) {
+            if (is_string($banco) && trim($banco) !== '') {
+                $opciones[$banco] = $banco;
+            }
+        }
+
+        return $opciones;
+    }
+
+    /**
+     * Convierte lo que tecleó la cajera en medios de pago validados.
+     *
+     * Cada uno se valida al construirse —el efectivo no lleva papeles,
+     * la tarjeta exige voucher, la transferencia exige referencia—, así
+     * que si algo falta, revienta acá con un mensaje que se entiende y
+     * NO llega a escribirse medio recibo.
+     *
+     *
+     * @return list<MedioDePago>
+     */
+    private function mediosDelFormulario(mixed $filas): array
+    {
+        if (! is_array($filas)) {
+            return [];
+        }
+
+        $medios = [];
+
+        foreach ($filas as $fila) {
+            if (! is_array($fila)) {
+                continue;
+            }
+
+            $forma = FormaDePago::tryFrom(is_string($fila['forma'] ?? null) ? $fila['forma'] : '');
+            $monto = NumeroDeFormulario::aDecimal($fila['monto'] ?? null);
+
+            if (! $forma instanceof FormaDePago || ! $monto instanceof Decimal) {
+                continue;
+            }
+
+            $medios[] = new MedioDePago(
+                forma: $forma,
+                monto: $monto,
+
+                /*
+                 * El banco solo viaja si la forma lo pide. Filament deja
+                 * en el array lo que se tecleó ANTES de cambiar la forma
+                 * —el campo se oculta, el valor no se borra— y sin este
+                 * filtro un «Ficohsa» tecleado por error en una fila que
+                 * terminó siendo efectivo haría fallar el CHECK.
+                 */
+                banco: $forma->exigeBanco() && is_string($fila['banco'] ?? null) ? $fila['banco'] : null,
+            );
+        }
+
+        return $medios;
+    }
+
     public function diagnosticarAction(): Action
     {
         return Action::make('diagnosticar')
@@ -2578,20 +3208,24 @@ class CuentasAbiertas extends Page
         $presentacion = $this->presentacionPorCodigo($codigo);
         $item = $this->itemPorCodigo($codigo);
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * NO ERA UN CÓDIGO: SE BUSCA POR NOMBRE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El mismo campo sirve para las dos cosas, que es como se usa de
+         * verdad: la pistola escribe un código y una persona escribe
+         * «acetamin». Antes lo segundo terminaba en un aviso de «ese
+         * código no está», obligando a repetir el nombre en el selector
+         * de abajo.
+         */
         if (! $item instanceof Item) {
-            Notification::make()
-                ->warning()
-                ->title('Ese código no está en el catálogo')
-                ->body(
-                    'El código de barras se registra en la PRESENTACIÓN del ítem —la caja, el frasco, '
-                    .'el blíster—, no en el ítem. Si el producto ya existe, agregale su presentación con '
-                    .'este código desde el catálogo. Mientras tanto, buscalo por nombre.'
-                )
-                ->persistent()
-                ->send();
+            $this->buscarPorNombre($codigo, $set);
 
             return;
         }
+
+        $this->busquedaEscrita = null;
 
         $set('item_id', $item->id);
 
@@ -2767,6 +3401,128 @@ class CuentasAbiertas extends Page
      *
      * @return array<int, string>
      */
+    /**
+     * Lo escrito no era un código: se busca en el catálogo.
+     *
+     *   · Un solo resultado → se elige solo. Escribir «hemogr» y apretar
+     *     Enter carga el hemograma sin tocar el mouse.
+     *   · Varios            → el selector de abajo se abre con esos, sin
+     *     volver a teclear.
+     *   · Ninguno           → se dice que no hay, y por qué puede ser.
+     */
+    private function buscarPorNombre(string $texto, Set $set): void
+    {
+        $termino = trim($texto);
+
+        $encontrados = Item::buscar($termino, soloVigentes: true)
+            ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12));
+
+        if ($encontrados->isEmpty()) {
+            $this->busquedaEscrita = null;
+
+            Notification::make()
+                ->warning()
+                ->title('No hay nada con «'.$termino.'»')
+                ->body(
+                    'Ni como código ni como nombre. Ojo: el código de barras se registra en la '
+                    .'PRESENTACIÓN —la caja, el frasco, el blíster—, no en el ítem; si el producto existe '
+                    .'pero nunca se le cargó su presentación, la pistola no lo va a encontrar.'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        if ($encontrados->count() === 1) {
+            /*
+             * `firstOrFail` y no `first`: devuelve el ítem sin `null`,
+             * así no hace falta un `instanceof` que en este punto ya es
+             * siempre verdadero.
+             */
+            $primero = $encontrados->firstOrFail();
+
+            $this->busquedaEscrita = null;
+
+            $set('item_id', $primero->id);
+            $set('cantidad', 1);
+
+            Notification::make()
+                ->success()
+                ->title($primero->nombre)
+                ->body('Escribí la cantidad y presioná Agregar.')
+                ->send();
+
+            return;
+        }
+
+        $this->busquedaEscrita = $termino;
+
+        Notification::make()
+            ->info()
+            ->title($encontrados->count().' resultados con «'.$termino.'»')
+            ->body('Abrí «¿Qué se le agrega?» y elegí: la lista ya viene con esos.')
+            ->send();
+    }
+
+    /**
+     * Con qué se abre el selector cuando nadie ha escrito nada en él.
+     *
+     * Primero manda la gaveta escaneada —es el filtro más específico— y
+     * después lo que se escribió arriba. Sin ninguno de los dos, vacío:
+     * el catálogo entero en un desplegable no se navega, se busca.
+     *
+     * ⚠️ Las llaves son `int|string` porque PHP convierte solo a entero
+     * cualquier llave numérica: `['5' => …]` termina siendo `[5 => …]`.
+     * Declararlo `array<string, string>` era mentirle al analizador.
+     *
+     * @return array<int|string, string>
+     */
+    private function opcionesDelSelector(): array
+    {
+        if ($this->principioEscaneado !== null) {
+            return $this->productosDelPrincipioEscaneado();
+        }
+
+        if ($this->busquedaEscrita === null) {
+            return [];
+        }
+
+        return Item::buscar($this->busquedaEscrita, soloVigentes: true)
+            ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
+            ->mapWithKeys(fn (Item $item): array => [(int) $item->getKey() => $item->etiqueta()])
+            ->all();
+    }
+
+    /**
+     * «ACETAMINOFÉN TABLETA · se cobra por TABLETA» — lo que quedó
+     * elegido, fijo debajo del campo de escaneo.
+     */
+    private function resumenDeLoElegido(Get $get): HtmlString
+    {
+        $item = $this->itemDe($get('item_id'));
+
+        if (! $item instanceof Item) {
+            return new HtmlString('&nbsp;');
+        }
+
+        $partes = ['<strong>'.e($item->nombre).'</strong>'];
+
+        $unidad = $this->unidadDe($item);
+
+        if ($unidad !== null) {
+            $partes[] = 'se cobra por '.e($unidad);
+        }
+
+        if ($item->codigo !== '') {
+            $partes[] = e($item->codigo);
+        }
+
+        return new HtmlString(
+            '<span style="font-size:.9rem">'.implode(' · ', $partes).'</span>'
+        );
+    }
+
     private function resultadosDeBusqueda(string $search): array
     {
         if ($this->principioEscaneado === null) {

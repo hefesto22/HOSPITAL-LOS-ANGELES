@@ -32,6 +32,8 @@ enum TipoCorrelativo: string
     case Traslado = 'traslado';
     case AjusteInventario = 'ajuste_inventario';
     case Presupuesto = 'presupuesto';
+    case Abono = 'abono';
+    case TurnoDeCaja = 'turno_de_caja';
 
     /**
      * Prefijo visible del número generado.
@@ -49,6 +51,15 @@ enum TipoCorrelativo: string
             self::Traslado         => 'TRA',
             self::AjusteInventario => 'AJU',
             self::Presupuesto      => 'PRE',
+
+            /*
+             * El abono se entrega impreso: es el papel con el que la
+             * familia demuestra que dejó los L 5,000. Por eso REC, de
+             * recibo — pero ojo, NO es documento fiscal: la factura con
+             * CAI se emite al final y es otra secuencia (bloque 7).
+             */
+            self::Abono       => 'REC',
+            self::TurnoDeCaja => 'CAJ',
         };
     }
 
@@ -98,6 +109,8 @@ enum TipoCorrelativo: string
             self::Traslado         => 'Traslado de inventario',
             self::AjusteInventario => 'Ajuste de inventario',
             self::Presupuesto      => 'Presupuesto al paciente',
+            self::Abono            => 'Abono a cuenta',
+            self::TurnoDeCaja      => 'Turno de caja',
         };
     }
 }
