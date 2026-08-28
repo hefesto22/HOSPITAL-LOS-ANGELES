@@ -47,7 +47,7 @@ class Caja extends Page
 
     protected static ?string $slug = 'caja';
 
-    protected static ?int $navigationSort = 5;
+    protected static ?int $navigationSort = 3;
 
     protected string $view = 'filament.pages.caja';
 

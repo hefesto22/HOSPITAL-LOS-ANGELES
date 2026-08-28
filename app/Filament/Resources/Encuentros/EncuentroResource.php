@@ -35,7 +35,7 @@ class EncuentroResource extends Resource
 
     protected static ?string $slug = 'encuentros';
 
-    protected static ?int $navigationSort = 24;
+    protected static ?int $navigationSort = 2;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -61,7 +61,7 @@ class EncuentroResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return 'Consultas';
     }
 
     /**

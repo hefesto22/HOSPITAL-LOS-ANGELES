@@ -35,7 +35,7 @@ class CompraResource extends Resource
 
     protected static ?string $slug = 'compras';
 
-    protected static ?int $navigationSort = 80;
+    protected static ?int $navigationSort = 2;
 
     protected static ?string $recordTitleAttribute = 'numero_documento';
 

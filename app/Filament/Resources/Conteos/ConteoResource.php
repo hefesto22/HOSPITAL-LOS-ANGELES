@@ -55,7 +55,7 @@ class ConteoResource extends Resource
 
     protected static ?string $slug = 'conteos';
 
-    protected static ?int $navigationSort = 72;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'descripcion';
 

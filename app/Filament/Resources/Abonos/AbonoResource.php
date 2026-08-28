@@ -36,7 +36,7 @@ class AbonoResource extends Resource
 
     protected static ?string $slug = 'abonos';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'numero';
 

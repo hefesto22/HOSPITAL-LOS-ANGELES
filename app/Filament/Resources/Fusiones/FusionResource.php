@@ -33,7 +33,7 @@ class FusionResource extends Resource
 
     protected static ?string $slug = 'fusiones';
 
-    protected static ?int $navigationSort = 20;
+    protected static ?int $navigationSort = 4;
 
     public static function getNavigationLabel(): string
     {
@@ -57,7 +57,7 @@ class FusionResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return 'Consultas';
     }
 
     /**

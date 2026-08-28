@@ -49,6 +49,33 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => self::primaryColorPalette(),
             ])
             ->renderHook(PanelsRenderHook::HEAD_END, fn (): HtmlString => self::hojaDeEstilos())
+            /*
+             * ─────────────────────────────────────────────────────────
+             * EL MENÚ VA EN ORDEN DE USO, NO ALFABÉTICO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Sin esta lista Filament ordena los grupos como se le da la
+             * gana —por el primer recurso que descubre— y el menú salía
+             * con «Filament Shield» arriba de todo y «Seguridad y
+             * auditoría» metida entre «Atención» y «Farmacia».
+             *
+             * El orden es el de la frecuencia con que se abre cada cosa:
+             * primero lo de todos los días en la ventanilla, al final lo
+             * que se toca una vez y se deja quieto.
+             *
+             * ⚠️ Un grupo que no esté en esta lista NO desaparece: cae al
+             * final. Pero conviene agregarlo acá, porque el final es
+             * donde nadie mira.
+             */
+            ->navigationGroups([
+                'Atención',
+                'Consultas',
+                'Farmacia',
+                'Inventario',
+                'Catálogos y precios',
+                'Configuración del hospital',
+                'Seguridad y auditoría',
+            ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([

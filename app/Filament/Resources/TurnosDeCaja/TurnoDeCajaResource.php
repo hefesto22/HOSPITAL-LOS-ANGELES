@@ -31,7 +31,7 @@ class TurnoDeCajaResource extends Resource
 
     protected static ?string $slug = 'turnos-de-caja';
 
-    protected static ?int $navigationSort = 7;
+    protected static ?int $navigationSort = 5;
 
     protected static ?string $recordTitleAttribute = 'numero';
 

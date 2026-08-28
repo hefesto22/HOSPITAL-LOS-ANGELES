@@ -39,7 +39,7 @@ class PacienteResource extends Resource
 
     protected static ?string $slug = 'pacientes';
 
-    protected static ?int $navigationSort = 10;
+    protected static ?int $navigationSort = 6;
 
     /*
      * Sin esto Filament derivaría el título de la fila del `id`. El

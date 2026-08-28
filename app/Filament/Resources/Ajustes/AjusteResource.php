@@ -46,7 +46,7 @@ class AjusteResource extends Resource
 
     protected static ?string $slug = 'ajustes';
 
-    protected static ?int $navigationSort = 73;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'motivo';
 

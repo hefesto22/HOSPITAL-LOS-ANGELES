@@ -52,7 +52,7 @@ class PresupuestoResource extends Resource
 
     protected static ?string $slug = 'presupuestos';
 
-    protected static ?int $navigationSort = 25;
+    protected static ?int $navigationSort = 7;
 
     protected static ?string $recordTitleAttribute = 'numero';
 

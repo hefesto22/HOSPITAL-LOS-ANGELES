@@ -42,7 +42,7 @@ class CuentaResource extends Resource
 
     protected static ?string $slug = 'cuentas-de-pacientes';
 
-    protected static ?int $navigationSort = 22;
+    protected static ?int $navigationSort = 1;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -68,7 +68,7 @@ class CuentaResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return 'Consultas';
     }
 
     /**

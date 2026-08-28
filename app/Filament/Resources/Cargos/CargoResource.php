@@ -41,7 +41,7 @@ class CargoResource extends Resource
 
     protected static ?string $slug = 'cargos';
 
-    protected static ?int $navigationSort = 26;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'texto';
 
@@ -67,7 +67,7 @@ class CargoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return 'Consultas';
     }
 
     /**
