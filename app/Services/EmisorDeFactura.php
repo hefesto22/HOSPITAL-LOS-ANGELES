@@ -242,6 +242,9 @@ final class EmisorDeFactura
      * una factura ya entregada es una NOTA DE CRÉDITO, que es otro
      * documento y todavía no existe.
      *
+     * ⚠️ Y solo mientras el mes no se haya declarado: hasta el 9 del mes
+     * siguiente. Ver `Factura::yaSeDeclaro()`.
+     *
      * ─────────────────────────────────────────────────────────────────
      * LO QUE SE DESHACE Y LO QUE NO
      * ─────────────────────────────────────────────────────────────────
@@ -282,6 +285,29 @@ final class EmisorDeFactura
 
             if ($bloqueada->estado === EstadoFactura::Anulada) {
                 throw FacturaException::laFacturaYaEstaAnulada($bloqueada->numero);
+            }
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL PERÍODO DECLARADO NO SE TOCA
+             * ─────────────────────────────────────────────────────────
+             *
+             * El hospital declara el mes anterior el día 10. Hasta el 9
+             * se puede anular una factura de ese mes; después ese número
+             * ya viajó en la declaración, y moverlo deja lo emitido y lo
+             * declarado diciendo cosas distintas. Eso se arregla con una
+             * rectificativa ante el SAR, no con un botón en la caja.
+             *
+             * ⚠️ Se verifica ACÁ y no solo en la pantalla. El botón se
+             * esconde pasado el plazo, pero una pestaña abierta desde
+             * ayer todavía lo tiene dibujado.
+             */
+            if ($bloqueada->yaSeDeclaro()) {
+                throw FacturaException::elPeriodoYaSeDeclaro(
+                    $bloqueada->numero,
+                    $bloqueada->periodoFiscal(),
+                    $bloqueada->limiteParaAnular()->format('d/m/Y'),
+                );
             }
 
             $bloqueada->update([

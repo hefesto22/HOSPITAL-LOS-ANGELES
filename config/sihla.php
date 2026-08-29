@@ -338,6 +338,28 @@ return [
         'consumidor_final' => 'CONSUMIDOR FINAL',
 
         /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 HASTA QUÉ DÍA SE PUEDE ANULAR UNA FACTURA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El hospital declara el mes anterior el día 10. Hasta el 9 se
+         * puede anular una factura de ese mes; a partir del 10 ya se
+         * declaró y anularla sería mover un número que el SAR ya tiene.
+         *
+         * Ejemplo: todo lo emitido del 1 al 31 de julio se puede anular
+         * hasta el 9 de agosto. El 10 de agosto se declara julio, y
+         * desde ese momento esas facturas quedan firmes.
+         *
+         * El límite lo pone el sistema y no la buena memoria de quien
+         * está en caja: pasado el día, el botón de anular no está.
+         *
+         * Es configurable porque es una fecha administrativa, no una
+         * ley: el día que el contador cambie el calendario, se cambia
+         * acá y no en el código.
+         */
+        'dia_limite_anulacion' => 9,
+
+        /*
          * ⚠️ LEYENDAS DE LA FACTURA — CONFIRMAR CON EL SAR.
          *
          * El texto exacto que debe llevar impreso un documento fiscal lo

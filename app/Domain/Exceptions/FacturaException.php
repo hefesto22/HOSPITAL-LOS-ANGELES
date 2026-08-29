@@ -117,6 +117,22 @@ final class FacturaException extends SihlaException
         return new self('No se pudo identificar quién anula la factura. Volvé a entrar al sistema e intentá de nuevo.');
     }
 
+    /**
+     * El período ya se declaró: la factura quedó firme.
+     *
+     * ⚠️ No es un permiso que le falte a quien anula. Es que el número
+     * ya viajó en la declaración del mes, y moverlo después es una
+     * inconsistencia entre lo declarado y lo emitido — de las que se
+     * explican con una rectificativa, no con un botón.
+     */
+    public static function elPeriodoYaSeDeclaro(string $numero, string $mes, string $limite): self
+    {
+        return new self(
+            'La factura '.$numero.' es de '.$mes.' y ese mes ya se declaró: el plazo para anularla '
+            .'venció el '.$limite.'. Lo que corresponde ahora es una nota de crédito, no una anulación.'
+        );
+    }
+
     public static function laFacturaYaEstaAnulada(string $numero): self
     {
         return new self("La factura {$numero} ya está anulada.");

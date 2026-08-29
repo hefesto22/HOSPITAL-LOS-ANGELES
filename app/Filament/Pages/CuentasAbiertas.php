@@ -1703,11 +1703,30 @@ class CuentasAbiertas extends Page
 
         if ($convenio instanceof Convenio && $convenio->tipo !== TipoConvenio::Contado) {
             $rtn = $convenio->rtn;
+            $tieneRtn = $rtn !== null && trim($rtn) !== '';
+
+            /*
+             * ⚠️ SI LA ASEGURADORA NO TIENE RTN CARGADO, VA EL DOCUMENTO
+             * DEL PACIENTE.
+             *
+             * Lo correcto es el RTN del seguro —es quien paga y quien
+             * reembolsa— pero mientras no esté cargado el campo salía
+             * vacío y quien factura tenía que teclear a mano un número
+             * que el sistema ya conoce, o emitir sin documento.
+             *
+             * No es lo ideal, es lo menos malo: identificado con la
+             * identidad del asegurado es mejor que «sin documento» en
+             * una factura que pasa el umbral. Cargá el RTN del seguro en
+             * «Seguros y convenios» y esto deja de hacer falta.
+             */
+            $documento = $tieneRtn
+                ? ['tipo' => TipoIdentificador::Rtn->value, 'numero' => trim((string) $rtn)]
+                : $this->documentoDelPaciente();
 
             return [
                 'nombre' => $convenio->nombre.' / '.$paciente,
-                'tipo'   => $rtn === null || trim($rtn) === '' ? null : TipoIdentificador::Rtn->value,
-                'numero' => $rtn === null || trim($rtn) === '' ? null : trim($rtn),
+                'tipo'   => $documento['tipo'],
+                'numero' => $documento['numero'],
 
                 /* El código de cliente del papel es la póliza. */
                 'codigo' => $cuenta?->numero_poliza,
@@ -1812,21 +1831,39 @@ class CuentasAbiertas extends Page
                     }),
 
                 /*
+                 * ─────────────────────────────────────────────────────
+                 * DOS SECCIONES Y NO OCHO CAMPOS SUELTOS
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * El modal era una columna de ocho campos con un párrafo
+                 * abajo de cada uno: había que bajar dos pantallas para
+                 * llegar a «Emitir», y el ojo no tenía dónde apoyarse.
+                 *
+                 * Son dos preguntas distintas: A QUIÉN se le factura, y
+                 * CON QUÉ se paga. La segunda ya estaba separada; la
+                 * primera ahora también, con el documento y su número en
+                 * la misma fila —se llenan juntos, se leen juntos—.
+                 */
+                Section::make('A quién se le factura')
+                    ->columns(2)
+                    ->schema([
+                        /*
                  * ⚠️ A nombre de quién sale NO es siempre el paciente: la
                  * factura puede ir a la empresa que lo mandó o al
                  * familiar que paga. Se propone el paciente y se puede
                  * cambiar.
                  */
-                TextInput::make('cliente_nombre')
-                    ->label('A nombre de')
-                    ->required()
-                    ->maxLength(200)
-                    ->default(fn (): string => $this->clientePropuesto()['nombre'])
-                    ->helperText(fn (): ?string => $this->cuentaFacturando()?->convenio?->tipo === TipoConvenio::Contado
-                        ? null
-                        : 'Con seguro la factura sale a nombre de la aseguradora con el paciente: es ella la que paga y la que reembolsa.'),
+                        TextInput::make('cliente_nombre')
+                            ->columnSpanFull()
+                            ->label('A nombre de')
+                            ->required()
+                            ->maxLength(200)
+                            ->default(fn (): string => $this->clientePropuesto()['nombre'])
+                            ->helperText(fn (): ?string => $this->cuentaFacturando()?->convenio?->tipo === TipoConvenio::Contado
+                                ? null
+                                : 'Con seguro la factura sale a nombre de la aseguradora con el paciente: es ella la que paga y la que reembolsa.'),
 
-                /*
+                        /*
                  * ─────────────────────────────────────────────────────
                  * 🔴 NO TODO PACIENTE TIENE RTN
                  * ─────────────────────────────────────────────────────
@@ -1837,52 +1874,60 @@ class CuentasAbiertas extends Page
                  * mostrador nadie debería teclear un número que el
                  * sistema ya conoce.
                  */
-                Select::make('cliente_documento_tipo')
-                    ->label('Documento')
-                    ->options(fn (): array => self::tiposDeDocumento())
-                    ->native(false)
-                    ->default(fn (): ?string => $this->clientePropuesto()['tipo'])
-                    ->requiredWith('cliente_documento'),
+                        Select::make('cliente_documento_tipo')
+                            ->label('Documento')
+                            ->options(fn (): array => self::tiposDeDocumento())
+                            ->native(false)
+                            ->default(fn (): ?string => $this->clientePropuesto()['tipo'])
+                            ->requiredWith('cliente_documento'),
 
-                TextInput::make('cliente_documento')
-                    ->label('Número')
-                    ->maxLength(20)
-                    ->default(fn (): ?string => $this->clientePropuesto()['numero'])
-                    /*
+                        TextInput::make('cliente_documento')
+                            ->label('Número')
+                            ->maxLength(20)
+                            ->default(fn (): ?string => $this->clientePropuesto()['numero'])
+                            /*
                      * Si viene vacío no es un error del sistema: a ese
                      * paciente nunca le registraron documento. Decirlo
                      * evita que alguien lo teclee a mano cada vez en vez
                      * de agregarlo al expediente una sola vez.
                      */
-                    ->hint(fn (): ?string => $this->clientePropuesto()['numero'] === null
-                        ? 'Sin documento en el expediente'
-                        : null)
-                    ->helperText(function (): string {
-                        $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
+                            ->hint(fn (): ?string => $this->clientePropuesto()['numero'] === null
+                                ? 'Sin documento en el expediente'
+                                : null)
+                            ->helperText(function (): string {
+                                $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
 
-                        return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
-                            .' el SAR exige identificar al cliente. Si no tiene RTN, sirve la identidad.';
-                    }),
+                                return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
+                                    .' el SAR exige identificar al cliente. Si no tiene RTN, sirve la identidad.';
+                            }),
 
-                TextInput::make('cliente_direccion')
-                    ->label('Dirección')
-                    ->maxLength(250),
+                        TextInput::make('cliente_direccion')
+                            ->label('Dirección')
+                            ->columnSpanFull()
+                            ->maxLength(250),
 
-                /*
+                        /*
                  * El «Código de Cliente» del formulario: con seguro es
                  * el número de póliza, que es por donde la aseguradora
                  * busca al asegurado cuando reembolsa.
                  */
-                TextInput::make('cliente_codigo')
-                    ->label('Código de cliente / póliza')
-                    ->maxLength(40)
-                    ->default(fn (): ?string => $this->clientePropuesto()['codigo'])
-                    ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
+                        TextInput::make('cliente_codigo')
+                            ->label('Código de cliente / póliza')
+                            ->maxLength(40)
+                            ->columnSpanFull()
+                            ->default(fn (): ?string => $this->clientePropuesto()['codigo'])
+                            ->hint(fn (): ?string => $this->clientePropuesto()['codigo'] === null
+                                ? 'Sin póliza en la cuenta'
+                                : null)
+                            ->helperText('Es por donde la aseguradora busca al asegurado cuando reembolsa.')
+                            ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
 
-                Textarea::make('nota')
-                    ->label('Nota')
-                    ->rows(2)
-                    ->maxLength(300),
+                        Textarea::make('nota')
+                            ->label('Nota')
+                            ->rows(2)
+                            ->columnSpanFull()
+                            ->maxLength(300),
+                    ]),
 
                 /*
                  * ─────────────────────────────────────────────────────

@@ -64,6 +64,8 @@ final class ImageOptimizer
 
         imagedestroy($imagen);
 
+        self::aplicarVisibilidadDelDisco($rutaRelativa);
+
         return $rutaRelativa;
     }
 
@@ -102,6 +104,8 @@ final class ImageOptimizer
         }
 
         imagedestroy($cuadrado);
+
+        self::aplicarVisibilidadDelDisco($rutaRelativa);
 
         return $rutaRelativa;
     }
@@ -197,6 +201,36 @@ final class ImageOptimizer
     /**
      * Guarda el archivo original sin procesar (para SVG, ICO).
      */
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL PERMISO QUE GD NO PONE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * `imagewebp()` e `imagepng()` escriben con `fopen()` crudo sobre la
+     * ruta absoluta: NO pasan por Flysystem, así que no reciben la
+     * visibilidad configurada en el disco y quedan con lo que dicte el
+     * umask del proceso — en macOS con Herd, 0600.
+     *
+     * Servidos por HTTP funcionan igual, porque PHP y el servidor web
+     * corren con el mismo usuario. Por eso el logo SE VE en el panel y
+     * parece que todo está bien.
+     *
+     * Lo que se rompe es lo otro: Flysystem lee 0600 y reporta el
+     * archivo como PRIVADO. El `FileUpload` de Filament, declarado
+     * `->visibility('public')`, pide los metadatos del archivo para
+     * dibujar la vista previa y esa consulta no le devuelve lo que
+     * espera. FilePond se queda esperando el tamaño para siempre, con
+     * la rueda girando y sin un solo error en el log.
+     *
+     * Se corrige aplicando la visibilidad del disco después de escribir,
+     * que es exactamente lo que Flysystem habría hecho si el archivo
+     * hubiera pasado por él.
+     */
+    private static function aplicarVisibilidadDelDisco(string $rutaRelativa): void
+    {
+        Storage::disk('public')->setVisibility($rutaRelativa, 'public');
+    }
+
     private static function guardarTalCual(
         TemporaryUploadedFile $file,
         string $directory,

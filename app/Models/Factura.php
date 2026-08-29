@@ -164,6 +164,60 @@ class Factura extends Model
     }
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 HASTA CUÁNDO SE PUEDE ANULAR
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El hospital declara el mes anterior el día 10. Todo lo emitido en
+     * julio se puede anular hasta el 9 de agosto; el 10 se declara julio
+     * y esas facturas quedan firmes.
+     *
+     * Se mide contra `fecha_operacion` —el día fiscal congelado al
+     * emitir— y no contra `emitida_en`: son el mismo día salvo cuando el
+     * servidor está en otro huso, y el que manda en la declaración es el
+     * fiscal.
+     *
+     * ⚠️ Fin del día 9, no el mediodía: quien llama a las cuatro de la
+     * tarde del 9 todavía está a tiempo.
+     */
+    public function limiteParaAnular(): CarbonInterface
+    {
+        $dia = (int) config('sihla.facturacion.dia_limite_anulacion', 9);
+
+        return $this->fecha_operacion
+            ->copy()
+            ->startOfMonth()
+            ->addMonth()
+            ->setDay(max(1, $dia))
+            ->endOfDay();
+    }
+
+    /**
+     * ¿El período de esta factura ya se declaró?
+     *
+     * Es la pregunta de negocio; `sePuedeAnular()` es la misma al revés
+     * y las dos existen porque las dos se leen en voz alta: «¿ya se
+     * declaró?» en el mostrador, «¿se puede anular?» en el botón.
+     */
+    public function yaSeDeclaro(?CarbonInterface $hoy = null): bool
+    {
+        return ($hoy ?? now())->greaterThan($this->limiteParaAnular());
+    }
+
+    public function sePuedeAnular(?CarbonInterface $hoy = null): bool
+    {
+        return $this->estaViva() && ! $this->yaSeDeclaro($hoy);
+    }
+
+    /**
+     * El mes al que pertenece, como se dice: «julio 2026».
+     */
+    public function periodoFiscal(): string
+    {
+        return $this->fecha_operacion->translatedFormat('F Y');
+    }
+
+    /**
      * ¿Se le vendió a «CONSUMIDOR FINAL»?
      *
      * Es lo primero que se mira en una revisión: arriba del umbral, esto

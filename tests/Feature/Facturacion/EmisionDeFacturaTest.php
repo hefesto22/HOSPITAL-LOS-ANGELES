@@ -25,6 +25,7 @@ use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\EmisorDeFactura;
 use App\Services\RegistradorDeCargo;
+use Carbon\Carbon;
 use Illuminate\Support\Str;
 
 /**
@@ -405,3 +406,68 @@ it('la cuenta reabierta vuelve a admitir cargos', function (): void {
     expect($cuenta->refresh()->total)->toBe('470.00')
         ->and($cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->count())->toBe(2);
 })->note('Anular y volver a facturar sirve de poco si en el medio no se le puede agregar lo que faltaba, que es justo por lo que se anula la mayoría de las veces.');
+
+/*
+|--------------------------------------------------------------------------
+| El periodo declarado no se toca
+|--------------------------------------------------------------------------
+|
+| El hospital declara el mes anterior el dia 10. Todo lo emitido en julio
+| se puede anular hasta el 9 de agosto; el 10 se declara julio y esas
+| facturas quedan firmes. Anular una despues dejaria lo emitido y lo
+| declarado diciendo cosas distintas, y eso se arregla con una
+| rectificativa ante el SAR, no con un boton en la caja.
+*/
+
+it('el 9 todavia se puede anular la factura del mes pasado', function (): void {
+    Carbon::setTestNow(Carbon::create(2026, 7, 15, 10));
+
+    $cuenta = unaCuentaCon(elContado());
+    unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('100.0000'));
+    saldar($cuenta);
+
+    $factura = facturar($cuenta);
+
+    Carbon::setTestNow(Carbon::create(2026, 8, 9, 16));
+
+    $anulada = app(EmisorDeFactura::class)->anular(
+        $factura->refresh(),
+        'Salió con el cliente equivocado.',
+        quienAnula(),
+    );
+
+    expect($anulada->estado->value)->toBe('anulada');
+})->note('Quien llama a las cuatro de la tarde del 9 todavía está a tiempo: el límite es el fin del día, no el mediodía.');
+
+it('el 10 ya no, porque el mes se declaro', function (): void {
+    Carbon::setTestNow(Carbon::create(2026, 7, 15, 10));
+
+    $cuenta = unaCuentaCon(elContado());
+    unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('100.0000'));
+    saldar($cuenta);
+
+    $factura = facturar($cuenta);
+
+    Carbon::setTestNow(Carbon::create(2026, 8, 10, 8));
+
+    app(EmisorDeFactura::class)->anular($factura->refresh(), 'Salió con el cliente equivocado.', quienAnula());
+})->throws(FacturaException::class, 'ya se declaró');
+
+it('la factura del mes en curso se anula sin problema', function (): void {
+    Carbon::setTestNow(Carbon::create(2026, 8, 28, 15));
+
+    $cuenta = unaCuentaCon(elContado());
+    unRangoPara($cuenta);
+
+    cargarle($cuenta, unItemFacturable('100.0000'));
+    saldar($cuenta);
+
+    $factura = facturar($cuenta);
+
+    expect($factura->sePuedeAnular())->toBeTrue()
+        ->and($factura->limiteParaAnular()->format('d/m/Y'))->toBe('09/09/2026');
+})->note('Lo de agosto vence el 9 de septiembre: el plazo es del mes siguiente, no de los treinta días.');
