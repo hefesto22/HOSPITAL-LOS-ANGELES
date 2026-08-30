@@ -15,7 +15,9 @@ use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDiagnostico;
 use App\Domain\Enums\TipoEncuentro;
 use App\Domain\Enums\TipoIdentificador;
+use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\CargoException;
+use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
@@ -25,6 +27,7 @@ use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\MedioDePago;
+use App\Domain\ValueObjects\Monto;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
 use App\Models\Abono;
 use App\Models\Almacen;
@@ -47,6 +50,7 @@ use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
+use App\Services\ResolutorDePrecio;
 use App\Services\EmisorDeFactura;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
@@ -216,6 +220,15 @@ class CuentasAbiertas extends Page
      * una lista corta que nadie entiende por qué está corta.
      */
     public ?int $principioEscaneado = null;
+
+    /**
+     * De qué cuenta es el formulario de cargo que está abierto.
+     *
+     * Existe para una sola cosa: proponer el precio de un honorario, que
+     * depende del pagador de esa cuenta. Se llena en `fillForm`, que es
+     * el único lugar donde llegan los argumentos de la acción.
+     */
+    public ?int $cuentaDelFormulario = null;
 
     /**
      * Memoria por pintada de los productos de ese principio.
@@ -883,6 +896,52 @@ class CuentasAbiertas extends Page
 
                         /*
                          * ─────────────────────────────────────────────
+                         * 🔴 EL HONORARIO SÍ LLEVA PRECIO A LA VISTA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Es la única familia del catálogo donde el
+                         * precio de lista es una referencia y no una
+                         * regla: el honorario cambia por médico, por
+                         * complejidad y por lo que se acordó con la
+                         * familia. Obligarlo a pasar por el tarifario
+                         * significaba una fila nueva por cada médico, o
+                         * —lo que de verdad pasaba— cobrar el de lista y
+                         * arreglarlo después con un descuento que no
+                         * explica nada.
+                         *
+                         * Viene PROPUESTO con el precio del pagador de
+                         * esta cuenta. Si no se toca, el cargo sigue el
+                         * camino de siempre y sale del tarifario; solo se
+                         * marca como precio acordado cuando el número
+                         * cambia de verdad.
+                         *
+                         * ⚠️ Y NO se abre para el resto del catálogo. Un
+                         * campo de precio libre en la pantalla de cobro
+                         * es por donde se va la plata sin que nadie lo
+                         * note: un medicamento cobrado a mano no lo
+                         * detecta ningún arqueo, porque el arqueo compara
+                         * contra lo que dice el sistema.
+                         */
+                        TextInput::make('precio_acordado')
+                            ->label('Precio del honorario')
+                            ->numeric()
+                            ->minValue(0)
+                            ->step('0.01')
+                            ->prefix('L')
+                            ->columnSpan(3)
+                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
+                            ->helperText('Propuesto del tarifario. Cambialo si este médico cobra otra cosa.'),
+
+                        TextInput::make('referencia_acordada')
+                            ->label('¿De quién es el honorario?')
+                            ->maxLength(120)
+                            ->columnSpan(4)
+                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
+                            ->placeholder('Dr. Fulano · cirujano')
+                            ->helperText('Queda escrito en el renglón de la cuenta y en la factura.'),
+
+                        /*
+                         * ─────────────────────────────────────────────
                          * UNA SOLA LÍNEA DE CONTEXTO, A LO ANCHO
                          * ─────────────────────────────────────────────
                          *
@@ -968,6 +1027,14 @@ class CuentasAbiertas extends Page
              */
             ->fillForm(function (array $arguments): array {
                 $this->cargarElDescuentoDe($arguments);
+
+                /*
+                 * El precio de un honorario depende del PAGADOR, así que
+                 * para poder proponerlo hay que saber de qué cuenta es
+                 * este formulario. `$arguments` solo llega acá; los
+                 * closures de los campos reciben `Get`, no la cuenta.
+                 */
+                $this->cuentaDelFormulario = $this->cuentaDe($arguments)?->id;
 
                 /*
                  * Cada línea arranca sin filtro. Corre al abrir el modal y
@@ -1212,6 +1279,24 @@ class CuentasAbiertas extends Page
                      * persona.
                      */
                     autorizadoPor: $descuento instanceof Decimal ? $cuenta->descuento_hospital_por : null,
+
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 SOLO SI EL NÚMERO CAMBIÓ DE VERDAD
+                     * ─────────────────────────────────────────────────
+                     *
+                     * El campo viene propuesto con el precio del
+                     * tarifario, así que la mayoría de las veces llega
+                     * igual. Mandarlo igual marcaría TODOS los honorarios
+                     * como «precio acordado», y entonces la marca dejaría
+                     * de significar algo: el reporte no podría distinguir
+                     * los que de verdad se negociaron.
+                     *
+                     * Nulo = el cargo sigue el camino de siempre y el
+                     * precio sale del tarifario con su vigencia (ADR-0003).
+                     */
+                    precioAcordado: $this->honorarioAcordado($item, $cuenta, $data),
+                    referenciaAcordada: $this->deQuienEsElHonorario($item, $data),
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {
@@ -1841,6 +1926,108 @@ class CuentasAbiertas extends Page
          */
         if ($item instanceof Item) {
             $set('unidad_cobro', $this->unidadDeCobroPorDefecto($item));
+        }
+
+        /*
+         * El honorario arranca con el precio del tarifario a la vista.
+         * Vacío obligaría a teclear el número entero incluso cuando es el
+         * de siempre, y eso convierte un campo de excepción en un campo
+         * obligatorio.
+         */
+        $set('precio_acordado', $this->esHonorario($item) ? $this->precioPropuesto($item) : null);
+        $set('referencia_acordada', null);
+    }
+
+    /**
+     * El precio tecleado para un honorario, solo cuando difiere del que
+     * propone el tarifario.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function honorarioAcordado(Item $item, Cuenta $cuenta, array $data): ?Monto
+    {
+        if (! $this->esHonorario($item)) {
+            return null;
+        }
+
+        $tecleado = NumeroDeFormulario::aDecimal($data['precio_acordado'] ?? null);
+
+        if (! $tecleado instanceof Decimal) {
+            return null;
+        }
+
+        /*
+         * ⚠️ Se compara contra el precio de ESTA cuenta —el de su
+         * pagador—, no contra el de lista. Un paciente de seguro tiene
+         * otro número, y comparar contra el de lista marcaría como
+         * negociado un honorario que salió tal cual del convenio.
+         */
+        $this->cuentaDelFormulario ??= $cuenta->id;
+        $propuesto = $this->precioPropuesto($item);
+
+        if ($propuesto !== null && $tecleado->igualA($propuesto)) {
+            return null;
+        }
+
+        return Monto::de($tecleado->redondeado(2));
+    }
+
+    /**
+     * De quién es el honorario, si se escribió. Va al renglón de la
+     * cuenta y a la factura, que es donde el paciente lo lee.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function deQuienEsElHonorario(Item $item, array $data): ?string
+    {
+        if (! $this->esHonorario($item)) {
+            return null;
+        }
+
+        $texto = is_string($data['referencia_acordada'] ?? null)
+            ? trim($data['referencia_acordada'])
+            : '';
+
+        return $texto === '' ? null : mb_substr($texto, 0, 120);
+    }
+
+    /**
+     * ¿Es un honorario médico?
+     *
+     * La única familia del catálogo cuyo precio se puede escribir en el
+     * mostrador. Se pregunta por el TIPO y no por la categoría: la
+     * categoría la elige quien carga el catálogo y puede equivocarse; el
+     * tipo gobierna el comportamiento del ítem en todo el sistema.
+     */
+    private function esHonorario(?Item $item): bool
+    {
+        return $item instanceof Item && $item->tipo === TipoItem::Honorario;
+    }
+
+    /**
+     * El precio que el tarifario le da a este ítem para el pagador de la
+     * cuenta abierta. Nulo si no hay precio: ahí el campo queda vacío y
+     * quien cobra escribe el número, que es mejor que proponerle un cero.
+     */
+    private function precioPropuesto(?Item $item): ?string
+    {
+        $cuenta = $this->cuentaDelFormulario === null
+            ? null
+            : Cuenta::query()->with(['convenio', 'sede'])->find($this->cuentaDelFormulario);
+
+        if (! $item instanceof Item || ! $cuenta instanceof Cuenta) {
+            return null;
+        }
+
+        try {
+            return app(ResolutorDePrecio::class)->para(
+                item: $item,
+                convenio: $cuenta->convenio,
+                fechaServicio: now(),
+                sede: $cuenta->sede,
+            )->precio->redondeado(2);
+        } catch (PrecioNoDefinidoException) {
+            return null;
         }
     }
 
