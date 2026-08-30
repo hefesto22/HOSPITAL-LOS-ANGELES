@@ -223,6 +223,23 @@ class CuentasAbiertas extends Page
     private array $productosPorPrincipio = [];
 
     /**
+     * Memoria por pintada de los estantes de cada ítem, con cuánto hay.
+     *
+     * 🔴 El campo «¿de dónde sale?» pregunta lo mismo TRES veces por
+     * render —las opciones, el marcador de posición y el texto de
+     * ayuda—, y cada pregunta son dos consultas. Sin esta memoria son
+     * seis consultas por pintada, y el modal se repinta con cada tecla
+     * del buscador: el N+1 invisible del §13.2, en la pantalla más
+     * caliente del sistema.
+     *
+     * `private` y no `public`: Livewire no la serializa, así que dura lo
+     * que dura la petición — que es exactamente lo que tiene que durar.
+     *
+     * @var array<int, Collection<int, array{almacen: Almacen, hay: Decimal}>>
+     */
+    private array $estantesPorItem = [];
+
+    /**
      * La línea cuya ✕ está esperando que le escriban el porqué.
      *
      * Nula casi siempre: solo se llena cuando la línea es de otro turno o
@@ -700,7 +717,7 @@ class CuentasAbiertas extends Page
                             ->searchable()
                             ->native(false)
                             ->live()
-                            ->columnSpan(5)
+                            ->columnSpan(4)
                             /*
                              * Con la gaveta escaneada la lista ya viene
                              * puesta: se abre el desplegable y están los
@@ -817,17 +834,31 @@ class CuentasAbiertas extends Page
                          * existencia entre los que dispensan, así que en
                          * el caso normal nadie toca este campo.
                          */
+                        /*
+                         * ⚠️ TRES COLUMNAS Y TEXTO DE UNA LÍNEA.
+                         *
+                         * Con dos columnas y un párrafo de ayuda, el
+                         * campo quedaba con el nombre partido en tres
+                         * renglones y las opciones cortadas: en el lugar
+                         * de la pantalla donde hay menos tiempo para
+                         * leer. Lo que hay que saber ya lo dicen las
+                         * propias opciones —«ALMACEN-1 · 2300 ML»—, así
+                         * que el texto de abajo se queda con lo único que
+                         * ellas no dicen.
+                         */
                         Select::make('almacen_id')
                             ->label('¿De dónde sale?')
                             ->native(false)
-                            ->columnSpan(2)
+                            ->columnSpan(3)
                             ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id'))))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
-                            ->helperText(
-                                'Queda escrito en el kardex de qué estante salió. Adentro del '
-                                .'almacén sale por FEFO: primero el lote que vence antes.'
-                            ),
+                            ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id'))) === []
+                                ? 'No hay en ningún almacén'
+                                : 'Elegí el estante')
+                            ->helperText(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id'))) === []
+                                ? '🔴 No hay existencia de este producto en ningún almacén. Hay que recibirlo o trasladarlo antes de cobrarlo.'
+                                : 'Solo los que tienen. Sale por FEFO: primero el lote que vence antes.'),
 
                     ]),
             ])
@@ -969,6 +1000,15 @@ class CuentasAbiertas extends Page
      */
     private function agregar(Cuenta $cuenta, array $data): void
     {
+        /*
+         * ⚠️ La memoria de estantes se tira ANTES de cargar: lo que se
+         * está por descontar cambia el saldo, y en una ronda de veinte
+         * líneas la segunda tiene que ver lo que dejó la primera. Una
+         * lista de existencias vieja es cómo alguien intenta despachar
+         * del estante que acaba de vaciar.
+         */
+        $this->estantesPorItem = [];
+
         $item = $this->itemDe($data['item_id'] ?? null);
 
         /*
@@ -1553,6 +1593,10 @@ class CuentasAbiertas extends Page
      */
     private function estantesDe(Item $item): Collection
     {
+        if (isset($this->estantesPorItem[$item->id])) {
+            return $this->estantesPorItem[$item->id];
+        }
+
         $saldos = Existencia::query()
             ->where('item_id', $item->id)
             ->selectRaw('almacen_id, sum(cantidad) as total')
@@ -1562,7 +1606,7 @@ class CuentasAbiertas extends Page
         /** @var Collection<int, Almacen> $almacenes */
         $almacenes = AlmacenesDelUsuario::elegibles()->vigentes()->orderBy('nombre')->get();
 
-        return $almacenes
+        return $this->estantesPorItem[$item->id] = $almacenes
             ->map(fn (Almacen $almacen): array => [
                 'almacen' => $almacen,
                 'hay'     => self::comoDecimal($saldos[$almacen->id] ?? null),
@@ -1593,11 +1637,27 @@ class CuentasAbiertas extends Page
             return [];
         }
 
+        $unidad = $item->unidadDispensacion?->codigo;
+
         return $this->estantesDe($item)
+            /*
+             * 🔴 LOS ESTANTES VACÍOS NO SE LISTAN.
+             *
+             * Un almacén sin existencia de este producto no es una
+             * opción: elegirlo termina en «no alcanza» después de haber
+             * tecleado todo, con el paciente enfrente. Y con carritos, la
+             * lista se llenaría de renglones que nunca sirven —un carro
+             * de paro tiene ocho productos, no el catálogo entero—.
+             *
+             * Si no queda ninguno, el desplegable sale vacío y el texto
+             * de abajo lo dice con todas las letras. Eso es lo correcto:
+             * el problema no es la pantalla, es que no hay.
+             */
+            ->reject(fn (array $estante): bool => $estante['hay']->esCero())
             ->mapWithKeys(fn (array $estante): array => [
-                $estante['almacen']->id => $estante['hay']->esCero()
-                    ? $estante['almacen']->nombre.' — vacío'
-                    : $estante['almacen']->nombre.' — hay '.$estante['hay']->redondeado(2),
+                $estante['almacen']->id => $estante['almacen']->nombre
+                    .' · '.$estante['hay']->redondeado(2)
+                    .($unidad === null ? '' : ' '.$unidad),
             ])
             ->all();
     }
