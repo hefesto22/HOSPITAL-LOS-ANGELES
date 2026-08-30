@@ -1709,10 +1709,15 @@ class CuentasAbiertas extends Page
             $contenido = $presentacion->unidades_por_presentacion;
 
             if (is_numeric($contenido) && ! Decimal::de($contenido)->esCero()) {
-                $envase = $presentacion->unidad?->codigo ?? 'envases';
-
+                /*
+                 * `->` y no `?->`: `item_presentaciones.unidad_id` es NOT
+                 * NULL —una presentación sin envase no es una
+                 * presentación—, así que la relación siempre trae fila.
+                 * El `?->` no protegía de nada y obligaba a inventar un
+                 * «envases» que no puede ocurrir.
+                 */
                 return ItemPresentacion::sinCerosDeMas($hay->entre($contenido)->redondeado(2))
-                    .' '.$envase;
+                    .' '.$presentacion->unidad->codigo;
             }
         }
 
