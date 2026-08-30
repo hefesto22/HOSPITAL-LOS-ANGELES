@@ -17,11 +17,11 @@ use App\Domain\Enums\TipoEncuentro;
 use App\Domain\Enums\TipoIdentificador;
 use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\CargoException;
-use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
+use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
@@ -42,21 +42,21 @@ use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Persona;
-use App\Models\Unidad;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
+use App\Models\Unidad;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
-use App\Services\ResolutorDePrecio;
 use App\Services\EmisorDeFactura;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
+use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
 use App\Support\NormalizadorDeTexto;
@@ -1090,9 +1090,9 @@ class CuentasAbiertas extends Page
                 $honorario = $this->itemDe($itemPuesto);
 
                 return [
-                    'item_id'             => $itemPuesto,
-                    'cantidad'            => 1,
-                    'precio_acordado'     => $this->esHonorario($honorario)
+                    'item_id'         => $itemPuesto,
+                    'cantidad'        => 1,
+                    'precio_acordado' => $this->esHonorario($honorario)
                         ? $this->precioPropuesto($honorario)
                         : null,
                     'referencia_acordada' => null,
@@ -2107,7 +2107,13 @@ class CuentasAbiertas extends Page
                 convenio: $cuenta->convenio,
                 fechaServicio: now(),
                 sede: $cuenta->sede,
-            )->precio->redondeado(2);
+            /*
+             * `valor()` y no `exacto()`: es lo que se va a mostrar en un
+             * campo y lo que después se compara contra lo tecleado. La
+             * escala 12 de `exacto()` pondría «1080.000000000000» en la
+             * pantalla y nunca coincidiría con lo que alguien escribe.
+             */
+            )->precio->valor();
         } catch (PrecioNoDefinidoException) {
             /*
              * Sin precio de lista NO es un error: hay honorarios que no
