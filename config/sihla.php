@@ -257,24 +257,28 @@ return [
         ],
 
         /*
-         * UN SOLO ALMACÉN PARA TODO EL HOSPITAL.
+         * 🔴 APAGADO DESDE 2026-08-29: EL HOSPITAL SÍ DIVIDE.
          *
-         * Hospital Los Ángeles no divide el inventario: entra la compra,
-         * sale la venta al paciente y come el servicio, todo del mismo
-         * estante. Con esto en `true` el formulario esconde «Tipo» y
-         * «Servicio dueño», el almacén nace como `TipoAlmacen::AlmacenUnico`
-         * y crearlo es sede + código + nombre.
+         * Arrancó en modo único —un estante para todo— y dejó de serlo el
+         * día que se separó FARMACIA de BODEGA. Son dos lugares físicos
+         * distintos, con dos llaves distintas, y desde bodega salen los
+         * carros de paro y los carritos de piso.
          *
-         * Es bandera y no borrado del campo porque la clínica siguiente sí
-         * separa bodega de farmacia (§1.1): apagarla devuelve los cuatro
-         * tipos sin migración, sin deploy y sin perder el histórico de qué
-         * salió de qué estante.
+         * Con esto en `false`, el formulario del almacén vuelve a mostrar
+         * «Tipo» y «Servicio dueño», que es lo que permite crear
+         * «CARRITO ROJO 1» como stock de un servicio y no como una bodega
+         * central más.
          *
-         * ⚠️ Si se apaga en un hospital que ya operó en modo único, los
-         * almacenes existentes siguen siendo `almacen_unico` — hay que
-         * reclasificarlos a mano antes de que los roles empiecen a filtrar.
+         * La migración `2026_08_29_100000_farmacia_y_bodega_son_dos_estantes`
+         * reclasificó lo que ya existía: el almacén único pasó a farmacia
+         * de venta —que es de donde se venía dispensando— y nació la
+         * bodega. El kardex histórico no se tocó: cada movimiento sigue
+         * diciendo de qué estante salió.
+         *
+         * Volver a `true` NO reagrupa nada; solo esconde el campo. La
+         * vuelta atrás es reclasificar los almacenes, no la bandera.
          */
-        'modo_almacen_unico' => true,
+        'modo_almacen_unico' => false,
 
         /*
          * Qué estantes toca cada rol, por TIPO de almacén.
@@ -290,9 +294,28 @@ return [
          *
          * Los valores son los del enum `TipoAlmacen`.
          */
+        /*
+         * 🔴 VACÍO A PROPÓSITO: NADIE ESTÁ RESTRINGIDO TODAVÍA.
+         *
+         * El mapa es lo que ENCIENDE la restricción — `AlmacenesDelUsuario`
+         * no filtra a quien no aparece acá—, así que un mapa vacío es
+         * «todos ven todos los estantes».
+         *
+         * Y es lo correcto hoy: separar farmacia de bodega es un cambio
+         * FÍSICO —dos lugares, dos llaves—, no un cambio de permisos. El
+         * hospital tiene un turno de noche de una persona que abre los
+         * dos. Encender el filtro el mismo día que se parten los estantes
+         * es cómo aparece «no puedo dispensar» a las dos de la mañana.
+         *
+         * Cuando el hospital quiera separar también el mando, se
+         * descomentan las dos líneas de abajo y queda andando: bodega
+         * cuenta y ajusta bodega y los carritos, farmacia la farmacia. No
+         * hay migración de por medio, porque el permiso se deriva del
+         * TIPO del almacén y el tipo ya está puesto.
+         */
         'almacenes_por_rol' => [
-            'bodega'   => ['almacen_unico', 'bodega_central', 'stock_de_servicio'],
-            'farmacia' => ['almacen_unico', 'farmacia_venta', 'farmacia_interna'],
+            // 'bodega'   => ['almacen_unico', 'bodega_central', 'stock_de_servicio'],
+            // 'farmacia' => ['almacen_unico', 'farmacia_venta', 'farmacia_interna'],
         ],
     ],
 

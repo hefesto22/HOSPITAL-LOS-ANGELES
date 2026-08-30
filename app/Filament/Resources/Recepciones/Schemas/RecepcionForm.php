@@ -92,18 +92,34 @@ final class RecepcionForm
             ->columnSpanFull()
             ->columns(4)
             ->schema([
+                /*
+                 * 🔴 SIN VALOR POR DEFECTO, Y ES A PROPÓSITO.
+                 *
+                 * Desde que hay FARMACIA y BODEGA, a cuál entra la
+                 * mercadería es una decisión de quien recibe, no un
+                 * trámite. Un valor preseleccionado se acepta sin leerlo
+                 * —así es como se aceptan los valores preseleccionados—
+                 * y la caja de gasas termina en el estante equivocado,
+                 * con dos kardex descuadrados de una vez.
+                 *
+                 * Si después hay que moverlo, se mueve: Inventario →
+                 * Existencias → Mover. Pero es mejor que entre bien.
+                 */
                 Select::make('almacen_id')
-                    ->label('Almacén')
+                    ->label('¿A qué almacén entra?')
                     ->columnSpan(2)
                     ->relationship('almacen', 'nombre')
-                    ->getOptionLabelFromRecordUsing(fn (Almacen $record): string => $record->etiqueta())
+                    ->getOptionLabelFromRecordUsing(
+                        fn (Almacen $record): string => $record->nombre.' · '.$record->tipo->etiqueta()
+                    )
                     ->searchable()
                     ->preload()
                     ->required()
                     ->native(false)
                     ->helperText(
-                        'El saldo y el costo son POR almacén: equivocarlo descuadra dos '
-                        .'estantes de una vez.'
+                        'El saldo y el costo son POR almacén: equivocarlo descuadra dos estantes '
+                        .'de una vez. Lo que llega del proveedor normalmente entra a BODEGA y de '
+                        .'ahí se baja a farmacia o al carrito.'
                     ),
 
                 DatePicker::make('fecha_recepcion')

@@ -27,6 +27,7 @@ use App\Domain\ValueObjects\MedioDePago;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
 use App\Models\Abono;
 use App\Models\Almacen;
+use App\Models\Existencia;
 use App\Models\Cargo;
 use App\Models\Cie10;
 use App\Models\Convenio;
@@ -733,7 +734,16 @@ class CuentasAbiertas extends Page
                             )
                             ->placeholder(fn (): string => $this->principioEscaneado === null
                                 ? 'Escribí tres letras o el código'
-                                : 'Elegí en qué forma se le dio'),
+                                : 'Elegí en qué forma se le dio')
+                            /*
+                             * Elegir el producto elige también el estante
+                             * del que se va a sacar. Sin esto el campo de
+                             * abajo queda vacío y hay que abrirlo en cada
+                             * línea de una ronda de veinte.
+                             */
+                            ->afterStateUpdated(function (mixed $state, Set $set): void {
+                                $set('almacen_id', $this->estanteSugerido($this->itemDe($state))?->id);
+                            }),
 
                         /*
                          * Sin texto de ayuda a propósito: las propias
@@ -787,17 +797,37 @@ class CuentasAbiertas extends Page
                                 );
                             }),
 
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 DE QUÉ ESTANTE SE AGARRÓ
+                         * ─────────────────────────────────────────────
+                         *
+                         * Desde que farmacia y bodega son dos lugares
+                         * distintos, «almacén» dejó de ser un campo de
+                         * trámite: es el dato que después contesta por
+                         * qué el carrito rojo tiene una ampolla menos.
+                         *
+                         * Cada opción dice CUÁNTO HAY ahí. Un
+                         * desplegable de nombres pelados obliga a
+                         * adivinar, y quien adivina elige el primero de
+                         * la lista — que es como se intenta despachar de
+                         * un estante vacío con el paciente enfrente.
+                         *
+                         * Viene preseleccionado el estante con más
+                         * existencia entre los que dispensan, así que en
+                         * el caso normal nadie toca este campo.
+                         */
                         Select::make('almacen_id')
-                            ->label('Almacén')
+                            ->label('¿De dónde sale?')
                             ->native(false)
                             ->columnSpan(2)
-                            ->options(fn (): array => Almacen::query()
-                                ->orderBy('nombre')
-                                ->pluck('nombre', 'id')
-                                ->all())
+                            ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id'))))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
-                            ->helperText('Sale por FEFO.'),
+                            ->helperText(
+                                'Queda escrito en el kardex de qué estante salió. Adentro del '
+                                .'almacén sale por FEFO: primero el lote que vence antes.'
+                            ),
 
                     ]),
             ])
@@ -1472,24 +1502,158 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * El primer almacén con saldo suficiente entre los que este usuario
-     * puede operar. El LOTE lo elige el motor por FEFO — acá solo se
-     * decide de qué estante se saca.
+     * El almacén del que conviene sacar esto, si alcanza en alguno.
+     *
+     * ⚠️ Recorre los estantes EN ORDEN DE PREFERENCIA, no en el orden en
+     * que estén en la tabla. Con farmacia y bodega separadas, «el primero
+     * que alcance» despacharía de bodega estando la farmacia surtida — y
+     * bodega no dispensa a paciente, traslada. El orden lo pone
+     * `estantesDe()`.
+     *
+     * El LOTE lo sigue eligiendo el motor por FEFO: acá solo se decide de
+     * qué estante se saca.
      */
     private function almacenConExistencia(Item $item, Decimal $cantidad): ?Almacen
     {
-        $consultor = app(ConsultorDeExistencias::class);
-
-        /** @var Collection<int, Almacen> $almacenes */
-        $almacenes = AlmacenesDelUsuario::elegibles()->get();
-
-        foreach ($almacenes as $almacen) {
-            if (! $consultor->totalEn($item, $almacen)->menorQue($cantidad)) {
-                return $almacen;
+        foreach ($this->estantesDe($item) as $estante) {
+            if (! $estante['hay']->menorQue($cantidad)) {
+                return $estante['almacen'];
             }
         }
 
         return null;
+    }
+
+    /**
+     * Los estantes del usuario con cuánto hay de este ítem en cada uno,
+     * ordenados por cuál conviene tocar primero.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * UNA SOLA CONSULTA PARA TODOS LOS ALMACENES
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Preguntar «cuánto hay» almacén por almacén es una consulta por
+     * estante, y esto se evalúa en cada pintada del modal —o sea, con
+     * cada tecla del buscador—. Se suma agrupado por `almacen_id` de una
+     * vez, que es el mismo número con una consulta.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * EL ORDEN, Y POR QUÉ ES ESE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     *   1. Primero los que TIENEN algo. Un estante en cero no es una
+     *      opción, es un error esperando.
+     *   2. Después los que DISPENSAN a paciente. Bodega guarda y
+     *      traslada; despachar de bodega salta el paso que deja
+     *      constancia de que la mercadería bajó.
+     *   3. Y entre iguales, el que más tiene: vaciar el estante chico
+     *      primero deja a la farmacia sin nada para el siguiente.
+     *
+     * @return Collection<int, array{almacen: Almacen, hay: Decimal}>
+     */
+    private function estantesDe(Item $item): Collection
+    {
+        $saldos = Existencia::query()
+            ->where('item_id', $item->id)
+            ->selectRaw('almacen_id, sum(cantidad) as total')
+            ->groupBy('almacen_id')
+            ->pluck('total', 'almacen_id');
+
+        /** @var Collection<int, Almacen> $almacenes */
+        $almacenes = AlmacenesDelUsuario::elegibles()->vigentes()->orderBy('nombre')->get();
+
+        return $almacenes
+            ->map(fn (Almacen $almacen): array => [
+                'almacen' => $almacen,
+                'hay'     => self::comoDecimal($saldos[$almacen->id] ?? null),
+            ])
+            ->sort(function (array $uno, array $otro): int {
+                $tiene = ($otro['hay']->esCero() ? 0 : 1) <=> ($uno['hay']->esCero() ? 0 : 1);
+
+                if ($tiene !== 0) {
+                    return $tiene;
+                }
+
+                $dispensa = ($otro['almacen']->tipo->dispensaAPaciente() ? 1 : 0)
+                    <=> ($uno['almacen']->tipo->dispensaAPaciente() ? 1 : 0);
+
+                return $dispensa !== 0 ? $dispensa : $otro['hay']->comparar($uno['hay']);
+            })
+            ->values();
+    }
+
+    /**
+     * Las opciones del desplegable, cada una diciendo cuánto hay.
+     *
+     * @return array<int, string>
+     */
+    private function estantesConLoQueHay(?Item $item): array
+    {
+        if (! $item instanceof Item) {
+            return [];
+        }
+
+        return $this->estantesDe($item)
+            ->mapWithKeys(fn (array $estante): array => [
+                $estante['almacen']->id => $estante['hay']->esCero()
+                    ? $estante['almacen']->nombre.' — vacío'
+                    : $estante['almacen']->nombre.' — hay '.$estante['hay']->redondeado(2),
+            ])
+            ->all();
+    }
+
+    /**
+     * Deja el estante sugerido puesto en el formulario.
+     *
+     * Se llama desde los TRES caminos por los que queda elegido un
+     * producto —la pistola, la gaveta de un principio activo con un solo
+     * producto, y la búsqueda por nombre con un solo resultado—, porque
+     * el `afterStateUpdated` del selector NO corre cuando el valor se
+     * pone con `$set()` desde el código. Sin esto, escanear cargaba el
+     * producto y dejaba «¿de dónde sale?» en blanco, que es justo el
+     * campo que se quería ahorrar.
+     */
+    private function marcarElEstante(?Item $item, Set $set): void
+    {
+        $set('almacen_id', $this->estanteSugerido($item)?->id);
+    }
+
+    /**
+     * El estante que viene marcado solo. Nulo cuando no hay ninguno con
+     * existencia: ahí es mejor que el campo quede vacío y obligue a
+     * elegir que preseleccionar un estante donde no hay nada.
+     */
+    private function estanteSugerido(?Item $item): ?Almacen
+    {
+        if (! $item instanceof Item || ! $item->mueveInventario()) {
+            return null;
+        }
+
+        $primero = $this->estantesDe($item)->first();
+
+        return $primero !== null && ! $primero['hay']->esCero() ? $primero['almacen'] : null;
+    }
+
+    /**
+     * `sum()` devuelve lo que le da el driver —int, float o string— y
+     * ninguna de las tres se le puede pasar directo a `Decimal`, que
+     * rechaza el punto flotante a propósito (§8.6.2).
+     */
+    private static function comoDecimal(mixed $suma): Decimal
+    {
+        if (is_string($suma) && $suma !== '') {
+            return Decimal::de($suma);
+        }
+
+        if (is_int($suma)) {
+            return Decimal::de((string) $suma);
+        }
+
+        if (is_float($suma)) {
+            return Decimal::de(number_format($suma, 4, '.', ''));
+        }
+
+        return Decimal::cero();
     }
 
     public function cancelarQuitar(): void
@@ -3552,6 +3716,7 @@ class CuentasAbiertas extends Page
         $this->busquedaEscrita = null;
 
         $set('item_id', $item->id);
+        $this->marcarElEstante($item, $set);
 
         /*
          * ⚠️ La cantidad queda en UNO, no en el contenido de la caja.
@@ -3634,6 +3799,7 @@ class CuentasAbiertas extends Page
          */
         if (count($productos) === 1) {
             $set('item_id', array_key_first($productos));
+            $this->marcarElEstante($this->itemDe(array_key_first($productos)), $set);
 
             Notification::make()
                 ->success()
@@ -3770,6 +3936,7 @@ class CuentasAbiertas extends Page
 
             $set('item_id', $primero->id);
             $set('cantidad', 1);
+            $this->marcarElEstante($primero, $set);
 
             Notification::make()
                 ->success()

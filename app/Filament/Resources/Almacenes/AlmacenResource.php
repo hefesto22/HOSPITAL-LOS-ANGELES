@@ -36,7 +36,7 @@ class AlmacenResource extends Resource
      */
     protected static ?string $slug = 'almacenes';
 
-    protected static ?int $navigationSort = 30;
+    protected static ?int $navigationSort = 6;
 
     public static function getNavigationLabel(): string
     {
@@ -58,9 +58,17 @@ class AlmacenResource extends Resource
         return 'almacenes';
     }
 
+    /**
+     * Vive en Inventario y no en Configuración desde que el hospital
+     * separó farmacia de bodega: crear «CARRITO ROJO 1» dejó de ser algo
+     * que se hace una vez al instalar y pasó a ser algo que hace bodega
+     * cuando compran un carro. Enterrarlo en Configuración es cómo el
+     * carrito termina cargándose a la bodega porque nadie encontró dónde
+     * crearlo.
+     */
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return 'Inventario';
     }
 
     /**

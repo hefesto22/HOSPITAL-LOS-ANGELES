@@ -111,7 +111,11 @@ final class AlmacenForm
                     ->all())
                 ->required()
                 ->native(false)
-                ->helperText('La bodega central no dispensa a paciente: traslada.'),
+                ->helperText(
+                    'FARMACIA DE VENTA es de donde se le entrega al paciente. BODEGA CENTRAL '
+                    .'guarda y traslada, no dispensa. STOCK DEL SERVICIO es un carro de paro o '
+                    .'un carrito de piso — «CARRITO ROJO 1» va acá, con su servicio abajo.'
+                ),
 
             Select::make('servicio_id')
                 ->label('Servicio dueño')
@@ -123,7 +127,8 @@ final class AlmacenForm
                 ->helperText(
                     'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de '
                     .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
-                    .'paro de emergencia o el stock de piso de hospitalización.'
+                    .'paro de emergencia, el carrito de piso de hospitalización. Es lo que '
+                    .'después contesta «¿de quién es este carrito?» sin preguntarle a nadie.'
                 ),
         ];
     }

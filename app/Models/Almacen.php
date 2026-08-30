@@ -10,6 +10,7 @@ use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\AlmacenFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -103,5 +104,45 @@ class Almacen extends Model
     public function etiqueta(): string
     {
         return "{$this->codigo} — {$this->nombre}";
+    }
+
+    /**
+     * ¿Este estante todavía recibe y entrega?
+     *
+     * Un almacén se cierra poniéndole fecha de fin, no borrándolo: el
+     * kardex es append-only y sus movimientos tienen que seguir siendo
+     * consultables. Cerrado significa que ya no entra ni sale nada nuevo,
+     * no que nunca existió.
+     */
+    public function estaVigente(?CarbonInterface $fecha = null): bool
+    {
+        $fecha ??= now();
+
+        if ($this->vigencia_desde !== null && $this->vigencia_desde->startOfDay()->greaterThan($fecha)) {
+            return false;
+        }
+
+        return $this->vigencia_hasta === null
+            || $this->vigencia_hasta->endOfDay()->greaterThanOrEqualTo($fecha);
+    }
+
+    /**
+     * Solo los estantes que hoy se pueden usar.
+     *
+     * @param Builder<Almacen> $consulta
+     *
+     * @return Builder<Almacen>
+     */
+    public function scopeVigentes(Builder $consulta, ?CarbonInterface $fecha = null): Builder
+    {
+        $fecha ??= now();
+
+        return $consulta
+            ->where(fn (Builder $sub): Builder => $sub
+                ->whereNull($consulta->qualifyColumn('vigencia_desde'))
+                ->orWhereDate($consulta->qualifyColumn('vigencia_desde'), '<=', $fecha->toDateString()))
+            ->where(fn (Builder $sub): Builder => $sub
+                ->whereNull($consulta->qualifyColumn('vigencia_hasta'))
+                ->orWhereDate($consulta->qualifyColumn('vigencia_hasta'), '>=', $fecha->toDateString()));
     }
 }
