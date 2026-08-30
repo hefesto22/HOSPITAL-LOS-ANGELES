@@ -25,6 +25,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -571,6 +572,29 @@ class Existencias extends Page implements HasTable
                      * error se vea antes de apretar.
                      */
                     ->maxValue(fn (): string => self::topeParaMover($record))
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * «MOVER TODO» NO ES UN ATAJO, ES LO QUE EVITA UN
+                     * SALDO IMPOSIBLE
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Vaciar un renglón es de las cosas que más se hacen:
+                     * devolver lo que se bajó de más, sacar el lote que
+                     * vence, mudar un estante entero. Y cuando el saldo
+                     * no es un número redondo de envases —5 ML de un
+                     * frasco de 60 son 0.0833 FRASCO— teclearlo a mano es
+                     * pedir un error de dedo que deja un resto pegado al
+                     * estante equivocado.
+                     *
+                     * El botón pone el tope exacto, que es el número que
+                     * el servicio interpreta como «todo».
+                     */
+                    ->hintAction(
+                        Action::make('mover_todo')
+                            ->label('Mover todo')
+                            ->icon(Heroicon::OutlinedArrowsRightLeft)
+                            ->action(fn (Set $set) => $set('cantidad', self::topeParaMover($record))),
+                    )
                     ->helperText(fn (Get $get): string => self::cuantoQuedaEnEsteLote(
                         $record,
                         $get('cantidad'),
