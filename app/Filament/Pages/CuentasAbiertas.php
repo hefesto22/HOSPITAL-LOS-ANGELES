@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\FormaDePago;
+use App\Domain\Enums\MagnitudDeMedida;
 use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RangoEdad;
@@ -238,6 +239,13 @@ class CuentasAbiertas extends Page
      * @var array<int, Collection<int, array{almacen: Almacen, hay: Decimal}>>
      */
     private array $estantesPorItem = [];
+
+    /**
+     * Memoria por pintada de las presentaciones de cada ítem.
+     *
+     * @var array<int, ColeccionDeModelos<int, ItemPresentacion>>
+     */
+    private array $presentacionesPorItem = [];
 
     /**
      * La línea cuya ✕ está esperando que le escriban el porqué.
@@ -759,7 +767,7 @@ class CuentasAbiertas extends Page
                              * línea de una ronda de veinte.
                              */
                             ->afterStateUpdated(function (mixed $state, Set $set): void {
-                                $set('almacen_id', $this->estanteSugerido($this->itemDe($state))?->id);
+                                $this->prepararLaLinea($this->itemDe($state), $set);
                             }),
 
                         /*
@@ -773,6 +781,12 @@ class CuentasAbiertas extends Page
                             ->label('Se cobra por')
                             ->native(false)
                             ->live()
+                            /*
+                             * El default estático solo sirve para el
+                             * primer render; en cuanto cambia el ítem lo
+                             * repone `prepararLaLinea()`, que sí sabe si
+                             * ese producto se fracciona.
+                             */
                             ->default(self::POR_UNIDAD)
                             ->selectablePlaceholder(false)
                             ->columnSpan(3)
@@ -850,13 +864,13 @@ class CuentasAbiertas extends Page
                             ->label('¿De dónde sale?')
                             ->native(false)
                             ->columnSpan(3)
-                            ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id'))))
+                            ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
-                            ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id'))) === []
+                            ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null) === []
                                 ? 'No hay en ningún almacén'
                                 : 'Elegí el estante')
-                            ->helperText(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id'))) === []
+                            ->helperText(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null) === []
                                 ? '🔴 No hay existencia de este producto en ningún almacén. Hay que recibirlo o trasladarlo antes de cobrarlo.'
                                 : 'Solo los que tienen. Sale por FEFO: primero el lote que vence antes.'),
 
@@ -1056,9 +1070,22 @@ class CuentasAbiertas extends Page
          * la unidad del kardex: si la conversión viviera repartida, una
          * caja terminaría descontando una tableta.
          */
-        $unidadDeCobro = is_string($data['unidad_cobro'] ?? null)
+        $unidadDeCobro = is_string($data['unidad_cobro'] ?? null) && $data['unidad_cobro'] !== ''
             ? $data['unidad_cobro']
-            : self::POR_UNIDAD;
+            : $this->unidadDeCobroPorDefecto($item);
+
+        /*
+         * ⚠️ Y si lo que llegó NO está entre las formas de cobrar este
+         * ítem, se repone la que corresponde. No es pisar una decisión:
+         * una unidad fuera de la lista nadie la pudo elegir mirando —
+         * viene de un valor pegado del ítem anterior o del Enter de la
+         * pistola, que manda el formulario antes de que el selector se
+         * actualice—. Dejarla pasar cobraría un jarabe entero por
+         * mililitro.
+         */
+        if (! isset($this->unidadesDeCobro($item)[$unidadDeCobro])) {
+            $unidadDeCobro = $this->unidadDeCobroPorDefecto($item);
+        }
 
         $cantidad = $this->aUnidadesDeDispensacion($item, $unidadDeCobro, $tecleada);
 
@@ -1631,13 +1658,11 @@ class CuentasAbiertas extends Page
      *
      * @return array<int, string>
      */
-    private function estantesConLoQueHay(?Item $item): array
+    private function estantesConLoQueHay(?Item $item, ?string $unidadDeCobro = null): array
     {
         if (! $item instanceof Item) {
             return [];
         }
-
-        $unidad = $item->unidadDispensacion?->codigo;
 
         return $this->estantesDe($item)
             /*
@@ -1656,14 +1681,66 @@ class CuentasAbiertas extends Page
             ->reject(fn (array $estante): bool => $estante['hay']->esCero())
             ->mapWithKeys(fn (array $estante): array => [
                 $estante['almacen']->id => $estante['almacen']->nombre
-                    .' · '.$estante['hay']->redondeado(2)
-                    .($unidad === null ? '' : ' '.$unidad),
+                    .' · '.$this->existenciaComoSeCobra($item, $estante['hay'], $unidadDeCobro),
             ])
             ->all();
     }
 
     /**
-     * Deja el estante sugerido puesto en el formulario.
+     * Cuánto hay, dicho en la unidad en la que se está cobrando.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 «2300 ML» NO ES UNA RESPUESTA ÚTIL SI SE COBRA POR FRASCO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Quien está por cobrar dos frascos necesita saber si hay dos
+     * frascos. Mostrarle 2300 mililitros lo obliga a dividir de cabeza
+     * —entre 60, entre 80 o entre 120 según el envase— con el paciente
+     * enfrente, y esa división mal hecha es una promesa de entrega que el
+     * estante no puede cumplir.
+     *
+     * El kardex sigue en mililitros. Esto es solamente cómo se LEE.
+     */
+    private function existenciaComoSeCobra(Item $item, Decimal $hay, ?string $unidadDeCobro): string
+    {
+        $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
+
+        if ($presentacion instanceof ItemPresentacion) {
+            $contenido = $presentacion->unidades_por_presentacion;
+
+            if (is_numeric($contenido) && ! Decimal::de($contenido)->esCero()) {
+                $envase = $presentacion->unidad?->codigo ?? 'envases';
+
+                return ItemPresentacion::sinCerosDeMas($hay->entre($contenido)->redondeado(2))
+                    .' '.$envase;
+            }
+        }
+
+        $unidad = $item->unidadDispensacion?->codigo;
+
+        return $hay->redondeado(2).($unidad === null ? '' : ' '.$unidad);
+    }
+
+    /**
+     * La presentación detrás de una clave del selector, o nulo cuando lo
+     * elegido no es un envase —la unidad suelta, la fracción—.
+     */
+    private function presentacionDeLaUnidad(Item $item, ?string $unidad): ?ItemPresentacion
+    {
+        if ($unidad === null || ! str_starts_with($unidad, self::POR_PRESENTACION)) {
+            return null;
+        }
+
+        $id = (int) mb_substr($unidad, mb_strlen(self::POR_PRESENTACION));
+
+        $presentacion = $this->presentacionesDe($item)->firstWhere('id', $id);
+
+        return $presentacion instanceof ItemPresentacion ? $presentacion : null;
+    }
+
+    /**
+     * Deja listo lo que se puede deducir del producto elegido: de qué
+     * estante sale y en qué unidad se cobra.
      *
      * Se llama desde los TRES caminos por los que queda elegido un
      * producto —la pistola, la gaveta de un principio activo con un solo
@@ -1673,9 +1750,19 @@ class CuentasAbiertas extends Page
      * producto y dejaba «¿de dónde sale?» en blanco, que es justo el
      * campo que se quería ahorrar.
      */
-    private function marcarElEstante(?Item $item, Set $set): void
+    private function prepararLaLinea(?Item $item, Set $set): void
     {
         $set('almacen_id', $this->estanteSugerido($item)?->id);
+
+        /*
+         * 🔴 Y la unidad de cobro. Sin esto, un jarabe no fraccionable
+         * quedaba con «dispensacion» pegado del ítem anterior — un valor
+         * que ya no está entre sus opciones—, y el desplegable se veía
+         * vacío justo después de escanear.
+         */
+        if ($item instanceof Item) {
+            $set('unidad_cobro', $this->unidadDeCobroPorDefecto($item));
+        }
     }
 
     /**
@@ -3447,9 +3534,34 @@ class CuentasAbiertas extends Page
 
         $unidad = $this->unidadDe($item);
 
-        $opciones = [
-            self::POR_UNIDAD => $unidad ?? 'Unidad',
-        ];
+        $opciones = [];
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 LO QUE NO SE FRACCIONA NO SE COBRA POR MILILITRO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Un jarabe que el hospital NO fracciona se entrega en frascos
+         * cerrados. Si la receta pide 20 ml cada 6 horas por 3 días —240
+         * ml—, lo que se le cobra son DOS frascos de 120, no «240 ml»:
+         * el hospital entregó dos frascos y ya no puede vender lo que
+         * sobre.
+         *
+         * Ofrecer el mililitro ahí no es una comodidad, es una fuga: se
+         * cobran 240 ml y salen del estante 240 de un frasco de 120 que
+         * queda abierto, sin dueño y sin cobrar. Al mes son varios
+         * frascos que nadie pagó.
+         *
+         * Los que SÍ se fraccionan —contados, y marcados como tales en el
+         * catálogo— conservan el mililitro, que es justamente su gracia.
+         *
+         * La condición mira la MAGNITUD y no una lista de productos: una
+         * unidad de conteo —TABLETA, AMPOLLA— se entrega suelta por
+         * naturaleza y nunca pierde esta opción.
+         */
+        if ($this->seEntregaSuelta($item)) {
+            $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
+        }
 
         /*
          * La fracción primero entre las «menores»: un frasco que se
@@ -3467,7 +3579,78 @@ class CuentasAbiertas extends Page
                 .' '.($unidad ?? 'unidades');
         }
 
+        /*
+         * ⚠️ NUNCA VACÍO. Un ítem de volumen que todavía no tiene su
+         * presentación cargada se quedaría sin ninguna forma de cobrarse
+         * —el mostrador vería un desplegable en blanco y el paciente
+         * esperando—. Ahí vuelve el mililitro: cobrar en la unidad del
+         * kardex es peor que la regla, pero es infinitamente mejor que no
+         * poder cobrar. El hueco se arregla cargando la presentación.
+         */
+        if ($opciones === []) {
+            $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
+        }
+
         return $opciones;
+    }
+
+    /**
+     * ¿Este producto se entrega suelto, sin envase?
+     *
+     * Una TABLETA o una AMPOLLA sí: son unidades de conteo, se sacan del
+     * blíster y se entregan. Un jarabe medido en ML no, salvo que el
+     * hospital lo fraccione —y eso es una decisión declarada en el
+     * catálogo, no algo que se deduzca del producto—.
+     *
+     * Sin presentaciones cargadas también devuelve true: no hay envase
+     * que ofrecer, así que la unidad suelta es lo único que hay.
+     */
+    private function seEntregaSuelta(Item $item): bool
+    {
+        if ($item->fraccionable) {
+            return true;
+        }
+
+        $magnitud = $item->unidadDispensacion?->magnitud;
+
+        if ($magnitud === null || $magnitud === MagnitudDeMedida::Conteo) {
+            return true;
+        }
+
+        return $this->presentacionesDe($item)->isEmpty();
+    }
+
+    /**
+     * Con qué unidad viene marcado el selector al elegir el producto.
+     *
+     * El envase habitual primero —el que el hospital marcó como
+     * predeterminado—, después el más chico, y recién al final la unidad
+     * suelta. Es el orden en que se despacha: quien pide un jarabe se
+     * lleva un frasco, no una lista de mililitros.
+     */
+    private function unidadDeCobroPorDefecto(Item $item): string
+    {
+        $opciones = $this->unidadesDeCobro($item);
+
+        if ($opciones === []) {
+            return self::POR_UNIDAD;
+        }
+
+        if (isset($opciones[self::POR_UNIDAD]) && $this->seEntregaSuelta($item)) {
+            return self::POR_UNIDAD;
+        }
+
+        $habitual = $this->presentacionesDe($item)
+            ->sortByDesc('es_predeterminada')
+            ->first();
+
+        $clave = $habitual instanceof ItemPresentacion
+            ? self::POR_PRESENTACION.$habitual->id
+            : null;
+
+        return $clave !== null && isset($opciones[$clave])
+            ? $clave
+            : (string) array_key_first($opciones);
     }
 
     /**
@@ -3477,7 +3660,20 @@ class CuentasAbiertas extends Page
      */
     private function presentacionesDe(Item $item): ColeccionDeModelos
     {
-        return ItemPresentacion::query()
+        /*
+         * 🔴 Memoria por pintada, por la misma razón que los estantes.
+         * Desde que la unidad de cobro depende del envase, esto se
+         * pregunta seis veces por render —las opciones del selector, si
+         * el producto se entrega suelto, cuál viene marcado, y la
+         * conversión de cada estante—. Sin la memoria son seis consultas
+         * por tecla en el buscador.
+         */
+        if (isset($this->presentacionesPorItem[$item->id])) {
+            return $this->presentacionesPorItem[$item->id];
+        }
+
+        return $this->presentacionesPorItem[$item->id] = ItemPresentacion::query()
+            ->with('unidad:id,codigo,nombre')
             ->where('item_id', $item->id)
             ->orderBy('unidades_por_presentacion')
             ->get();
@@ -3776,7 +3972,7 @@ class CuentasAbiertas extends Page
         $this->busquedaEscrita = null;
 
         $set('item_id', $item->id);
-        $this->marcarElEstante($item, $set);
+        $this->prepararLaLinea($item, $set);
 
         /*
          * ⚠️ La cantidad queda en UNO, no en el contenido de la caja.
@@ -3859,7 +4055,7 @@ class CuentasAbiertas extends Page
          */
         if (count($productos) === 1) {
             $set('item_id', array_key_first($productos));
-            $this->marcarElEstante($this->itemDe(array_key_first($productos)), $set);
+            $this->prepararLaLinea($this->itemDe(array_key_first($productos)), $set);
 
             Notification::make()
                 ->success()
@@ -3996,7 +4192,7 @@ class CuentasAbiertas extends Page
 
             $set('item_id', $primero->id);
             $set('cantidad', 1);
-            $this->marcarElEstante($primero, $set);
+            $this->prepararLaLinea($primero, $set);
 
             Notification::make()
                 ->success()
