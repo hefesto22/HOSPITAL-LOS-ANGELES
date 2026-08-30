@@ -262,6 +262,14 @@ class CuentasAbiertas extends Page
     private array $presentacionesPorItem = [];
 
     /**
+     * Memoria por pintada del precio que el tarifario propone para cada
+     * honorario, en la cuenta que está abierta.
+     *
+     * @var array<int, string|null>
+     */
+    private array $precioPropuestoPorItem = [];
+
+    /**
      * La línea cuya ✕ está esperando que le escriban el porqué.
      *
      * Nula casi siempre: solo se llena cuando la línea es de otro turno o
@@ -930,7 +938,24 @@ class CuentasAbiertas extends Page
                             ->prefix('L')
                             ->columnSpan(3)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
-                            ->helperText('Propuesto del tarifario. Cambialo si este médico cobra otra cosa.'),
+                            /*
+                             * 🔴 El texto distingue los dos casos, porque
+                             * un campo vacío se lee igual en los dos y no
+                             * lo son: o el tarifario propuso un número, o
+                             * este honorario no tiene precio de lista
+                             * —que es normal en los que cambian con cada
+                             * médico— y hay que escribirlo sí o sí.
+                             *
+                             * Sin decirlo, quien cobra ve el campo en
+                             * blanco y concluye que el sistema falló.
+                             */
+                            ->helperText(function (Get $get): string {
+                                $item = $this->itemDe($get('item_id'));
+
+                                return $this->precioPropuesto($item) === null
+                                    ? 'Este honorario no tiene precio en el tarifario: escribí cuánto se le cobra.'
+                                    : 'Propuesto del tarifario. Cambialo si este médico cobra otra cosa.';
+                            }),
 
                         TextInput::make('referencia_acordada')
                             ->label('¿De quién es el honorario?')
@@ -1037,6 +1062,13 @@ class CuentasAbiertas extends Page
                 $this->cuentaDelFormulario = $this->cuentaDe($arguments)?->id;
 
                 /*
+                 * Otra cuenta puede tener otro pagador, y con otro pagador
+                 * el mismo honorario vale otra cosa. La memoria del
+                 * formulario anterior no sirve acá.
+                 */
+                $this->precioPropuestoPorItem = [];
+
+                /*
                  * Cada línea arranca sin filtro. Corre al abrir el modal y
                  * también en cada remontaje —o sea después de cada ítem
                  * agregado—, que es justo lo que hace falta: la gaveta que
@@ -1045,9 +1077,24 @@ class CuentasAbiertas extends Page
                  */
                 $this->principioEscaneado = null;
 
+                $itemPuesto = is_numeric($arguments['item'] ?? null) ? (int) $arguments['item'] : null;
+
+                /*
+                 * ⚠️ El precio también se propone ACÁ y no solo en
+                 * `prepararLaLinea()`. Cuando el ítem llega puesto —desde
+                 * un atajo de la banda de arriba— nadie tocó el selector,
+                 * así que su `afterStateUpdated` nunca corre y el campo
+                 * se quedaba vacío justo en el camino más rápido.
+                 */
+                $honorario = $this->itemDe($itemPuesto);
+
                 return [
-                    'item_id'  => is_numeric($arguments['item'] ?? null) ? (int) $arguments['item'] : null,
-                    'cantidad' => 1,
+                    'item_id'             => $itemPuesto,
+                    'cantidad'            => 1,
+                    'precio_acordado'     => $this->esHonorario($honorario)
+                        ? $this->precioPropuesto($honorario)
+                        : null,
+                    'referencia_acordada' => null,
 
                     /*
                      * El default va acá también: `fillForm` pisa el estado
@@ -2011,23 +2058,45 @@ class CuentasAbiertas extends Page
      */
     private function precioPropuesto(?Item $item): ?string
     {
-        $cuenta = $this->cuentaDelFormulario === null
-            ? null
-            : Cuenta::query()->with(['convenio', 'sede'])->find($this->cuentaDelFormulario);
+        if (! $item instanceof Item || $this->cuentaDelFormulario === null) {
+            return null;
+        }
 
-        if (! $item instanceof Item || ! $cuenta instanceof Cuenta) {
+        /*
+         * Memoria por pintada. El precio se pregunta al proponerlo Y en
+         * cada evaluación del texto de ayuda, o sea con cada tecla del
+         * buscador — y resolverlo son dos consultas: la cuenta con su
+         * pagador, y el tarifario vigente. El §13.2 otra vez.
+         *
+         * `array_key_exists` y no `isset`: el valor legítimo es NULL
+         * cuando el honorario no tiene precio de lista, y con `isset` ese
+         * caso volvería a consultar cada vez — justo el que más se repite
+         * en los honorarios que cambian con cada médico.
+         */
+        if (array_key_exists($item->id, $this->precioPropuestoPorItem)) {
+            return $this->precioPropuestoPorItem[$item->id];
+        }
+
+        $cuenta = Cuenta::query()->with(['convenio', 'sede'])->find($this->cuentaDelFormulario);
+
+        if (! $cuenta instanceof Cuenta) {
             return null;
         }
 
         try {
-            return app(ResolutorDePrecio::class)->para(
+            return $this->precioPropuestoPorItem[$item->id] = app(ResolutorDePrecio::class)->para(
                 item: $item,
                 convenio: $cuenta->convenio,
                 fechaServicio: now(),
                 sede: $cuenta->sede,
             )->precio->redondeado(2);
         } catch (PrecioNoDefinidoException) {
-            return null;
+            /*
+             * Sin precio de lista NO es un error: hay honorarios que no
+             * tienen tarifa porque cambian con cada médico. El campo
+             * queda vacío y el texto de abajo lo explica.
+             */
+            return $this->precioPropuestoPorItem[$item->id] = null;
         }
     }
 
