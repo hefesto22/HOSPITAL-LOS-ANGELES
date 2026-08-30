@@ -15,6 +15,7 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 /**
@@ -103,6 +104,11 @@ final class AlmacenForm
         }
 
         return [
+            /*
+             * `live()` porque el campo de abajo cambia con esto: un stock
+             * de servicio SIN servicio dueño es un carrito del que nadie
+             * responde, y eso no se descubre hasta que falta algo adentro.
+             */
             Select::make('tipo')
                 ->label('Tipo')
                 ->options(fn (): array => collect(TipoAlmacen::cases())
@@ -111,6 +117,7 @@ final class AlmacenForm
                     ->all())
                 ->required()
                 ->native(false)
+                ->live()
                 ->helperText(
                     'FARMACIA DE VENTA es de donde se le entrega al paciente. BODEGA CENTRAL '
                     .'guarda y traslada, no dispensa. STOCK DEL SERVICIO es un carro de paro o '
@@ -122,8 +129,22 @@ final class AlmacenForm
                 ->relationship('servicio', 'nombre')
                 ->searchable()
                 ->preload()
-                ->placeholder('Ninguno — no cuelga de un área')
                 ->columnSpanFull()
+                /*
+                 * 🔴 OBLIGATORIO EN UN STOCK DE SERVICIO, y solo ahí.
+                 *
+                 * El tipo ya dice que es el estante de un área; sin el
+                 * área, la frase queda a medias. «CARRITO ROJO 1» sin
+                 * servicio es un almacén más en la lista, y cuando falte
+                 * una ampolla adentro no hay a quién preguntarle.
+                 *
+                 * Bodega central y farmacia de venta NO cuelgan de
+                 * ninguna área: ahí queda vacío y está bien.
+                 */
+                ->required(fn (Get $get): bool => $get('tipo') === TipoAlmacen::StockDeServicio->value)
+                ->placeholder(fn (Get $get): string => $get('tipo') === TipoAlmacen::StockDeServicio->value
+                    ? '¿De qué área es este carrito?'
+                    : 'Ninguno — no cuelga de un área')
                 ->helperText(
                     'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de '
                     .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
@@ -149,13 +170,22 @@ final class AlmacenForm
                         Toggle::make('maneja_controlados')
                             ->label('Este almacén maneja controlados')
                             /*
-                             * Si el hospital guarda todo en un solo almacén,
-                             * los controlados también están ahí. Viene
-                             * marcado por defecto y se puede desmarcar; lo
-                             * contrario es que el libro de ARSA arranque
-                             * apagado sin que nadie se entere.
+                             * 🔴 ENCENDIDO POR DEFECTO, SIEMPRE.
+                             *
+                             * Antes seguía a `modoUnico()`, y al partir los
+                             * estantes eso pasó a `false` sin que nadie lo
+                             * pidiera: el primer CARRITO ROJO habría nacido
+                             * con el libro de ARSA apagado — y el carro de
+                             * paro es justamente donde vive el fentanilo.
+                             *
+                             * El riesgo no es simétrico. Marcado de más son
+                             * anotaciones que sobran; marcado de menos es un
+                             * libro que nadie llevó, que es hallazgo de ARSA
+                             * y no se puede reconstruir hacia atrás. Se
+                             * desmarca a mano en el almacén que de verdad no
+                             * guarda controlados.
                              */
-                            ->default(self::modoUnico())
+                            ->default(true)
                             ->helperText(
                                 'Es propiedad del ALMACÉN, no del producto: el mismo medicamento '
                                 .'controlado puede estar bajo llave en un almacén y en anaquel en otro.'

@@ -13,11 +13,11 @@ use App\Models\Item;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use App\Models\Sede;
+use App\Models\User;
 use App\Services\CalculadoraDeCostoPromedio;
 use App\Services\ConsultorDeExistencias;
 use App\Services\RegistradorDeMovimiento;
 use App\Services\TrasladadorDeExistencias;
-use App\Models\User;
 use Database\Seeders\RoleSeeder;
 use Spatie\Permission\PermissionRegistrar;
 
