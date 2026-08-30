@@ -15,6 +15,7 @@ use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\Unidad;
 use App\Services\TrasladadorDeExistencias;
+use App\Support\AlmacenesDelUsuario;
 use App\Support\NumeroDeFormulario;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -460,13 +461,26 @@ class Existencias extends Page implements HasTable
             ->modalWidth('2xl')
             ->modalSubmitActionLabel('Mover')
             /*
-             * El mismo permiso que ajustar. Un traslado toca el kardex
-             * igual que un ajuste, aunque no cambie el total del
-             * hospital: quien puede corregir un saldo puede mover uno.
-             * Un permiso propio sería una fila más en la matriz para
-             * decir lo mismo.
+             * ─────────────────────────────────────────────────────────
+             * VER ES LIBRE; MOVER, SOLO DESDE TU ESTANTE
+             * ─────────────────────────────────────────────────────────
+             *
+             * La tabla muestra el inventario ENTERO a cualquiera que
+             * pueda entrar, y eso es a propósito: farmacia tiene que
+             * poder ver que bodega tiene cuarenta cajas para pedir la
+             * reposición. Esconderlo obligaría a preguntar por teléfono
+             * lo que el sistema ya sabe.
+             *
+             * El botón es otra cosa. Aparece solo en las filas del
+             * estante del que esa persona responde —el mismo mapa que
+             * gobierna conteos y ajustes—, así que farmacia ve el
+             * renglón de bodega pero no puede sacarle nada.
+             *
+             * El permiso de acción es el de ajustar: un traslado toca el
+             * kardex igual, aunque no cambie el total del hospital.
              */
-            ->visible(fn (): bool => Gate::allows('create', Ajuste::class))
+            ->visible(fn (Existencia $record): bool => Gate::allows('create', Ajuste::class)
+                && AlmacenesDelUsuario::puedeOperarEn($record->almacen))
             ->fillForm(fn (Existencia $record): array => [
                 'origen' => $record->almacen?->etiqueta() ?? '—',
             ])

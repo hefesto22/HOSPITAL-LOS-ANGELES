@@ -185,13 +185,30 @@ final class TrasladadorDeExistencias
         }
 
         /*
-         * Los dos lados, no solo el origen. Quien no puede tocar el
-         * carrito tampoco puede llenarlo: si no, el permiso se esquiva
-         * empujando mercadería adentro desde el estante que sí se puede
-         * tocar.
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 SE EXIGE EL ORIGEN, NO EL DESTINO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * La primera versión pedía permiso sobre los dos estantes, y eso
+         * dejaba sin poder hacer el traslado MÁS FRECUENTE del hospital:
+         * BODEGA → FARMACIA. Bodega tiene la bodega y los carritos;
+         * farmacia tiene la farmacia. Nadie tiene los dos, salvo
+         * dirección — así que la reposición de cada mañana habría quedado
+         * esperando a que alguien de dirección esté disponible, y eso
+         * termina en el atajo de siempre: alguien con el usuario de
+         * dirección abierto en una pestaña.
+         *
+         * El permiso protege contra el FALTANTE: que salga mercadería de
+         * un estante del que no se responde. Ese riesgo vive entero en el
+         * origen. Empujar mercadería a un estante ajeno no produce un
+         * faltante sino un sobrante, y queda asentado con nombre, hora y
+         * el estante del que salió — se ve en el primer conteo y se
+         * corrige con un traslado de vuelta.
+         *
+         * Contar y ajustar SÍ siguen exigiendo el estante propio: ahí no
+         * hay contraparte que deje rastro, el número simplemente cambia.
          */
         AlmacenesDelUsuario::exigirAcceso($origen);
-        AlmacenesDelUsuario::exigirAcceso($destino);
     }
 
     /**

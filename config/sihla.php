@@ -295,27 +295,45 @@ return [
          * Los valores son los del enum `TipoAlmacen`.
          */
         /*
-         * 🔴 VACÍO A PROPÓSITO: NADIE ESTÁ RESTRINGIDO TODAVÍA.
+         * ─────────────────────────────────────────────────────────────
+         * QUÉ RESTRINGE ESTE MAPA, Y QUÉ NO
+         * ─────────────────────────────────────────────────────────────
          *
-         * El mapa es lo que ENCIENDE la restricción — `AlmacenesDelUsuario`
-         * no filtra a quien no aparece acá—, así que un mapa vacío es
-         * «todos ven todos los estantes».
+         * Restringe CONTAR y AJUSTAR: cada quien responde por el estante
+         * que abre con su llave. Es el control de cuatro ojos del §5, y
+         * está probado en `PoliticasDeInventarioTest`.
          *
-         * Y es lo correcto hoy: separar farmacia de bodega es un cambio
-         * FÍSICO —dos lugares, dos llaves—, no un cambio de permisos. El
-         * hospital tiene un turno de noche de una persona que abre los
-         * dos. Encender el filtro el mismo día que se parten los estantes
-         * es cómo aparece «no puedo dispensar» a las dos de la mañana.
+         * 🔴 NO restringe VER. La pantalla de Existencias muestra el
+         * inventario entero a cualquiera que pueda entrar: farmacia tiene
+         * que poder ver que bodega tiene cuarenta cajas para pedir la
+         * reposición. Ver no descuadra nada; tocar sí.
          *
-         * Cuando el hospital quiera separar también el mando, se
-         * descomentan las dos líneas de abajo y queda andando: bodega
-         * cuenta y ajusta bodega y los carritos, farmacia la farmacia. No
-         * hay migración de por medio, porque el permiso se deriva del
-         * TIPO del almacén y el tipo ya está puesto.
+         * 🔴 NO restringe el DESTINO de un traslado, solo el origen.
+         * El traslado más frecuente del hospital es BODEGA → FARMACIA, y
+         * bodega no tiene la farmacia en su lista. Exigiendo los dos
+         * lados, ese traslado no lo podría hacer nadie más que dirección
+         * —y la reposición diaria quedaría esperando a que alguien de
+         * dirección esté disponible—. Se exige el ORIGEN, que es donde
+         * queda el faltante si algo sale mal; empujar mercadería a un
+         * estante ajeno no produce un faltante sino un sobrante, con
+         * nombre y hora en el kardex. Está en `TrasladadorDeExistencias`.
+         *
+         * Un rol que NO aparece acá no tiene restricción —dirección,
+         * auditoría—, y por eso siempre hay alguien que puede cerrar el
+         * conteo de cualquier almacén sin romper el control de cuatro
+         * ojos.
+         *
+         * ⚠️ `stock_de_servicio` es de BODEGA: los carritos y el carro de
+         * paro los repone quien baja la mercadería, no quien dispensa en
+         * el mostrador.
+         *
+         * Los valores son los del enum `TipoAlmacen`. `almacen_unico`
+         * sigue en las dos listas por el histórico: los almacenes que
+         * nacieron antes de partir los estantes conservan ese tipo.
          */
         'almacenes_por_rol' => [
-            // 'bodega'   => ['almacen_unico', 'bodega_central', 'stock_de_servicio'],
-            // 'farmacia' => ['almacen_unico', 'farmacia_venta', 'farmacia_interna'],
+            'bodega'   => ['almacen_unico', 'bodega_central', 'stock_de_servicio'],
+            'farmacia' => ['almacen_unico', 'farmacia_venta', 'farmacia_interna'],
         ],
     ],
 

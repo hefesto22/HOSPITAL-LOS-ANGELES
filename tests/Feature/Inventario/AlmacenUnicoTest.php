@@ -32,15 +32,28 @@ use Spatie\Permission\PermissionRegistrar;
  * error: como una lista vacía, que se lee igual que «todavía no hay
  * nada».
  *
- * Por eso el mapa hoy está VACÍO a propósito: separar los estantes fue un
- * cambio físico, no de permisos. Estas pruebas son las que avisan si
- * alguien lo llena a medias.
+ * Por eso `almacen_unico` sigue en las DOS listas: los almacenes que
+ * nacieron antes de partir los estantes conservan ese tipo, y sacarlo del
+ * mapa dejaría ciego al rol que todavía trabaja sobre ellos.
  */
 beforeEach(function (): void {
     app(PermissionRegistrar::class)->forgetCachedPermissions();
     test()->seed(RoleSeeder::class);
     app(PermissionRegistrar::class)->forgetCachedPermissions();
 });
+
+/**
+ * Un usuario activo con ese rol, ya refrescado para que Spatie vea sus
+ * permisos recién asignados.
+ */
+function conElRol(string $rol): User
+{
+    /** @var User $usuario */
+    $usuario = User::factory()->create(['is_active' => true]);
+    $usuario->assignRole($rol);
+
+    return $usuario->fresh() ?? $usuario;
+}
 
 it('el hospital ya no esta en modo almacen unico', function (): void {
     expect(AlmacenForm::modoUnico())->toBeFalse();
@@ -74,40 +87,27 @@ it('la bodega central guarda y traslada, no dispensa', function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('bodega y farmacia ven los dos estantes mientras el mapa este vacio', function (): void {
-    expect(config('sihla.inventario.almacenes_por_rol'))->toBe([]);
-
+it('cada rol responde por su propio estante', function (): void {
     $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
     $bodega = Almacen::factory()->de(TipoAlmacen::BodegaCentral)->create();
     $carrito = Almacen::factory()->de(TipoAlmacen::StockDeServicio)->create();
 
-    foreach (['bodega', 'farmacia'] as $rol) {
-        /** @var User $usuario */
-        $usuario = User::factory()->create(['is_active' => true]);
-        $usuario->assignRole($rol);
-        $usuario = $usuario->fresh() ?? $usuario;
-
-        foreach ([$farmacia, $bodega, $carrito] as $almacen) {
-            expect(AlmacenesDelUsuario::puedeOperarEn($almacen, $usuario))
-                ->toBeTrue("{$rol} se quedó sin {$almacen->nombre}");
-        }
-    }
-})->note('El turno de noche es una persona que abre los dos estantes. Encender el filtro el mismo día que se parten los almacenes es cómo aparece «no puedo dispensar» a las dos de la mañana.');
-
-it('cuando el hospital quiera separar el mando, el mapa alcanza', function (): void {
-    config()->set('sihla.inventario.almacenes_por_rol', [
-        'bodega'   => ['bodega_central', 'stock_de_servicio'],
-        'farmacia' => ['farmacia_venta', 'farmacia_interna'],
-    ]);
-
-    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
-    $bodega = Almacen::factory()->de(TipoAlmacen::BodegaCentral)->create();
-
-    /** @var User $deFarmacia */
-    $deFarmacia = User::factory()->create(['is_active' => true]);
-    $deFarmacia->assignRole('farmacia');
-    $deFarmacia = $deFarmacia->fresh() ?? $deFarmacia;
+    $deFarmacia = conElRol('farmacia');
+    $deBodega = conElRol('bodega');
 
     expect(AlmacenesDelUsuario::puedeOperarEn($farmacia, $deFarmacia))->toBeTrue()
-        ->and(AlmacenesDelUsuario::puedeOperarEn($bodega, $deFarmacia))->toBeFalse();
-})->note('La separación de mando no necesita migración ni código: el permiso se deriva del TIPO del almacén, y el tipo ya está puesto. Esta prueba es la que garantiza que el día que se encienda, funcione.');
+        ->and(AlmacenesDelUsuario::puedeOperarEn($bodega, $deFarmacia))->toBeFalse()
+        ->and(AlmacenesDelUsuario::puedeOperarEn($carrito, $deFarmacia))->toBeFalse()
+        ->and(AlmacenesDelUsuario::puedeOperarEn($bodega, $deBodega))->toBeTrue()
+        ->and(AlmacenesDelUsuario::puedeOperarEn($carrito, $deBodega))->toBeTrue()
+        ->and(AlmacenesDelUsuario::puedeOperarEn($farmacia, $deBodega))->toBeFalse();
+})->note('Contar y ajustar exigen el estante propio: ahí no hay contraparte que deje rastro, el número simplemente cambia. Los carritos son de bodega, que es quien baja la mercadería — no del mostrador que dispensa.');
+
+it('el almacen unico sigue estando en las dos listas', function (): void {
+    $viejo = Almacen::factory()->unico()->create();
+
+    foreach (['bodega', 'farmacia'] as $rol) {
+        expect(AlmacenesDelUsuario::puedeOperarEn($viejo, conElRol($rol)))
+            ->toBeTrue("{$rol} se quedó sin el almacén que existía antes de partir los estantes");
+    }
+})->note('🔴 Los almacenes que nacieron antes de dividir conservan el tipo `almacen_unico`. Sacarlo del mapa dejaría a un rol sin ver NADA — y no como error, sino como lista vacía, que se lee igual que «todavía no hay nada».');

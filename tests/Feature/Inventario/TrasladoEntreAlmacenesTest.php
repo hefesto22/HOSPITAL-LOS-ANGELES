@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Enums\TipoAlmacen;
 use App\Domain\Enums\TipoMovimiento;
+use App\Domain\Exceptions\AjusteException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
 use App\Domain\Exceptions\TrasladoException;
 use App\Domain\ValueObjects\Decimal;
@@ -16,6 +17,9 @@ use App\Services\CalculadoraDeCostoPromedio;
 use App\Services\ConsultorDeExistencias;
 use App\Services\RegistradorDeMovimiento;
 use App\Services\TrasladadorDeExistencias;
+use App\Models\User;
+use Database\Seeders\RoleSeeder;
+use Spatie\Permission\PermissionRegistrar;
 
 /*
 |--------------------------------------------------------------------------
@@ -259,3 +263,107 @@ it('la cantidad de un traslado tiene que ser positiva', function (): void {
         cantidad: Decimal::cero(),
     );
 })->throws(TrasladoException::class);
+
+/*
+|--------------------------------------------------------------------------
+| QUIÉN PUEDE MOVER QUÉ
+|--------------------------------------------------------------------------
+|
+| El permiso protege contra el FALTANTE: que salga mercadería de un
+| estante del que nadie responde. Ese riesgo vive entero en el ORIGEN, y
+| por eso es lo único que se exige.
+|
+| Pedir también el destino sonaba más estricto y era peor: BODEGA →
+| FARMACIA es el traslado de cada mañana, y nadie tiene los dos estantes
+| salvo dirección. La reposición habría quedado esperando a alguien de
+| dirección, y eso termina siempre igual — con el usuario de dirección
+| abierto en una pestaña.
+*/
+
+/**
+ * Un usuario activo con ese rol, autenticado, con los permisos frescos.
+ */
+function quienTraslada(string $rol): User
+{
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    test()->seed(RoleSeeder::class);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    /** @var User $usuario */
+    $usuario = User::factory()->create(['is_active' => true]);
+    $usuario->assignRole($rol);
+
+    return $usuario->fresh() ?? $usuario;
+}
+
+/**
+ * La farmacia de la misma sede que la bodega del escenario.
+ *
+ * @param array{bodega: Almacen, carrito: Almacen, item: Item, lote: Lote} $todo
+ */
+function laFarmaciaDeLaMismaSede(array $todo): Almacen
+{
+    return Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create([
+        'sede_id' => $todo['bodega']->sede_id,
+        'codigo'  => 'FARMACIA',
+        'nombre'  => 'FARMACIA',
+    ]);
+}
+
+it('bodega repone la farmacia aunque la farmacia no sea su estante', function (): void {
+    $todo = elEstanteYElCarrito();
+    llegaronABodega($todo, '10');
+
+    $farmacia = laFarmaciaDeLaMismaSede($todo);
+
+    test()->actingAs(quienTraslada('bodega'));
+
+    trasladador()->trasladar(
+        item: $todo['item'],
+        lote: $todo['lote'],
+        origen: $todo['bodega'],
+        destino: $farmacia,
+        cantidad: Decimal::de('4'),
+    );
+
+    $saldos = app(ConsultorDeExistencias::class);
+
+    expect($saldos->totalEn($todo['item'], $farmacia)->redondeado(0))->toBe('4')
+        ->and($saldos->totalEn($todo['item'], $todo['bodega'])->redondeado(0))->toBe('6');
+})->note('🔴 Es la prueba que impide volver a exigir permiso sobre el destino: bodega no tiene la farmacia en su lista, y este es el traslado que se hace todas las mañanas.');
+
+it('bodega baja mercaderia a un carrito', function (): void {
+    $todo = elEstanteYElCarrito();
+    llegaronABodega($todo, '10');
+
+    test()->actingAs(quienTraslada('bodega'));
+
+    trasladador()->trasladar(
+        item: $todo['item'],
+        lote: $todo['lote'],
+        origen: $todo['bodega'],
+        destino: $todo['carrito'],
+        cantidad: Decimal::de('1'),
+    );
+
+    expect(app(ConsultorDeExistencias::class)->totalEn($todo['item'], $todo['carrito'])->redondeado(0))
+        ->toBe('1');
+})->note('Los carritos son de bodega: el carro de paro lo repone quien baja la mercadería, no el mostrador que dispensa.');
+
+it('farmacia no puede sacar de la bodega', function (): void {
+    $todo = elEstanteYElCarrito();
+    llegaronABodega($todo, '10');
+
+    $farmacia = laFarmaciaDeLaMismaSede($todo);
+
+    test()->actingAs(quienTraslada('farmacia'));
+
+    trasladador()->trasladar(
+        item: $todo['item'],
+        lote: $todo['lote'],
+        origen: $todo['bodega'],
+        destino: $farmacia,
+        cantidad: Decimal::de('1'),
+    );
+})->throws(AjusteException::class)
+    ->note('El origen sí se exige: sacar de un estante ajeno deja un faltante del que nadie responde. Farmacia pide la reposición; bodega la baja.');
