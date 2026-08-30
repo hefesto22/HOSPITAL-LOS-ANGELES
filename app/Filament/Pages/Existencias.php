@@ -269,20 +269,35 @@ class Existencias extends Page implements HasTable
     private function consulta(): Builder
     {
         return Existencia::query()
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SIN ENUMERAR COLUMNAS. TRES VECES BASTÓ.
+             * ─────────────────────────────────────────────────────────
+             *
+             * Esta pantalla cargaba solo las columnas que usaba, y esa
+             * micro-optimización rompió la pantalla TRES veces en un día,
+             * siempre igual: alguien —yo— suma un dato al renglón, la
+             * columna que ese dato necesita no está en la lista, y
+             * Eloquent devuelve NULO sin decir nada.
+             *
+             *   · `item` sin `unidad_dispensacion_id` → la cantidad se
+             *     quedaba sin unidad.
+             *   · `item` sin `nombre` → `trim(null)`, TypeError, pantalla
+             *     en blanco al abrir «Mover».
+             *   · `almacen` sin `sede_id` → `where('sede_id', null)`, y
+             *     el desplegable de destino decía «No hay opciones
+             *     disponibles» teniendo dos almacenes al lado.
+             *
+             * El último es el peor de los tres porque NO parece un error:
+             * parece que el hospital no tiene a dónde mover.
+             *
+             * Son veinticinco filas por página. Lo que se ahorraba no
+             * pagaba ni el primero de los tres.
+             */
             ->with([
-                /*
-                 * ⚠️ Las columnas van enumeradas Y con sus llaves foráneas
-                 * adentro. `item:id,codigo,nombre` sin
-                 * `unidad_dispensacion_id` deja la relación anidada
-                 * cargando SIEMPRE nulo — sin error, solo una columna en
-                 * blanco que parece falta de datos.
-                 */
-                'item:id,codigo,nombre,es_controlado,unidad_dispensacion_id',
-                'item.unidadDispensacion:id,codigo,nombre',
-                'lote:id,numero,fecha_vencimiento,item_presentacion_id',
-                'lote.presentacion:id,nombre,unidades_por_presentacion,unidad_id',
-                'lote.presentacion.unidad:id,codigo',
-                'almacen:id,codigo,nombre,tipo',
+                'item.unidadDispensacion',
+                'lote.presentacion.unidad',
+                'almacen',
             ])
             ->conSaldo();
     }
@@ -643,9 +658,23 @@ class Existencias extends Page implements HasTable
             return [];
         }
 
+        /*
+         * ⚠️ Se relee la sede si no vino. Es el cinturón por si alguna
+         * consulta futura vuelve a cargar el almacén con columnas
+         * enumeradas: sin esto, un `sede_id` nulo filtra a CERO y la
+         * pantalla dice «no hay a dónde mover» en vez de fallar.
+         */
+        $sedeId = $origen->sede_id ?? Almacen::query()
+            ->whereKey($origen->id)
+            ->value('sede_id');
+
+        if ($sedeId === null) {
+            return [];
+        }
+
         return Almacen::query()
             ->vigentes()
-            ->where('sede_id', $origen->sede_id)
+            ->where('sede_id', $sedeId)
             ->whereKeyNot($origen->id)
             ->orderBy('nombre')
             ->get()
