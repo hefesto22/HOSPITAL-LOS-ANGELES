@@ -11,7 +11,9 @@ use App\Models\Ajuste;
 use App\Models\Almacen;
 use App\Models\Existencia;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Lote;
+use App\Models\Unidad;
 use App\Services\TrasladadorDeExistencias;
 use App\Support\NumeroDeFormulario;
 use BackedEnum;
@@ -34,6 +36,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 
 /**
  * Qué hay, dónde está, y el botón para moverlo.
@@ -155,7 +158,13 @@ class Existencias extends Page implements HasTable
 
         $elegido = $this->almacenFiltrado();
 
-        return Almacen::query()
+        /*
+         * ⚠️ `array_values()` aunque la colección ya venga en orden:
+         * `Collection::all()` devuelve `array<int, …>`, que NO es lo
+         * mismo que una `list` —puede tener huecos en las claves— y el
+         * analizador no lo da por sentado. Sin esto no compila a nivel 7.
+         */
+        return array_values(Almacen::query()
             ->whereIn('id', $renglones->keys())
             ->orderBy('nombre')
             ->get()
@@ -167,8 +176,7 @@ class Existencias extends Page implements HasTable
                 'porVencer' => (int) ($porVencer[$almacen->id] ?? 0),
                 'activo'    => $elegido === $almacen->id,
             ])
-            ->values()
-            ->all();
+            ->all());
     }
 
     /**
@@ -261,8 +269,17 @@ class Existencias extends Page implements HasTable
     {
         return Existencia::query()
             ->with([
-                'item:id,codigo,nombre,es_controlado',
-                'lote:id,numero,fecha_vencimiento',
+                /*
+                 * ⚠️ Las columnas van enumeradas Y con sus llaves foráneas
+                 * adentro. `item:id,codigo,nombre` sin
+                 * `unidad_dispensacion_id` deja la relación anidada
+                 * cargando SIEMPRE nulo — sin error, solo una columna en
+                 * blanco que parece falta de datos.
+                 */
+                'item:id,codigo,nombre,es_controlado,unidad_dispensacion_id',
+                'item.unidadDispensacion:id,codigo,nombre',
+                'lote:id,numero,fecha_vencimiento,item_presentacion_id',
+                'lote.presentacion:id,nombre,unidades_por_presentacion',
                 'almacen:id,codigo,nombre,tipo',
             ])
             ->conSaldo();
@@ -282,12 +299,27 @@ class Existencias extends Page implements HasTable
              * una tabla con huecos entre columnas cortas. `grow(false)` en
              * todo lo demás es lo que la deja apretada y legible.
              */
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL ENVASE VA EN EL RENGLÓN, NO SOLO EL PRODUCTO
+             * ─────────────────────────────────────────────────────────
+             *
+             * El jarabe de acetaminofén se compra en frasco de 60, de 80
+             * y de 120 ML, y cada envase lleva su propio lote. Con solo
+             * el nombre del producto, las tres filas se leen idénticas
+             * —mismo nombre, mismo código, hasta el mismo número de
+             * lote— y lo único distinto es la cantidad. Ahí alguien mueve
+             * el frasco que no era, y el error recién aparece en el
+             * conteo.
+             *
+             * Por eso la segunda línea es «CÓDIGO · FRASCO X 120 ML».
+             */
             TextColumn::make('item.nombre')
                 ->label('Producto')
                 ->searchable()
                 ->sortable()
                 ->weight('medium')
-                ->description(fn (Existencia $record): ?string => $record->item?->codigo),
+                ->description(fn (Existencia $record): string => self::comoSeEnvasa($record)),
 
             TextColumn::make('almacen.nombre')
                 ->label('Dónde está')
@@ -300,6 +332,7 @@ class Existencias extends Page implements HasTable
             TextColumn::make('lote.numero')
                 ->label('Lote')
                 ->grow(false)
+                ->searchable()
                 ->fontFamily(FontFamily::Mono)
                 ->placeholder('Sin lote'),
 
@@ -318,12 +351,20 @@ class Existencias extends Page implements HasTable
                 ->color(fn (Existencia $record): string => self::colorDelVencimiento($record))
                 ->description(fn (Existencia $record): ?string => self::cuantoLeQueda($record)),
 
+            /*
+             * 🔴 «1200» a secas no dice nada: pueden ser 1.200 mililitros
+             * o 1.200 frascos, y son dos hechos con dos dígitos de
+             * diferencia. Va la unidad de dispensación al lado del
+             * número, y debajo la traducción a envases —«= 10 FRASCO»—,
+             * que es como lo cuenta quien está frente al estante.
+             */
             TextColumn::make('cantidad')
                 ->label('Cantidad')
                 ->grow(false)
                 ->alignEnd()
                 ->weight('bold')
-                ->formatStateUsing(fn (Existencia $record): string => $record->cantidadDecimal()->redondeado(2)),
+                ->formatStateUsing(fn (Existencia $record): string => self::cuantoHay($record))
+                ->description(fn (Existencia $record): ?string => self::enCuantosEnvases($record)),
         ];
     }
 
@@ -409,6 +450,13 @@ class Existencias extends Page implements HasTable
             ->outlined()
             ->color('primary')
             ->modalHeading('Mover a otro almacén')
+            /*
+             * 🔴 El encabezado nombra el RENGLÓN, no la acción. Con tres
+             * frascos del mismo jarabe en la tabla, «Mover a otro
+             * almacén» a secas no confirma cuál se apretó — y el modal
+             * tapa justo la fila que lo diría.
+             */
+            ->modalDescription(fn (Existencia $record): string => self::comoSeLlamaEsteRenglon($record))
             ->modalWidth('2xl')
             ->modalSubmitActionLabel('Mover')
             /*
@@ -458,10 +506,7 @@ class Existencias extends Page implements HasTable
                      * error se vea antes de apretar.
                      */
                     ->maxValue(fn (): string => $record->cantidadDecimal()->redondeado(4))
-                    ->helperText(
-                        'Hay '.$record->cantidadDecimal()->redondeado(2).' en este lote. '
-                        .'Lo que se mueve sigue siendo del hospital: no es una baja.'
-                    ),
+                    ->helperText(self::cuantoQuedaEnEsteLote($record)),
 
                 Textarea::make('motivo')
                     ->label('Nota (opcional)')
@@ -546,6 +591,9 @@ class Existencias extends Page implements HasTable
             ->title('Movido')
             ->body(
                 $cantidad->redondeado(2).' de '.$item->nombre
+                .(self::nombreDelEnvase($existencia) === null
+                    ? ''
+                    : ' ('.self::nombreDelEnvase($existencia).')')
                 .' pasaron de '.$origen->nombre.' a '.$destino->nombre.'.'
             )
             ->success()
@@ -590,45 +638,167 @@ class Existencias extends Page implements HasTable
      */
     private static function dondeMasHay(Existencia $existencia): string
     {
-        /** @var Collection<int, Existencia> $otras */
+        /**
+         * ⚠️ NO se suma por almacén.
+         *
+         * El mismo jarabe vive en tres envases distintos —60, 80 y 120
+         * ML— y todos miden en mililitros. Sumarlos porque están en el
+         * mismo estante daría «2600 ML en ALMACEN-1», un número que no
+         * corresponde a ningún frasco que alguien pueda agarrar. Cada
+         * renglón se lista como es: cuánto, dónde y en qué envase.
+         *
+         * @var Collection<int, Existencia> $otras
+         */
         $otras = Existencia::query()
-            ->with('almacen:id,nombre')
+            ->with([
+                'almacen:id,nombre',
+                'item:id,unidad_dispensacion_id',
+                'item.unidadDispensacion:id,codigo,nombre',
+                'lote:id,item_presentacion_id',
+                'lote.presentacion:id,nombre,unidades_por_presentacion',
+            ])
             ->where('item_id', $existencia->item_id)
             ->whereKeyNot($existencia->id)
             ->conSaldo()
+            ->orderByDesc('cantidad')
+            ->limit(6)
             ->get();
 
         if ($otras->isEmpty()) {
             return 'Es lo único que hay de este producto en todo el hospital.';
         }
 
-        /*
-         * A mano y no con `reduce()`: sumar `Decimal` dentro de un
-         * `reduce` obliga a un acumulador que puede ser nulo en la
-         * primera vuelta, y el tipo se vuelve más difícil de leer que el
-         * bucle que lo reemplaza.
-         *
-         * @var array<int, array{nombre: string, total: Decimal}> $porEstante
-         */
-        $porEstante = [];
+        $donde = $otras
+            ->map(static function (Existencia $fila): string {
+                $envase = self::nombreDelEnvase($fila);
 
-        foreach ($otras as $fila) {
-            $id = $fila->almacen_id;
-
-            $porEstante[$id] ??= [
-                'nombre' => $fila->almacen?->nombre ?? '—',
-                'total'  => Decimal::cero(),
-            ];
-
-            $porEstante[$id]['total'] = $porEstante[$id]['total']->sumar($fila->cantidadDecimal());
-        }
-
-        $donde = implode(' · ', array_map(
-            static fn (array $estante): string => $estante['total']->redondeado(2).' en '.$estante['nombre'],
-            array_values($porEstante),
-        ));
+                return self::cuantoHay($fila).' en '.$fila->almacen->nombre
+                    .($envase === null ? '' : ' ('.$envase.')');
+            })
+            ->implode(' · ');
 
         return 'Además: '.$donde.'.';
+    }
+
+    /**
+     * «ACETAMINOFEN JARABE · FRASCO X 120 ML · lote L0TE-1».
+     *
+     * Es la frase que confirma qué se está por mover, con las tres cosas
+     * que distinguen un renglón de otro cuando el producto se repite.
+     */
+    private static function comoSeLlamaEsteRenglon(Existencia $existencia): string
+    {
+        $partes = array_filter([
+            $existencia->item->nombre,
+            self::nombreDelEnvase($existencia),
+            $existencia->lote === null ? null : 'lote '.$existencia->lote->numero,
+        ]);
+
+        return implode(' · ', $partes).' — hay '.self::cuantoHay($existencia).'.';
+    }
+
+    // ── Cómo se lee cada renglón ──────────────────────────────────────
+
+    /**
+     * La segunda línea del producto: «MED-705 · FRASCO X 120 ML».
+     *
+     * ⚠️ `Str::after($nombre, ' / ')` porque el nombre guardado de una
+     * presentación es «PRODUCTO / FRASCO X 120 ML»: repetir el producto
+     * debajo del producto ocupa el ancho sin agregar nada, y justamente
+     * lo que hace falta distinguir es la mitad de atrás.
+     */
+    private static function comoSeEnvasa(Existencia $existencia): string
+    {
+        $codigo = $existencia->item->codigo;
+        $envase = self::nombreDelEnvase($existencia);
+
+        return $envase === null ? $codigo : $codigo.' · '.$envase;
+    }
+
+    /**
+     * «1200.00 ML». Sin la unidad, el número no significa nada.
+     */
+    private static function cuantoHay(Existencia $existencia): string
+    {
+        $cantidad = $existencia->cantidadDecimal()->redondeado(2);
+        $unidad = $existencia->item->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $cantidad.' '.$unidad->codigo : $cantidad;
+    }
+
+    /**
+     * «= 10 FRASCO», o nada cuando el lote no tiene envase declarado.
+     *
+     * Es una LECTURA, nunca un número para escribir en el kardex: ahí
+     * entran unidades de dispensación y solo eso. Convertir para mostrar
+     * y convertir para guardar son dos cosas distintas, y confundirlas es
+     * cómo se cobra una caja entera por dos tabletas.
+     */
+    private static function enCuantosEnvases(Existencia $existencia): ?string
+    {
+        $presentacion = $existencia->lote?->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion) {
+            return null;
+        }
+
+        $contenido = $presentacion->unidades_por_presentacion;
+
+        /*
+         * La columna es NUMERIC(14,4) con CHECK de mayor que cero, así
+         * que en la práctica siempre alcanza. La guarda existe porque
+         * dividir entre cero acá tumbaría la tabla entera por un dato
+         * mal cargado en una sola presentación.
+         */
+        if (! is_numeric($contenido) || Decimal::de($contenido)->esCero()) {
+            return null;
+        }
+
+        $envases = $existencia->cantidadDecimal()->entre($contenido);
+        $envase = self::nombreDelEnvase($existencia);
+
+        if ($envase === null) {
+            return null;
+        }
+
+        return '= '.ItemPresentacion::sinCerosDeMas($envases->redondeado(2))
+            .' '.Str::before($envase, ' X ');
+    }
+
+    /**
+     * El texto de ayuda del campo de cantidad.
+     *
+     * 🔴 Dice explícitamente que se teclea en unidades de dispensación y
+     * no en envases. Con «hay 1200.00 ML (= 10 FRASCO)» a la vista, la
+     * tentación es escribir «2» queriendo decir dos frascos, y eso
+     * movería 2 mililitros. El kardex no sabe de envases — esa es toda la
+     * razón por la que las presentaciones existen aparte.
+     */
+    private static function cuantoQuedaEnEsteLote(Existencia $existencia): string
+    {
+        $envases = self::enCuantosEnvases($existencia);
+        $unidad = $existencia->item->unidadDispensacion;
+
+        return 'Hay '.self::cuantoHay($existencia).' en este lote'
+            .($envases === null ? '. ' : ' ('.$envases.'). ')
+            .'Se escribe en '.($unidad instanceof Unidad ? $unidad->nombre : 'unidades de dispensación')
+            .', no en envases. Lo que se mueve sigue siendo del hospital: no es una baja.';
+    }
+
+    /**
+     * «FRASCO X 120 ML» — la mitad del nombre que dice cómo viene
+     * envasado. Nulo cuando el lote entró a granel o el ítem no maneja
+     * presentaciones.
+     */
+    private static function nombreDelEnvase(Existencia $existencia): ?string
+    {
+        $presentacion = $existencia->lote?->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion) {
+            return null;
+        }
+
+        return Str::after($presentacion->nombre, ' / ');
     }
 
     // ── Presentación del vencimiento ──────────────────────────────────

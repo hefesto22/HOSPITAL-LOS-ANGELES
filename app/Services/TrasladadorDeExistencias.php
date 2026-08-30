@@ -74,9 +74,9 @@ final class TrasladadorDeExistencias
     /**
      * @param Decimal $cantidad siempre POSITIVA: el sentido lo dan origen y destino
      *
-     * @throws TrasladoException
-     *
      * @return array{salida: MovimientoKardex, entrada: MovimientoKardex}
+     *
+     * @throws TrasladoException
      */
     public function trasladar(
         Item $item,
