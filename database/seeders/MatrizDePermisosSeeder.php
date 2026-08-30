@@ -364,15 +364,41 @@ class MatrizDePermisosSeeder extends Seeder
          * ordenar (§9.I16): cobrar al ordenar factura estudios cancelados
          * y muestras rechazadas.
          */
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * LABORATORIO RECIBE AL PACIENTE QUE LLEGA SOLO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El caso es el de todos los días: alguien llega con una orden
+         * médica de otro lado, o pide un examen de rutina. No pasa por
+         * admisión ni ve a un médico del hospital — va directo al
+         * laboratorio, le sacan la muestra y pasa a caja a pagar.
+         *
+         * Para eso laboratorio necesita poder REGISTRAR al paciente,
+         * ABRIR la cuenta y CARGAR el examen. Sin eso, cada paciente
+         * ambulatorio obliga a interrumpir a admisión, y a las siete de
+         * la mañana admisión todavía no llegó.
+         *
+         * 🔴 PERO SOLO EXÁMENES DE LABORATORIO. El permiso de `Cargo`
+         * dice que puede cargar; QUÉ puede cargar lo decide
+         * `CatalogoDelRol`, porque un permiso de Shield es por MODELO y
+         * acá el límite es por TIPO de ítem — el mismo `Cargo` que sirve
+         * para un hemograma sirve para una cirugía.
+         *
+         * No lleva `Update:Cuenta` ni `Update:Encuentro`: abre lo suyo y
+         * ahí termina. Cerrar, corregir y liquidar es de caja.
+         */
         'laboratorio' => [
-            'Persona'       => ['ViewAny', 'View'],
-            'Item'          => ['ViewAny', 'View'],
-            'CategoriaItem' => ['ViewAny', 'View'],
-            'Producto'      => ['ViewAny', 'View'],
-            'Unidad'        => ['ViewAny', 'View'],
-            'Encuentro'     => ['ViewAny', 'View'],
-            'Cuenta'        => ['ViewAny', 'View'],
-            'Cargo'         => ['ViewAny', 'View', 'Create'],
+            'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
+            'FusionDePersona' => ['ViewAny', 'View'],
+            'Item'            => ['ViewAny', 'View'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View'],
+            'Unidad'          => ['ViewAny', 'View'],
+            'Convenio'        => ['ViewAny', 'View'],
+            'Encuentro'       => ['ViewAny', 'View', 'Create'],
+            'Cuenta'          => ['ViewAny', 'View', 'Create'],
+            'Cargo'           => ['ViewAny', 'View', 'Create'],
         ],
 
         'imagenes' => [

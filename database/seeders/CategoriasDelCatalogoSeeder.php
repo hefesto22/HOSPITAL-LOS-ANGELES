@@ -89,6 +89,32 @@ class CategoriasDelCatalogoSeeder extends Seeder
         ['EQP', 'EQUIPO MEDICO', AmbitoCatalogo::Servicios, 30, 'EQP-'],
         ['RX', 'RAYOS X', AmbitoCatalogo::Servicios, 40, 'RX-'],
         ['LAB', 'LABORATORIO', AmbitoCatalogo::Servicios, 50, 'LAB-'],
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EL LABORATORIO DE AFUERA ES OTRA HOJA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Hay exámenes que el hospital no hace: se toma la muestra acá y
+         * se manda a otro laboratorio. Al paciente se le cobra igual, pero
+         * no son lo mismo y no pueden vivir en la misma lista:
+         *
+         *   · El de adentro tiene el precio del hospital y nada más.
+         *   · El de afuera tiene ADEMÁS lo que cobra el otro laboratorio,
+         *     y la diferencia entre los dos números es lo único que gana
+         *     el hospital por intermediar. Mezclados, ese margen no se
+         *     puede leer.
+         *
+         * Y para quien atiende también son dos cosas: el de adentro sale
+         * hoy, el de afuera hay que esperarlo. Decirlo mal en el mostrador
+         * es una promesa que el laboratorio no puede cumplir.
+         *
+         * ⚠️ El prefijo es `LABEXT-` y no choca con `LAB-`: un código
+         * «LABEXT-001» no empieza con «LAB-» porque el guion cae en otro
+         * lugar. Si algún día se acorta a `LABE-`, hay que revisar
+         * `clasificarPorPrefijo()` antes.
+         */
+        ['LABEXT', 'LABORATORIO EXTERNO', AmbitoCatalogo::Servicios, 55, 'LABEXT-'],
         ['SRV', 'OTROS SERVICIOS', AmbitoCatalogo::Servicios, 90, null],
 
         // ── Lo que se GUARDA ──────────────────────────────────────────

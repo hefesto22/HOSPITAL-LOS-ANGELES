@@ -53,6 +53,7 @@ use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
 use App\Support\AlmacenesDelUsuario;
+use App\Support\CatalogoDelRol;
 use App\Support\NormalizadorDeTexto;
 use App\Support\NumeroDeFormulario;
 use App\Support\UsuarioAutenticado;
@@ -1056,6 +1057,32 @@ class CuentasAbiertas extends Page
         $this->estantesPorItem = [];
 
         $item = $this->itemDe($data['item_id'] ?? null);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL GUARDIÁN ESTÁ ACÁ, NO EN EL SELECTOR
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El selector ya filtra por área, pero esto es un método público
+         * de Livewire: el id del ítem llega del cliente y se puede armar
+         * a mano. Una regla que solo vive en la pantalla no es una regla,
+         * y lo que limita qué se le puede cobrar a un paciente tiene que
+         * estar donde se escribe.
+         */
+        if ($item instanceof Item) {
+            try {
+                CatalogoDelRol::exigirQuePuedaCargar($item);
+            } catch (CargoException $e) {
+                Notification::make()
+                    ->danger()
+                    ->title('Eso no se carga desde tu área')
+                    ->body($e->getMessage())
+                    ->persistent()
+                    ->send();
+
+                return;
+            }
+        }
 
         /*
          * Respaldo del Enter de la pistola: si el selector quedó vacío
@@ -3917,19 +3944,29 @@ class CuentasAbiertas extends Page
          * pantalla donde cobrarlo cuesta un solo clic.
          */
         if ($ids->isEmpty()) {
-            return Item::query()
+            $consulta = Item::query()
                 ->whereHas('precios', fn ($precios) => $precios->whereNull('convenio_id'))
-                ->vigentesEn(now())
-                ->orderBy('nombre')
-                ->limit(8)
-                ->get();
+                ->vigentesEn(now());
+
+            CatalogoDelRol::filtrar($consulta);
+
+            return $consulta->orderBy('nombre')->limit(8)->get();
         }
 
-        return Item::query()
+        $consulta = Item::query()
             ->whereIn('id', $ids)
-            ->vigentesEn(now())
-            ->orderBy('nombre')
-            ->get();
+            ->vigentesEn(now());
+
+        /*
+         * 🔴 Y también por área. Los atajos salen de lo que MÁS se cargó
+         * en la sede, o sea de lo que carga caja: medicamentos, estancias,
+         * consultas. Sin este filtro, el laboratorista abría la cuenta y
+         * la banda de arriba le ofrecía ocho botones de un solo clic para
+         * cobrar exactamente lo que no le corresponde.
+         */
+        CatalogoDelRol::filtrar($consulta);
+
+        return $consulta->orderBy('nombre')->get();
     }
 
     /**
@@ -3951,6 +3988,22 @@ class CuentasAbiertas extends Page
         }
 
         abort_unless(Gate::allows('update', $laCuenta), 403);
+
+        /*
+         * El botón puede no existir en la pantalla y este método sigue
+         * siendo invocable desde el cliente: la verificación de área va
+         * acá, igual que la de permisos.
+         */
+        if (! CatalogoDelRol::puedeCargar($elItem)) {
+            Notification::make()
+                ->danger()
+                ->title('Eso no se carga desde tu área')
+                ->body(CargoException::noEsDeSuArea($elItem->nombre, $elItem->tipo->etiqueta())->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
 
         /*
          * Lo que mueve inventario NO se carga de un clic: hay que decir de
@@ -4266,7 +4319,7 @@ class CuentasAbiertas extends Page
     {
         $termino = trim($texto);
 
-        $encontrados = Item::buscar($termino, soloVigentes: true)
+        $encontrados = Item::buscar($termino, soloVigentes: true, soloDelRol: true)
             ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12));
 
         if ($encontrados->isEmpty()) {
@@ -4341,7 +4394,7 @@ class CuentasAbiertas extends Page
             return [];
         }
 
-        return Item::buscar($this->busquedaEscrita, soloVigentes: true)
+        return Item::buscar($this->busquedaEscrita, soloVigentes: true, soloDelRol: true)
             ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
             ->mapWithKeys(fn (Item $item): array => [(int) $item->getKey() => $item->etiqueta()])
             ->all();
@@ -4435,7 +4488,7 @@ class CuentasAbiertas extends Page
     private function resultadosDeBusqueda(string $search): array
     {
         if ($this->principioEscaneado === null) {
-            return Item::buscar($search, soloVigentes: true)
+            return Item::buscar($search, soloVigentes: true, soloDelRol: true)
                 ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
                 ->mapWithKeys(fn (Item $item): array => [(int) $item->getKey() => $item->etiqueta()])
                 ->all();

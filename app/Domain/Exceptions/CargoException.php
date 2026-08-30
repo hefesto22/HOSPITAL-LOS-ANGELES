@@ -144,6 +144,23 @@ final class CargoException extends SihlaException
         );
     }
 
+    /**
+     * Quien carga tiene permiso para cargar, pero no para cargar ESTO.
+     *
+     * El caso es el del laboratorio: registra al paciente ambulatorio y
+     * le carga sus exámenes, pero el catálogo entero está a un clic y
+     * una noche de hospitalización cargada desde ahí no la corrige
+     * nadie — se descubre en la factura, con el paciente ya en la puerta.
+     */
+    public static function noEsDeSuArea(string $item, string $tipo): self
+    {
+        return new self(
+            "«{$item}» es {$tipo}, y desde tu área solo se cargan las tuyas. Si de verdad hay que "
+            .'agregarlo a esta cuenta, lo hace caja o admisión — que es quien responde por lo que '
+            .'se le cobra al paciente.'
+        );
+    }
+
     public static function necesitaAlmacen(string $item): self
     {
         return new self(

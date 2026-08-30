@@ -9,7 +9,9 @@ use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
+use App\Domain\ValueObjects\Monto;
 use App\Models\Concerns\GuardaEnMayusculas;
+use App\Support\CatalogoDelRol;
 use App\Support\NormalizadorDeTexto;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
@@ -43,6 +45,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int|null $categoria_id
  * @property AmbitoCatalogo|null $categoria_ambito
  * @property RegimenIsv $regimen_isv
+ * @property string|null $costo_referencia
  * @property PoliticaCargo $politica_cargo
  * @property CategoriaLegalDeDescuento $categoria_legal_descuento
  * @property int|null $unidad_dispensacion_id
@@ -87,6 +90,7 @@ class Item extends Model
         'factura_envase_entero',
         'categoria_id',
         'regimen_isv',
+        'costo_referencia',
         'politica_cargo',
         'categoria_legal_descuento',
         'unidad_dispensacion_id',
@@ -275,6 +279,33 @@ class Item extends Model
                 ? null
                 : AmbitoCatalogo::deSeAlmacena((bool) $item->se_almacena);
         });
+    }
+
+    /**
+     * ¿Este servicio lo presta alguien de afuera?
+     *
+     * Se deriva del costo de referencia y no de una bandera aparte: si
+     * hay un tercero cobrando, hay un número; si no lo hay, no. Dos
+     * campos para decir lo mismo terminan contradiciéndose el día que
+     * alguien llena uno y se olvida del otro.
+     */
+    public function loPrestaUnTercero(): bool
+    {
+        return $this->costo_referencia !== null;
+    }
+
+    /**
+     * Lo que le queda al hospital por cada uno de estos, contra un precio
+     * dado. Nulo cuando el servicio se hace adentro: ahí no hay
+     * intermediación que medir, todo el precio es del hospital.
+     */
+    public function margenSobreElTercero(Monto $precio): ?Monto
+    {
+        if ($this->costo_referencia === null) {
+            return null;
+        }
+
+        return $precio->restar(Monto::de($this->costo_referencia));
     }
 
     /**
@@ -518,10 +549,30 @@ class Item extends Model
         string $termino,
         int $limite = 20,
         bool $soloVigentes = false,
+        bool $soloDelRol = false,
     ): EloquentCollection {
         $clave = NormalizadorDeTexto::clave($termino);
 
         $consulta = static::query()->buscar($termino);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL LÍMITE VA EN LA CONSULTA, NO DESPUÉS
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Filtrar la colección ya traída sería más simple y estaría mal:
+         * el `limit` corta ANTES, así que una búsqueda amplia traería
+         * veinte ítems de todo el catálogo y dejaría los tres de
+         * laboratorio que hubiera entre ellos. El laboratorista vería una
+         * lista casi vacía y concluiría que su examen no existe.
+         *
+         * ⚠️ Apagado por defecto, igual que `soloVigentes`: conteo
+         * físico, ajustes y reportes buscan en el catálogo entero. Esto
+         * es solo para las pantallas donde se le COBRA algo a alguien.
+         */
+        if ($soloDelRol) {
+            CatalogoDelRol::filtrar($consulta);
+        }
 
         /*
          * ─────────────────────────────────────────────────────────────

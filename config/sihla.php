@@ -247,6 +247,32 @@ return [
          * no pasa nada — por eso la clínica siguiente puede renombrar sus
          * categorías sin que esto reviente.
          */
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * QUÉ PARTE DEL CATÁLOGO PUEDE CARGAR CADA ROL
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `Create:Cargo` contesta «¿puede cargar?». Esto contesta «¿puede
+         * cargar QUÉ?», que un permiso de Shield no puede: los permisos
+         * son por MODELO, y el mismo `Cargo` sirve para un hemograma y
+         * para una cesárea.
+         *
+         * Laboratorio registra al paciente que llega solo con una orden,
+         * le abre la cuenta y le carga los exámenes. Sin este mapa
+         * también podría cargarle una noche de hospitalización — no por
+         * maldad, sino porque el selector se la ofrece.
+         *
+         * Un rol que NO aparece acá no tiene restricción: caja, admisión,
+         * enfermería y dirección cargan cualquier cosa, que es lo que
+         * tienen que poder hacer.
+         *
+         * Los valores son los del enum `TipoItem`.
+         */
+        'cargos_por_rol' => [
+            'laboratorio' => ['estudio_laboratorio'],
+            'imagenes'    => ['estudio_imagen'],
+        ],
+
         'categoria_por_tipo' => [
             'medicamento'         => 'MED',
             'insumo'              => 'MTC',

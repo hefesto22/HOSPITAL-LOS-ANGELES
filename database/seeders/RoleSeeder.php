@@ -39,7 +39,7 @@ class RoleSeeder extends Seeder
         'medico'      => 'Médico tratante: nota clínica, diagnóstico, órdenes, prescripción, informe. NO ve costos ni expedientes sin relación de atención.',
         'enfermeria'  => 'Enfermería: signos vitales, administración de medicamentos, notas, censo. NO prescribe ni factura.',
         'farmacia'    => 'Regente y auxiliares: dispensa, recibe, controla lotes, libro de controlados, reporte ARSA. NO prescribe.',
-        'laboratorio' => 'Químico / técnico: recibe muestra, procesa, valida resultado, notifica valor crítico. NO modifica la orden médica ni ve costos.',
+        'laboratorio' => 'Químico / técnico: registra al paciente ambulatorio, le abre cuenta y le carga SOLO exámenes de laboratorio; recibe muestra, procesa y valida resultado. NO cobra, no cierra cuentas y no puede cargar nada que no sea laboratorio.',
         'imagenes'    => 'Técnico radiólogo / radiólogo: ejecuta estudio, informa, adjunta enlace PACS. NO factura ni edita la orden.',
         'bodega'      => 'Almacén central: entradas, traslados, conteos, ajustes con motivo. NO vende, no dispensa a paciente, no ve expediente.',
         'auditoria'   => 'Auditoría médica y de privacidad: lee bitácoras, revisa break-the-glass, audita glosas. NO escribe en expediente ni factura.',

@@ -498,6 +498,47 @@ final class ItemForm
 
                 /*
                  * ─────────────────────────────────────────────────────
+                 * 🔴 LO QUE COBRA EL DE AFUERA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Hay exámenes que el hospital no hace: toma la muestra y
+                 * la manda. Al paciente se le cobra el precio del
+                 * hospital, pero de ese precio la mayor parte se va al
+                 * otro laboratorio.
+                 *
+                 * Sin este número, el reporte de laboratorio suma lo que
+                 * se hace adentro —donde todo queda— con lo que se manda
+                 * afuera —donde queda la diferencia—, y dirección lee una
+                 * utilidad que no existe.
+                 *
+                 * Va vacío en todo lo que se hace adentro. Vacío
+                 * significa «no aplica»; cero significa «me lo hacen
+                 * gratis», que pasa de verdad en algunos convenios y no
+                 * es lo mismo.
+                 */
+                Section::make('Servicio prestado por un tercero')
+                    ->icon('heroicon-o-building-storefront')
+                    ->description(
+                        'Solo para lo que el hospital NO hace y manda afuera: laboratorio externo, '
+                        .'imagen referida. Lo que se le cobra al paciente sigue siendo el precio de '
+                        .'la lista; esto es lo que hay que pagarle al que lo hace.'
+                    )
+                    ->schema([
+                        TextInput::make('costo_referencia')
+                            ->label('Lo que cobra el tercero')
+                            ->numeric()
+                            ->minValue(0)
+                            ->step('0.0001')
+                            ->prefix('L')
+                            ->placeholder('Vacío — este servicio se hace en el hospital')
+                            ->helperText(
+                                'Dejalo vacío si el examen se hace acá. La diferencia contra el '
+                                .'precio de lista es lo único que gana el hospital por intermediar.'
+                            ),
+                    ]),
+
+                /*
+                 * ─────────────────────────────────────────────────────
                  * LOS DESCUENTOS CON NOMBRE, QUE SE ELIGEN
                  * ─────────────────────────────────────────────────────
                  *
