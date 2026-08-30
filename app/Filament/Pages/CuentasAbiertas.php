@@ -734,7 +734,16 @@ class CuentasAbiertas extends Page
                              */
                             ->options(fn (): array => $this->opcionesDelSelector())
                             ->getSearchResultsUsing(fn (string $search): array => $this->resultadosDeBusqueda($search))
-                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->itemDe($value)?->etiqueta())
+                            /*
+                             * ⚠️ Solo el NOMBRE en el valor elegido, aunque
+                             * las opciones de la búsqueda sí lleven código:
+                             * «MED-705 — ACETAMINOFEN JARABE» no entra en
+                             * una columna de cuatro y se partía en dos
+                             * renglones, dejando este campo más alto que
+                             * los otros tres. El código ya está escrito
+                             * completo en el encabezado de arriba.
+                             */
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->itemDe($value)?->nombre)
                             /*
                              * 🔴 Un filtro que no se ve es una lista corta
                              * que nadie entiende por qué está corta —y de
@@ -869,11 +878,34 @@ class CuentasAbiertas extends Page
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
                             ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null) === []
                                 ? 'No hay en ningún almacén'
-                                : 'Elegí el estante')
-                            ->helperText(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null) === []
-                                ? '🔴 No hay existencia de este producto en ningún almacén. Hay que recibirlo o trasladarlo antes de cobrarlo.'
-                                : 'Sale por FEFO: primero el que vence.'),
+                                : 'Elegí el estante'),
 
+                        /*
+                         * ─────────────────────────────────────────────
+                         * UNA SOLA LÍNEA DE CONTEXTO, A LO ANCHO
+                         * ─────────────────────────────────────────────
+                         *
+                         * Antes cada campo llevaba su propio texto de
+                         * ayuda y ninguno medía lo mismo: los cuatro
+                         * cuadros empezaban parejos y terminaban a cuatro
+                         * alturas distintas, con las frases colgando en
+                         * escalera. Eso es lo que se ve torcido — no el
+                         * largo de cada frase, sino que sean cuatro.
+                         *
+                         * Acá abajo, a ancho completo, hay UNA. Los cuatro
+                         * campos quedan del mismo alto y lo que hay que
+                         * leer antes de apretar Agregar está junto.
+                         *
+                         * 🔴 Y dice lo mismo que antes: «1» escrito en una
+                         * caja de cien tabletas y «1» escrito en una
+                         * tableta son el mismo carácter y son L 900 de
+                         * diferencia.
+                         */
+                        Placeholder::make('como_queda')
+                            ->hiddenLabel()
+                            ->columnSpanFull()
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
+                            ->content(fn (Get $get): HtmlString => $this->comoQuedaLaLinea($get)),
                     ]),
             ])
             ->action(function (array $data, array $arguments): void {
@@ -1716,14 +1748,29 @@ class CuentasAbiertas extends Page
                  * El `?->` no protegía de nada y obligaba a inventar un
                  * «envases» que no puede ocurrir.
                  */
-                return ItemPresentacion::sinCerosDeMas($hay->entre($contenido)->redondeado(2))
-                    .' '.$presentacion->unidad->codigo;
+                return self::cifraCorta($hay->entre($contenido)).' '.$presentacion->unidad->codigo;
             }
         }
 
         $unidad = $item->unidadDispensacion?->codigo;
 
-        return $hay->redondeado(2).($unidad === null ? '' : ' '.$unidad);
+        return self::cifraCorta($hay).($unidad === null ? '' : ' '.$unidad);
+    }
+
+    /**
+     * «38» y no «38.33»; «0.08» y no «0».
+     *
+     * Los decimales de una existencia grande son ruido —a nadie le
+     * cambia la decisión que haya 38 o 38.33 frascos— y alargan la
+     * opción hasta partirla en dos renglones. Por debajo de diez sí se
+     * conservan: ahí la diferencia entre 0.08 y 0 es entre tener algo y
+     * no tener nada.
+     */
+    private static function cifraCorta(Decimal $cantidad): string
+    {
+        return $cantidad->menorQue('10')
+            ? ItemPresentacion::sinCerosDeMas($cantidad->redondeado(2))
+            : $cantidad->redondeado(0);
     }
 
     /**
@@ -4334,6 +4381,54 @@ class CuentasAbiertas extends Page
 
         return new HtmlString(
             '<span style="font-size:.9rem">'.implode(' · ', $partes).'</span>'
+        );
+    }
+
+    /**
+     * La línea que va debajo de los cuatro campos: la equivalencia, el
+     * FEFO, y el aviso cuando no hay existencia en ningún estante.
+     *
+     * Vive en un solo lugar para que lo que hay que leer antes de apretar
+     * Agregar esté junto, y para que los campos de arriba queden todos
+     * del mismo alto.
+     */
+    private function comoQuedaLaLinea(Get $get): HtmlString
+    {
+        $item = $this->itemDe($get('item_id'));
+
+        if (! $item instanceof Item) {
+            return new HtmlString('&nbsp;');
+        }
+
+        $unidadCobro = is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null;
+
+        $partes = [];
+
+        $equivalencia = $this->equivalencia($item, $unidadCobro ?? self::POR_UNIDAD, $get('cantidad'));
+
+        if (is_string($equivalencia) && trim($equivalencia) !== '') {
+            $partes[] = '<strong>'.e(rtrim($equivalencia, '.')).'</strong>';
+        }
+
+        if ($item->mueveInventario()) {
+            if ($this->estantesConLoQueHay($item, $unidadCobro) === []) {
+                return new HtmlString(
+                    '<span style="font-size:.8125rem;color:rgb(248 113 113)">'
+                    .'No hay existencia de este producto en ningún almacén. '
+                    .'Hay que recibirlo o trasladarlo antes de cobrarlo.'
+                    .'</span>'
+                );
+            }
+
+            $partes[] = 'sale por FEFO: primero el lote que vence antes';
+        }
+
+        if ($partes === []) {
+            return new HtmlString('&nbsp;');
+        }
+
+        return new HtmlString(
+            '<span style="font-size:.8125rem">'.implode(' · ', $partes).'</span>'
         );
     }
 
