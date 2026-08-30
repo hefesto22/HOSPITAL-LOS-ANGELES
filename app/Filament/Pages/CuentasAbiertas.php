@@ -42,6 +42,7 @@ use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Persona;
+use App\Models\Unidad;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
@@ -2039,6 +2040,23 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * «ML», «TAB», «AMP» — el código corto de la unidad en que se
+     * dispensa el ítem, o nulo si el ítem no tiene unidad declarada.
+     *
+     * ⚠️ Existe para NO escribir `$item->unidadDispensacion?->codigo ??
+     * …`. El analizador rechaza un nullsafe a la izquierda de `??`, y la
+     * alternativa —quitarle el `?`— sería un error fatal el día que
+     * alguien cargue un servicio sin unidad de dispensación, que la
+     * columna permite. La comprobación explícita satisface a los dos.
+     */
+    private static function codigoDeLaUnidad(Item $item): ?string
+    {
+        $unidad = $item->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $unidad->codigo : null;
+    }
+
+    /**
      * ¿Es un honorario médico?
      *
      * La única familia del catálogo cuyo precio se puede escribir en el
@@ -3908,7 +3926,7 @@ class CuentasAbiertas extends Page
                 .' por '.($unidad ?? 'unidad');
         }
 
-        $codigo = $item->unidadDispensacion?->codigo ?? $unidad ?? 'unidades';
+        $codigo = self::codigoDeLaUnidad($item) ?? $unidad ?? 'unidades';
 
         foreach ($this->presentacionesDe($item) as $presentacion) {
             $opciones[self::POR_PRESENTACION.$presentacion->id] = self::envaseCorto($item, $presentacion)
@@ -4134,7 +4152,7 @@ class CuentasAbiertas extends Page
              * MILILITRO (ml)». Es la línea que va debajo de un campo
              * angosto, y la palabra larga la partía en tres.
              */
-            $item->unidadDispensacion?->codigo ?? $enLaUnidad ?? 'unidades',
+            self::codigoDeLaUnidad($item) ?? $enLaUnidad ?? 'unidades',
         );
     }
 
