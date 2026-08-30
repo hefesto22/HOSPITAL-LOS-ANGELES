@@ -280,7 +280,8 @@ class Existencias extends Page implements HasTable
                 'item:id,codigo,nombre,es_controlado,unidad_dispensacion_id',
                 'item.unidadDispensacion:id,codigo,nombre',
                 'lote:id,numero,fecha_vencimiento,item_presentacion_id',
-                'lote.presentacion:id,nombre,unidades_por_presentacion',
+                'lote.presentacion:id,nombre,unidades_por_presentacion,unidad_id',
+                'lote.presentacion.unidad:id,codigo',
                 'almacen:id,codigo,nombre,tipo',
             ])
             ->conSaldo();
@@ -491,11 +492,20 @@ class Existencias extends Page implements HasTable
                     ->dehydrated(false)
                     ->helperText(self::dondeMasHay($record)),
 
+                /*
+                 * ⚠️ SIN `searchable()`.
+                 *
+                 * Con `options()` y búsqueda encendida, Filament manda el
+                 * término al servidor y busca con `getSearchResultsUsing`
+                 * — que acá no existe—, así que escribir «BODEGA»
+                 * devolvía «No se encontraron coincidencias» ESTANDO
+                 * BODEGA en la lista. Un hospital tiene cinco estantes,
+                 * no quinientos: se eligen mirando.
+                 */
                 Select::make('destino_id')
                     ->label('Entra a')
                     ->required()
                     ->native(false)
-                    ->searchable()
                     ->options(fn (): array => self::destinosPara($record))
                     ->helperText(
                         'Si el carrito no aparece en la lista, se crea primero en Inventario → '
@@ -669,7 +679,8 @@ class Existencias extends Page implements HasTable
                 'item:id,unidad_dispensacion_id',
                 'item.unidadDispensacion:id,codigo,nombre',
                 'lote:id,item_presentacion_id',
-                'lote.presentacion:id,nombre,unidades_por_presentacion',
+                'lote.presentacion:id,nombre,unidades_por_presentacion,unidad_id',
+                'lote.presentacion.unidad:id,codigo',
             ])
             ->where('item_id', $existencia->item_id)
             ->whereKeyNot($existencia->id)
@@ -769,14 +780,9 @@ class Existencias extends Page implements HasTable
         }
 
         $envases = $existencia->cantidadDecimal()->entre($contenido);
-        $envase = self::nombreDelEnvase($existencia);
-
-        if ($envase === null) {
-            return null;
-        }
 
         return '= '.ItemPresentacion::sinCerosDeMas($envases->redondeado(2))
-            .' '.Str::before($envase, ' X ');
+            .' '.(self::unidadDelEnvase($existencia) ?? 'envases');
     }
 
     /**
@@ -800,9 +806,26 @@ class Existencias extends Page implements HasTable
     }
 
     /**
-     * «FRASCO X 120 ML» — la mitad del nombre que dice cómo viene
-     * envasado. Nulo cuando el lote entró a granel o el ítem no maneja
-     * presentaciones.
+     * Cómo viene envasado, sin repetir el producto: «FRASCO 60 ML»,
+     * «CAJA X 100 TABLETAS». Nulo cuando el lote entró a granel o el ítem
+     * no maneja presentaciones.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 POR QUÉ NO ALCANZA CON CORTAR EL NOMBRE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El nombre guardado de una presentación es «PRODUCTO / envase», y la
+     * primera versión se quedaba con la mitad de atrás. Funciona cuando
+     * esa mitad dice «FRASCO X 120 ML» — pero en este catálogo dice
+     * «ACETAMINOFEN JARABE 60 ML», o sea el producto OTRA VEZ. El
+     * renglón quedaba «ACETAMINOFEN JARABE · MED-705 · ACETAMINOFEN
+     * JARABE 60 ML»: tres veces lo mismo y el dato útil —60 ML— perdido
+     * al final.
+     *
+     * Así que el envase se arma del dato que sí lo dice: la UNIDAD de la
+     * presentación —FRASCO, CAJA, AMPOLLA—, más lo que queda del nombre
+     * después de quitarle el producto. Y no se duplica la unidad cuando
+     * el nombre ya arranca con ella.
      */
     private static function nombreDelEnvase(Existencia $existencia): ?string
     {
@@ -812,7 +835,32 @@ class Existencias extends Page implements HasTable
             return null;
         }
 
-        return Str::after($presentacion->nombre, ' / ');
+        $envase = trim(Str::after($presentacion->nombre, ' / '));
+        $producto = trim($existencia->item->nombre);
+
+        if ($producto !== '' && Str::startsWith($envase, $producto)) {
+            $envase = trim(Str::after($envase, $producto));
+        }
+
+        $unidad = self::unidadDelEnvase($existencia);
+
+        if ($unidad !== null && ! Str::startsWith($envase, $unidad)) {
+            $envase = trim($unidad.' '.$envase);
+        }
+
+        return $envase === '' ? $unidad : $envase;
+    }
+
+    /**
+     * «FRASCO», «CAJA», «AMPOLLA» — el envase pelado, para la línea de
+     * equivalencia. Es un dato del catálogo, no algo que se deduzca del
+     * nombre.
+     */
+    private static function unidadDelEnvase(Existencia $existencia): ?string
+    {
+        $unidad = $existencia->lote?->presentacion?->unidad;
+
+        return $unidad instanceof Unidad ? $unidad->codigo : null;
     }
 
     // ── Presentación del vencimiento ──────────────────────────────────
