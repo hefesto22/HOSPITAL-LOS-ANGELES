@@ -872,7 +872,7 @@ class CuentasAbiertas extends Page
                                 : 'Elegí el estante')
                             ->helperText(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), is_string($get('unidad_cobro')) ? $get('unidad_cobro') : null) === []
                                 ? '🔴 No hay existencia de este producto en ningún almacén. Hay que recibirlo o trasladarlo antes de cobrarlo.'
-                                : 'Solo los que tienen. Sale por FEFO: primero el lote que vence antes.'),
+                                : 'Sale por FEFO: primero el que vence.'),
 
                     ]),
             ])
@@ -3578,10 +3578,12 @@ class CuentasAbiertas extends Page
                 .' por '.($unidad ?? 'unidad');
         }
 
+        $codigo = $item->unidadDispensacion?->codigo ?? $unidad ?? 'unidades';
+
         foreach ($this->presentacionesDe($item) as $presentacion) {
-            $opciones[self::POR_PRESENTACION.$presentacion->id] = $presentacion->nombre
+            $opciones[self::POR_PRESENTACION.$presentacion->id] = self::envaseCorto($item, $presentacion)
                 .' — '.rtrim(rtrim((string) $presentacion->unidades_por_presentacion, '0'), '.')
-                .' '.($unidad ?? 'unidades');
+                .' '.$codigo;
         }
 
         /*
@@ -3597,6 +3599,53 @@ class CuentasAbiertas extends Page
         }
 
         return $opciones;
+    }
+
+    /**
+     * Cómo se llama el envase sin repetir el producto: «FRASCO 60 ML»,
+     * «CAJA X 100 TABLETAS».
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL NOMBRE DEL PRODUCTO YA ESTÁ ARRIBA, TRES VECES
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El nombre guardado de una presentación es «PRODUCTO / envase», y en
+     * este catálogo la mitad de atrás vuelve a nombrar el producto:
+     * «ACETAMINOFEN JARABE / ACETAMINOFEN JARABE 60 ML».
+     *
+     * Puesto entero en el desplegable, el renglón salía
+     * «ACETAMINOFEN JARABE 60 ML — 60 MILILITRO (ml)»: cuarenta y cinco
+     * caracteres en una columna de tres, partidos en tres líneas, con el
+     * dato que distingue —60 ML— al final. Cuatro campos así uno al lado
+     * del otro es la pantalla amontonada que nadie quiere leer con el
+     * paciente enfrente.
+     *
+     * Se recorta palabra por palabra lo que el producto ya dice, y se
+     * antepone la unidad del envase solo si no está.
+     */
+    private static function envaseCorto(Item $item, ItemPresentacion $presentacion): string
+    {
+        $envase = trim(Str::after((string) $presentacion->nombre, ' / '));
+        $producto = trim((string) $item->nombre);
+
+        $delEnvase = preg_split('/\s+/', $envase) ?: [];
+        $delProducto = preg_split('/\s+/', $producto) ?: [];
+
+        $comunes = 0;
+
+        while (
+            isset($delEnvase[$comunes], $delProducto[$comunes])
+            && $delEnvase[$comunes] === $delProducto[$comunes]
+        ) {
+            $comunes++;
+        }
+
+        $resto = trim(implode(' ', array_slice($delEnvase, $comunes)));
+        $corto = $resto === '' ? $envase : $resto;
+
+        $unidad = $presentacion->unidad->codigo;
+
+        return str_contains($corto, $unidad) ? $corto : trim($unidad.' '.$corto);
     }
 
     /**
@@ -3746,11 +3795,16 @@ class CuentasAbiertas extends Page
         $etiqueta = $this->unidadesDeCobro($item)[$unidad] ?? '';
 
         return sprintf(
-            '%s %s = %s %s.',
+            '%s %s = %s %s',
             rtrim(rtrim($tecleada->redondeado(4), '0'), '.'),
             mb_strstr($etiqueta, ' —', true) ?: $etiqueta,
             rtrim(rtrim($convertida->redondeado(4), '0'), '.'),
-            $enLaUnidad ?? 'unidades',
+            /*
+             * El CÓDIGO y no la etiqueta completa: «60 ml» en vez de «60
+             * MILILITRO (ml)». Es la línea que va debajo de un campo
+             * angosto, y la palabra larga la partía en tres.
+             */
+            $item->unidadDispensacion?->codigo ?? $enLaUnidad ?? 'unidades',
         );
     }
 
@@ -4260,10 +4314,18 @@ class CuentasAbiertas extends Page
 
         $partes = ['<strong>'.e($item->nombre).'</strong>'];
 
-        $unidad = $this->unidadDe($item);
+        /*
+         * 🔴 Dice cómo se cobra DE VERDAD, no la unidad del kardex.
+         *
+         * Un jarabe que no se fracciona se cobra por frasco, y el
+         * encabezado seguía anunciando «se cobra por MILILITRO (ml)»
+         * mientras el selector de abajo solo ofrecía frascos. Dos
+         * afirmaciones contradictorias a diez centímetros de distancia.
+         */
+        $comoSeCobra = $this->unidadesDeCobro($item)[$this->unidadDeCobroPorDefecto($item)] ?? null;
 
-        if ($unidad !== null) {
-            $partes[] = 'se cobra por '.e($unidad);
+        if (is_string($comoSeCobra)) {
+            $partes[] = 'se cobra por '.e(mb_strstr($comoSeCobra, ' —', true) ?: $comoSeCobra);
         }
 
         if ($item->codigo !== '') {
