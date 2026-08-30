@@ -674,14 +674,21 @@ class Existencias extends Page implements HasTable
          * @var Collection<int, Existencia> $otras
          */
         $otras = Existencia::query()
-            ->with([
-                'almacen:id,nombre',
-                'item:id,unidad_dispensacion_id',
-                'item.unidadDispensacion:id,codigo,nombre',
-                'lote:id,item_presentacion_id',
-                'lote.presentacion:id,nombre,unidades_por_presentacion,unidad_id',
-                'lote.presentacion.unidad:id,codigo',
-            ])
+            /*
+             * 🔴 SIN ENUMERAR COLUMNAS, al revés que la consulta de la
+             * tabla.
+             *
+             * Acá se cargaba `item:id,unidad_dispensacion_id` porque era
+             * lo único que se usaba… hasta que el renglón pasó a mostrar
+             * también el envase, que necesita `item.nombre` para no
+             * repetirlo. El resultado no fue una etiqueta incompleta: fue
+             * un TypeError con la pantalla entera en blanco.
+             *
+             * Son seis filas como mucho. El ahorro de enumerar columnas
+             * acá no paga el riesgo de que la próxima persona que sume un
+             * dato al renglón tumbe el modal sin enterarse.
+             */
+            ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
             ->where('item_id', $existencia->item_id)
             ->whereKeyNot($existencia->id)
             ->conSaldo()
@@ -714,7 +721,7 @@ class Existencias extends Page implements HasTable
     private static function comoSeLlamaEsteRenglon(Existencia $existencia): string
     {
         $partes = array_filter([
-            $existencia->item->nombre,
+            (string) $existencia->item->nombre,
             self::nombreDelEnvase($existencia),
             $existencia->lote === null ? null : 'lote '.$existencia->lote->numero,
         ]);
@@ -734,7 +741,7 @@ class Existencias extends Page implements HasTable
      */
     private static function comoSeEnvasa(Existencia $existencia): string
     {
-        $codigo = $existencia->item->codigo;
+        $codigo = (string) $existencia->item->codigo;
         $envase = self::nombreDelEnvase($existencia);
 
         return $envase === null ? $codigo : $codigo.' · '.$envase;
@@ -835,20 +842,82 @@ class Existencias extends Page implements HasTable
             return null;
         }
 
-        $envase = trim(Str::after($presentacion->nombre, ' / '));
-        $producto = trim($existencia->item->nombre);
+        $envase = trim(Str::after((string) $presentacion->nombre, ' / '));
 
-        if ($producto !== '' && Str::startsWith($envase, $producto)) {
-            $envase = trim(Str::after($envase, $producto));
-        }
+        /*
+         * ⚠️ El casteo no es adorno. Estos lectores se llaman desde
+         * varias consultas, y una que cargue el ítem con columnas
+         * enumeradas puede dejar `nombre` en nulo sin dar ninguna señal.
+         * Con `trim(null)` eso es un TypeError y la pantalla se cae
+         * entera; con la cadena vacía, el renglón simplemente no recorta
+         * el prefijo. Un dato de menos, no una pantalla rota.
+         */
+        $producto = trim((string) $existencia->item->nombre);
+
+        $envase = self::sinElPrefijoRepetido($envase, $producto);
 
         $unidad = self::unidadDelEnvase($existencia);
 
-        if ($unidad !== null && ! Str::startsWith($envase, $unidad)) {
+        /*
+         * `str_contains` y no `startsWith`: hay presentaciones cargadas
+         * como «TAB CAJA 20», donde el envase aparece en el medio.
+         * Anteponerlo daría «TAB TAB CAJA 20».
+         */
+        if ($unidad !== null && $unidad !== '' && ! str_contains($envase, $unidad)) {
             $envase = trim($unidad.' '.$envase);
         }
 
         return $envase === '' ? $unidad : $envase;
+    }
+
+    /**
+     * Le quita al envase las palabras que ya dice el nombre del producto.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * PALABRA POR PALABRA, NO LA CADENA ENTERA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La primera versión pedía que el envase EMPEZARA con el nombre
+     * completo del producto. Eso solo cubre el caso limpio:
+     *
+     *   ACETAMINOFEN JARABE  +  «ACETAMINOFEN JARABE 60 ML»  →  60 ML ✓
+     *
+     * y deja pasar el que de verdad aparece en el catálogo:
+     *
+     *   ACETAMINOFEN JARABE  +  «ACETAMINOFEN FRASCO 120 ML»  →  sin
+     *   recortar, y el renglón terminaba diciendo «FRASCO ACETAMINOFEN
+     *   FRASCO 120 ML».
+     *
+     * Comparando palabra por palabra se recorta lo que de verdad se
+     * repite —ACETAMINOFEN— y queda «FRASCO 120 ML». Si no hay nada en
+     * común, no se toca nada.
+     */
+    private static function sinElPrefijoRepetido(string $envase, string $producto): string
+    {
+        if ($envase === '' || $producto === '') {
+            return $envase;
+        }
+
+        $delEnvase = preg_split('/\s+/', $envase) ?: [];
+        $delProducto = preg_split('/\s+/', $producto) ?: [];
+
+        $comunes = 0;
+
+        while (
+            isset($delEnvase[$comunes], $delProducto[$comunes])
+            && $delEnvase[$comunes] === $delProducto[$comunes]
+        ) {
+            $comunes++;
+        }
+
+        /*
+         * Si TODO el envase estaba repetido, se devuelve entero: es
+         * preferible un renglón redundante a uno vacío, que no dice qué
+         * frasco es.
+         */
+        $resto = trim(implode(' ', array_slice($delEnvase, $comunes)));
+
+        return $resto === '' ? $envase : $resto;
     }
 
     /**
