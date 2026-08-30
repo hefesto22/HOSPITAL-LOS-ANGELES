@@ -4213,7 +4213,8 @@ class CuentasAbiertas extends Page
     /**
      * Varios productos abiertos por forma, listos para el desplegable.
      *
-     * @param  iterable<int, Item>  $items
+     * @param iterable<int, Item> $items
+     *
      * @return array<int|string, string>
      */
     private function filasDelSelector(iterable $items): array
@@ -4813,14 +4814,19 @@ class CuentasAbiertas extends Page
 
     /**
      * Los productos vigentes que llevan ese principio activo, ya
-     * rotulados para el desplegable.
+     * rotulados para el desplegable y abiertos por forma de entrega.
+     *
+     * ⚠️ Las llaves son `int|string` por lo mismo que en
+     * `opcionesDelSelector()`: el producto de una sola forma viaja con el
+     * id pelado —que PHP convierte solo a entero— y el que tiene envases
+     * viaja como «705|presentacion:12».
      *
      * La consulta vive en el modelo —`PrincipioActivo::productosVigentes()`—
      * y no acá: es una pregunta del negocio, se hace desde más de una
      * pantalla, y en un método privado de una página de Filament no hay
      * forma de probarla.
      *
-     * @return array<int, string>
+     * @return array<int|string, string>
      */
     private function productosVigentesDe(PrincipioActivo $principio): array
     {
