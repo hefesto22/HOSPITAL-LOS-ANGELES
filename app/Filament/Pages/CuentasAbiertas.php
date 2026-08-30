@@ -251,7 +251,10 @@ class CuentasAbiertas extends Page
      * `private` y no `public`: Livewire no la serializa, así que dura lo
      * que dura la petición — que es exactamente lo que tiene que durar.
      *
-     * @var array<int, Collection<int, array{almacen: Almacen, hay: Decimal}>>
+     * La clave es «ítem:presentación», porque cuántos frascos hay
+     * depende del envase que se esté cobrando.
+     *
+     * @var array<string, Collection<int, array{almacen: Almacen, hay: Decimal}>>
      */
     private array $estantesPorItem = [];
 
@@ -813,6 +816,17 @@ class CuentasAbiertas extends Page
                             ->label('Se cobra por')
                             ->native(false)
                             ->live()
+                            /*
+                             * Cambiar de envase cambia la lista de
+                             * estantes —cada uno dice cuántos frascos DE
+                             * ESE envase tiene—, así que el estante
+                             * elegido se vuelve a proponer. Dejarlo como
+                             * estaba deja seleccionado un almacén que
+                             * quizá ya no aparece entre las opciones.
+                             */
+                            ->afterStateUpdated(function (Get $get, Set $set, ?string $state): void {
+                                $set('almacen_id', $this->estanteSugerido($this->itemDe($get('item_id')), $state)?->id);
+                            })
                             /*
                              * El default estático solo sirve para el
                              * primer render; en cuanto cambia el ítem lo
@@ -1810,14 +1824,43 @@ class CuentasAbiertas extends Page
      *
      * @return Collection<int, array{almacen: Almacen, hay: Decimal}>
      */
-    private function estantesDe(Item $item): Collection
+    private function estantesDe(Item $item, ?int $presentacionId = null): Collection
     {
-        if (isset($this->estantesPorItem[$item->id])) {
-            return $this->estantesPorItem[$item->id];
+        $memoria = $item->id.':'.($presentacionId ?? 'todas');
+
+        if (isset($this->estantesPorItem[$memoria])) {
+            return $this->estantesPorItem[$memoria];
         }
 
         $saldos = Existencia::query()
             ->where('item_id', $item->id)
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SOLO LOS DEL ENVASE QUE SE ESTÁ COBRANDO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Sin este filtro, la existencia sumaba TODOS los mililitros
+             * del jarabe —los frascos de 60, los de 80 y los de 120— y
+             * después los dividía entre 60. El resultado era «38 FRASCO»:
+             * un número que no corresponde a ningún frasco que exista en
+             * el estante, y que promete una entrega que el hospital no
+             * puede cumplir.
+             *
+             * Cada lote sabe de qué presentación es, así que la pregunta
+             * correcta es cuántos frascos DE ESE ENVASE hay, no cuántos
+             * cabrían si todo el líquido estuviera en frascos de 60.
+             *
+             * Nulo = sin envase elegido, y ahí sí se suma todo: es el
+             * caso del pase de presupuesto y del ítem que se cobra por
+             * unidad suelta.
+             */
+            ->when(
+                $presentacionId !== null,
+                fn (Builder $consulta): Builder => $consulta->whereHas(
+                    'lote',
+                    fn (Builder $lote): Builder => $lote->where('item_presentacion_id', $presentacionId),
+                ),
+            )
             ->selectRaw('almacen_id, sum(cantidad) as total')
             ->groupBy('almacen_id')
             ->pluck('total', 'almacen_id');
@@ -1825,7 +1868,7 @@ class CuentasAbiertas extends Page
         /** @var Collection<int, Almacen> $almacenes */
         $almacenes = AlmacenesDelUsuario::elegibles()->vigentes()->orderBy('nombre')->get();
 
-        return $this->estantesPorItem[$item->id] = $almacenes
+        return $this->estantesPorItem[$memoria] = $almacenes
             ->map(fn (Almacen $almacen): array => [
                 'almacen' => $almacen,
                 'hay'     => self::comoDecimal($saldos[$almacen->id] ?? null),
@@ -1856,7 +1899,9 @@ class CuentasAbiertas extends Page
             return [];
         }
 
-        return $this->estantesDe($item)
+        $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
+
+        return $this->estantesDe($item, $presentacion?->id)
             /*
              * 🔴 LOS ESTANTES VACÍOS NO SE LISTAN.
              *
@@ -1964,17 +2009,23 @@ class CuentasAbiertas extends Page
      */
     private function prepararLaLinea(?Item $item, Set $set): void
     {
-        $set('almacen_id', $this->estanteSugerido($item)?->id);
-
         /*
-         * 🔴 Y la unidad de cobro. Sin esto, un jarabe no fraccionable
-         * quedaba con «dispensacion» pegado del ítem anterior — un valor
-         * que ya no está entre sus opciones—, y el desplegable se veía
-         * vacío justo después de escanear.
+         * 🔴 LA UNIDAD PRIMERO, Y DESPUÉS EL ESTANTE. Sin esto, un jarabe
+         * no fraccionable quedaba con «dispensacion» pegado del ítem
+         * anterior —un valor que ya no está entre sus opciones—, y el
+         * desplegable se veía vacío justo después de escanear.
+         *
+         * El orden importa: el estante sugerido depende del envase, así
+         * que se calcula con la unidad ya resuelta y no con la que
+         * quedó del producto anterior.
          */
-        if ($item instanceof Item) {
-            $set('unidad_cobro', $this->unidadDeCobroPorDefecto($item));
+        $unidad = $item instanceof Item ? $this->unidadDeCobroPorDefecto($item) : null;
+
+        if ($unidad !== null) {
+            $set('unidad_cobro', $unidad);
         }
+
+        $set('almacen_id', $this->estanteSugerido($item, $unidad)?->id);
 
         /*
          * El honorario arranca con el precio del tarifario a la vista.
@@ -2128,14 +2179,23 @@ class CuentasAbiertas extends Page
      * El estante que viene marcado solo. Nulo cuando no hay ninguno con
      * existencia: ahí es mejor que el campo quede vacío y obligue a
      * elegir que preseleccionar un estante donde no hay nada.
+     *
+     * ⚠️ RECIBE LA UNIDAD DE COBRO A PROPÓSITO. El estante sugerido tiene
+     * que ser uno de los que el desplegable va a listar, y el desplegable
+     * lista por envase: si el frasco de 120 solo está en bodega, sugerir
+     * farmacia —que tiene los de 60— deja el campo con un valor que ya no
+     * es opción, y el usuario ve el desplegable en blanco sin saber que
+     * hay algo elegido debajo.
      */
-    private function estanteSugerido(?Item $item): ?Almacen
+    private function estanteSugerido(?Item $item, ?string $unidadDeCobro = null): ?Almacen
     {
         if (! $item instanceof Item || ! $item->mueveInventario()) {
             return null;
         }
 
-        $primero = $this->estantesDe($item)->first();
+        $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
+
+        $primero = $this->estantesDe($item, $presentacion?->id)->first();
 
         return $primero !== null && ! $primero['hay']->esCero() ? $primero['almacen'] : null;
     }
