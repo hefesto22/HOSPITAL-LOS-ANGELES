@@ -24,6 +24,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -527,25 +528,53 @@ class Existencias extends Page implements HasTable
                         .'Almacenes.'
                     ),
 
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 SE MUEVEN ENVASES, NO UNIDADES DE DISPENSACIÓN
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * La primera versión pedía la cantidad en la unidad del
+                 * kardex —mililitros— porque es lo que el kardex guarda.
+                 * Fue un error, y se vio al primer intento: alguien
+                 * escribió «5» queriendo bajar 5 FRASCOS y bajó 5 ML.
+                 * La bodega quedó con 0.08 de un frasco, que es una
+                 * cantidad que en el estante no existe.
+                 *
+                 * Un traslado es un hecho FÍSICO: alguien levanta frascos
+                 * y los lleva. Se pide en frascos y el sistema convierte,
+                 * que es exactamente para lo que las presentaciones
+                 * existen. El kardex sigue en mililitros — eso no cambia,
+                 * pero deja de ser problema de quien mueve.
+                 */
                 TextInput::make('cantidad')
-                    ->label('Cuánto se mueve')
+                    ->label(self::comoSePideLaCantidad($record))
                     ->required()
                     ->numeric()
+                    ->live(onBlur: true)
+                    /*
+                     * Paso fino aunque casi siempre se teclee un entero:
+                     * devolver el resto de un frasco abierto —0.0833
+                     * FRASCO— tiene que ser posible, y con `step` en 0.01
+                     * el navegador rechaza ese número antes de que llegue
+                     * al servidor.
+                     */
                     ->minValue('0.0001')
                     ->step('0.0001')
                     /*
                      * El tope como CADENA y no como float: §8.6.2 prohíbe
                      * que una cantidad de inventario pase por punto
-                     * flotante, y un tope mal redondeado deja fuera la
-                     * última unidad del estante justo cuando se quiere
-                     * vaciar.
+                     * flotante, y un tope mal redondeado deja fuera el
+                     * último envase justo cuando se quiere vaciar.
                      *
                      * Igual no es el candado: el candado es el `UPDATE`
                      * condicional del movimiento. Esto es para que el
                      * error se vea antes de apretar.
                      */
-                    ->maxValue(fn (): string => $record->cantidadDecimal()->redondeado(4))
-                    ->helperText(self::cuantoQuedaEnEsteLote($record)),
+                    ->maxValue(fn (): string => self::topeParaMover($record))
+                    ->helperText(fn (Get $get): string => self::cuantoQuedaEnEsteLote(
+                        $record,
+                        $get('cantidad'),
+                    )),
 
                 Textarea::make('motivo')
                     ->label('Nota (opcional)')
@@ -592,17 +621,19 @@ class Existencias extends Page implements HasTable
             return false;
         }
 
-        $cantidad = NumeroDeFormulario::aDecimal($data['cantidad'] ?? null);
+        $tecleado = NumeroDeFormulario::aDecimal($data['cantidad'] ?? null);
 
-        if (! $cantidad instanceof Decimal) {
+        if (! $tecleado instanceof Decimal) {
             Notification::make()
                 ->title('La cantidad no se entiende')
-                ->body('Escriba cuántas unidades se mueven.')
+                ->body('Escriba cuántos '.(self::unidadDelEnvase($existencia) ?? 'unidades').' se mueven.')
                 ->danger()
                 ->send();
 
             return false;
         }
+
+        $cantidad = self::aUnidadesDeDispensacion($existencia, $tecleado);
 
         $lote = $existencia->lote_id === null ? null : Lote::query()->find($existencia->lote_id);
 
@@ -629,10 +660,8 @@ class Existencias extends Page implements HasTable
         Notification::make()
             ->title('Movido')
             ->body(
-                $cantidad->redondeado(2).' de '.$item->nombre
-                .(self::nombreDelEnvase($existencia) === null
-                    ? ''
-                    : ' ('.self::nombreDelEnvase($existencia).')')
+                self::comoSeCuenta($existencia, $tecleado)
+                .' de '.$item->nombre
                 .' pasaron de '.$origen->nombre.' a '.$destino->nombre.'.'
             )
             ->success()
@@ -803,15 +832,9 @@ class Existencias extends Page implements HasTable
             return null;
         }
 
-        $contenido = $presentacion->unidades_por_presentacion;
+        $contenido = self::contenidoDelEnvase($existencia);
 
-        /*
-         * La columna es NUMERIC(14,4) con CHECK de mayor que cero, así
-         * que en la práctica siempre alcanza. La guarda existe porque
-         * dividir entre cero acá tumbaría la tabla entera por un dato
-         * mal cargado en una sola presentación.
-         */
-        if (! is_numeric($contenido) || Decimal::de($contenido)->esCero()) {
+        if ($contenido === null) {
             return null;
         }
 
@@ -821,24 +844,149 @@ class Existencias extends Page implements HasTable
             .' '.(self::unidadDelEnvase($existencia) ?? 'envases');
     }
 
+    // ── Cuánto se mueve, y en qué se cuenta ───────────────────────────
+
     /**
-     * El texto de ayuda del campo de cantidad.
+     * Cuántas unidades de dispensación son los envases que se tecleó.
      *
-     * 🔴 Dice explícitamente que se teclea en unidades de dispensación y
-     * no en envases. Con «hay 1200.00 ML (= 10 FRASCO)» a la vista, la
-     * tentación es escribir «2» queriendo decir dos frascos, y eso
-     * movería 2 mililitros. El kardex no sabe de envases — esa es toda la
-     * razón por la que las presentaciones existen aparte.
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 PEDIR EL MÁXIMO MUEVE EL SALDO EXACTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Un lote con 595 ML de frascos de 60 son 9.9167 frascos. Si alguien
+     * escribe ese número para vaciar el estante y se multiplicara sin
+     * más, quedarían 0.002 ML colgando por el redondeo — un saldo que
+     * nadie puede mover ni contar, y que aparece como diferencia en el
+     * conteo físico.
+     *
+     * Por eso, cuando lo pedido llega o pasa el tope, se manda la
+     * cantidad EXACTA que hay. «Todo» significa todo.
      */
-    private static function cuantoQuedaEnEsteLote(Existencia $existencia): string
+    private static function aUnidadesDeDispensacion(Existencia $existencia, Decimal $envases): Decimal
     {
-        $envases = self::enCuantosEnvases($existencia);
+        $contenido = self::contenidoDelEnvase($existencia);
+
+        if ($contenido === null) {
+            return $envases;
+        }
+
+        /*
+         * ⚠️ Se compara contra el TOPE QUE SE MOSTRÓ, no contra la
+         * división cruda. El tope va redondeado a cuatro decimales, así
+         * que un lote de 5 ML en frascos de 60 se ofrece como «0.0833
+         * FRASCO»: escribir ese número tiene que vaciar el renglón, y
+         * comparando contra 0.083333… no lo vaciaría —quedarían 0.002 ML
+         * colgando, un saldo que nadie puede mover ni contar y que
+         * reaparece como diferencia en el conteo físico.
+         *
+         * Dicho de otro modo: el número que la pantalla ofrece como
+         * máximo SIEMPRE significa «todo».
+         */
+        $tope = Decimal::de(self::topeParaMover($existencia));
+
+        return $envases->menorQue($tope)
+            ? $envases->por($contenido)
+            : $existencia->cantidadDecimal();
+    }
+
+    /**
+     * El contenido de un envase, o nulo cuando el lote entró a granel.
+     *
+     * La columna es NUMERIC(14,4) con CHECK de mayor que cero, así que en
+     * la práctica siempre alcanza. La guarda existe porque dividir entre
+     * cero acá tumbaría el modal por un dato mal cargado en una sola
+     * presentación.
+     */
+    private static function contenidoDelEnvase(Existencia $existencia): ?string
+    {
+        $presentacion = $existencia->lote?->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion) {
+            return null;
+        }
+
+        $contenido = $presentacion->unidades_por_presentacion;
+
+        if (! is_numeric($contenido) || Decimal::de($contenido)->esCero()) {
+            return null;
+        }
+
+        return (string) $contenido;
+    }
+
+    /**
+     * «Cuántos FRASCO se mueven» — o la unidad del kardex si el lote no
+     * tiene envase declarado.
+     */
+    private static function comoSePideLaCantidad(Existencia $existencia): string
+    {
+        $envase = self::unidadDelEnvase($existencia);
+
+        if ($envase !== null && self::contenidoDelEnvase($existencia) !== null) {
+            return 'Cuántos '.$envase.' se mueven';
+        }
+
         $unidad = $existencia->item->unidadDispensacion;
 
-        return 'Hay '.self::cuantoHay($existencia).' en este lote'
-            .($envases === null ? '. ' : ' ('.$envases.'). ')
-            .'Se escribe en '.($unidad instanceof Unidad ? $unidad->nombre : 'unidades de dispensación')
-            .', no en envases. Lo que se mueve sigue siendo del hospital: no es una baja.';
+        return 'Cuántos '.($unidad instanceof Unidad ? $unidad->codigo : 'unidades').' se mueven';
+    }
+
+    /**
+     * El tope del campo, en la misma unidad en que se pide.
+     */
+    private static function topeParaMover(Existencia $existencia): string
+    {
+        $contenido = self::contenidoDelEnvase($existencia);
+
+        return $contenido === null
+            ? $existencia->cantidadDecimal()->redondeado(4)
+            : $existencia->cantidadDecimal()->entre($contenido)->redondeado(4);
+    }
+
+    /**
+     * El texto de ayuda del campo, con la conversión a la vista.
+     *
+     * 🔴 Mostrar «5 FRASCO = 300.00 ML» ANTES de apretar es lo que evita
+     * el error que ya pasó una vez: teclear 5 pensando en frascos y mover
+     * 5 mililitros. Después ya está asentado en el kardex y se corrige
+     * con otro traslado, no borrando.
+     */
+    private static function cuantoQuedaEnEsteLote(Existencia $existencia, mixed $tecleado = null): string
+    {
+        $hay = 'Hay '.self::cuantoHay($existencia).' en este lote';
+        $envases = self::enCuantosEnvases($existencia);
+        $hay .= $envases === null ? '. ' : ' ('.$envases.'). ';
+
+        $pedido = NumeroDeFormulario::aDecimal($tecleado);
+
+        if (! $pedido instanceof Decimal || $pedido->esCero()) {
+            return $hay.'Lo que se mueve sigue siendo del hospital: no es una baja.';
+        }
+
+        $enUnidades = self::aUnidadesDeDispensacion($existencia, $pedido);
+        $unidad = $existencia->item->unidadDispensacion;
+
+        return $hay.'Se mueven '.self::comoSeCuenta($existencia, $pedido)
+            .' = '.$enUnidades->redondeado(2)
+            .($unidad instanceof Unidad ? ' '.$unidad->codigo : '')
+            .' en el kardex.';
+    }
+
+    /**
+     * «5 FRASCO», «2 CAJA», «300 ML» — lo que se movió, dicho como lo
+     * cuenta quien lo levantó del estante.
+     */
+    private static function comoSeCuenta(Existencia $existencia, Decimal $tecleado): string
+    {
+        $envase = self::unidadDelEnvase($existencia);
+
+        if ($envase !== null && self::contenidoDelEnvase($existencia) !== null) {
+            return ItemPresentacion::sinCerosDeMas($tecleado->redondeado(2)).' '.$envase;
+        }
+
+        $unidad = $existencia->item->unidadDispensacion;
+
+        return $tecleado->redondeado(2).($unidad instanceof Unidad ? ' '.$unidad->codigo : '');
     }
 
     /**
