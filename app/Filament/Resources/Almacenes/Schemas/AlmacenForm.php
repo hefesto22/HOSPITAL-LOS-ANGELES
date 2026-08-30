@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Almacenes\Schemas;
 
 use App\Domain\Enums\TipoAlmacen;
+use App\Domain\Enums\TipoServicio;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\SedeField;
 use Filament\Forms\Components\DatePicker;
@@ -60,17 +61,31 @@ final class AlmacenForm
             ->schema([
                 SedeField::make(),
 
+                /*
+                 * 🔴 NO SE PIDE AL CREAR. Lo pone
+                 * `AsignadorDeCodigoDeAlmacen` en el momento de guardar:
+                 * BOD-01, FAR-01, SRV-01, SRV-02.
+                 *
+                 * Pedirlo era pedirle a quien crea el carrito que invente
+                 * una convención y después la recuerde — y a la tercera
+                 * persona que crea uno ya no existe convención: aparecen
+                 * AM-1, CARRITO2 y CR_ROJO_1 en la misma lista.
+                 *
+                 * Al editar se ve pero no se toca: está escrito en cada
+                 * movimiento del kardex de ese estante.
+                 */
                 CampoMayusculas::make('codigo')
                     ->label('Código')
-                    ->required()
-                    ->maxLength(20)
+                    ->hiddenOn('create')
                     ->disabledOn('edit')
-                    ->helperText('Único dentro de la sede.'),
+                    ->maxLength(20)
+                    ->helperText('Se genera solo al crear el almacén y ya no cambia: queda escrito en cada movimiento del kardex.'),
 
                 CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->maxLength(255)
+                    ->helperText('Es lo que el personal lee al elegir «¿de dónde sale?»: CARRITO ROJO 1, FARMACIA, BODEGA.')
                     ->columnSpan(self::modoUnico() ? 2 : 1),
 
                 ...self::tipoYServicio(),
@@ -124,11 +139,20 @@ final class AlmacenForm
                     .'un carrito de piso — «CARRITO ROJO 1» va acá, con su servicio abajo.'
                 ),
 
+            /*
+             * ⚠️ SIN `searchable()`. Un hospital tiene ocho áreas, no
+             * ochocientas, y con la búsqueda encendida el desplegable
+             * mostraba la única opción cargada Y debajo «No se
+             * encontraron coincidencias con su búsqueda» — porque la
+             * búsqueda va contra el servidor y con término vacío no
+             * devuelve nada. Las dos cosas juntas se leen como que el
+             * sistema está roto.
+             */
             Select::make('servicio_id')
                 ->label('Servicio dueño')
                 ->relationship('servicio', 'nombre')
-                ->searchable()
                 ->preload()
+                ->native(false)
                 ->columnSpanFull()
                 /*
                  * 🔴 OBLIGATORIO EN UN STOCK DE SERVICIO, y solo ahí.
@@ -150,7 +174,53 @@ final class AlmacenForm
                     .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
                     .'paro de emergencia, el carrito de piso de hospitalización. Es lo que '
                     .'después contesta «¿de quién es este carrito?» sin preguntarle a nadie.'
-                ),
+                )
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * EL ÁREA SE CREA DESDE ACÁ
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * La lista trae los servicios que el hospital ya cargó, y
+                 * al principio son pocos —o uno—. Mandar a quien está
+                 * creando el carrito a otra pantalla, cargar el área,
+                 * volver y empezar el formulario de nuevo es la clase de
+                 * viaje que termina en «le pongo cualquiera».
+                 *
+                 * Son los mismos campos que exige la tabla: sin `tipo` no
+                 * hay censo de camas, y sin `vigencia_desde` la fila no
+                 * entra.
+                 */
+                ->createOptionForm([
+                    SedeField::make(),
+
+                    CampoMayusculas::make('codigo')
+                        ->label('Código')
+                        ->required()
+                        ->maxLength(20)
+                        ->helperText('Corto: EMERG, HOSP, QX.'),
+
+                    CampoMayusculas::make('nombre')
+                        ->label('Nombre')
+                        ->required()
+                        ->maxLength(255),
+
+                    Select::make('tipo')
+                        ->label('Tipo de área')
+                        ->options(fn (): array => collect(TipoServicio::cases())
+                            ->mapWithKeys(fn (TipoServicio $t): array => [$t->value => $t->etiqueta()])
+                            ->all())
+                        ->required()
+                        ->native(false)
+                        ->helperText('Determina si el área tiene camas y entra en el censo. No es cosmético.'),
+
+                    DatePicker::make('vigencia_desde')
+                        ->label('Vigente desde')
+                        ->required()
+                        ->default(now())
+                        ->native(false)
+                        ->displayFormat('d/m/Y'),
+                ])
+                ->createOptionModalHeading('Nueva área del hospital'),
         ];
     }
 
