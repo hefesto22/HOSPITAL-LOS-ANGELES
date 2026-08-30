@@ -193,16 +193,18 @@ final class AlmacenForm
                 ->createOptionForm([
                     SedeField::make(),
 
-                    CampoMayusculas::make('codigo')
-                        ->label('Código')
-                        ->required()
-                        ->maxLength(20)
-                        ->helperText('Corto: EMERG, HOSP, QX.'),
-
+                    /*
+                     * Sin campo de código: lo pone `Servicio::booted()` a
+                     * partir del nombre —EMERGENCIA da EMERG—. Quien está
+                     * creando un carrito no vino a inventar la
+                     * codificación de las áreas del hospital.
+                     */
                     CampoMayusculas::make('nombre')
-                        ->label('Nombre')
+                        ->label('Nombre del área')
                         ->required()
-                        ->maxLength(255),
+                        ->maxLength(255)
+                        ->columnSpanFull()
+                        ->helperText('EMERGENCIA, HOSPITALIZACIÓN, QUIRÓFANO. El código se genera solo.'),
 
                     Select::make('tipo')
                         ->label('Tipo de área')

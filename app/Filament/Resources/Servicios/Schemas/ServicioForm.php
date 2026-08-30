@@ -41,12 +41,18 @@ final class ServicioForm
             ->schema([
                 SedeField::make(),
 
+                /*
+                 * 🔴 NO SE PIDE AL CREAR. Lo pone `Servicio::booted()` a
+                 * partir del nombre: EMERGENCIA da EMERG, QUIRÓFANO da
+                 * QUIRO. Al editar se ve pero no se toca: está en los
+                 * encuentros y los cargos de esa área.
+                 */
                 CampoMayusculas::make('codigo')
                     ->label('Código')
-                    ->required()
-                    ->maxLength(20)
+                    ->hiddenOn('create')
                     ->disabledOn('edit')
-                    ->helperText('Único dentro de la sede. Dos sedes pueden tener cada una su EMERG.'),
+                    ->maxLength(20)
+                    ->helperText('Se genera solo del nombre y ya no cambia. Único dentro de la sede: dos sedes pueden tener cada una su EMERG.'),
 
                 CampoMayusculas::make('nombre')
                     ->label('Nombre')

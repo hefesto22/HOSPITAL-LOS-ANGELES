@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Domain\Enums\TipoServicio;
 use App\Models\Concerns\BelongsToSede;
 use App\Models\Concerns\GuardaEnMayusculas;
+use App\Services\AsignadorDeCodigoDeServicio;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\ServicioFactory;
@@ -54,6 +55,35 @@ class Servicio extends Model
         'vigencia_desde',
         'vigencia_hasta',
     ];
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL CÓDIGO SE PONE ACÁ Y NO EN LA PANTALLA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Un área se crea desde tres lugares: su propia pantalla, el modal
+     * que aparece al crear un almacén de servicio, y los seeders. Poner
+     * la asignación en la página de create dejaría los otros dos caminos
+     * pidiendo un código a mano — y el del modal es justamente el de
+     * alguien que estaba haciendo otra cosa.
+     *
+     * `filled()` y no `empty()`: un código explícito —el de un seeder, el
+     * de una migración de datos— manda siempre. Esto solo rellena el
+     * hueco.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (Servicio $servicio): void {
+            if (filled($servicio->codigo)) {
+                return;
+            }
+
+            $servicio->codigo = app(AsignadorDeCodigoDeServicio::class)->siguiente(
+                (string) $servicio->nombre,
+                $servicio->sede_id,
+            );
+        });
+    }
 
     /**
      * @return array<int, string>
