@@ -67,6 +67,8 @@ function elEstanteYElCarrito(): array
 /**
  * Deja `$cuantas` en bodega a `$costo` la unidad, como si hubieran
  * llegado del proveedor.
+ *
+ * @param array{bodega: Almacen, carrito: Almacen, item: Item, lote: Lote} $todo
  */
 function llegaronABodega(array $todo, string $cuantas, string $costo = '120.00'): void
 {
@@ -126,9 +128,12 @@ it('el kardex de los dos estantes cuadra con su propio saldo', function (): void
 
     $saldos = app(ConsultorDeExistencias::class);
 
-    foreach (['bodega', 'carrito'] as $donde) {
-        expect($saldos->segunElKardex($todo['item'], $todo[$donde])->redondeado(4))
-            ->toBe($saldos->totalEn($todo['item'], $todo[$donde])->redondeado(4), "el {$donde} no cuadra");
+    foreach ([$todo['bodega'], $todo['carrito']] as $almacen) {
+        expect($saldos->segunElKardex($todo['item'], $almacen)->redondeado(4))
+            ->toBe(
+                $saldos->totalEn($todo['item'], $almacen)->redondeado(4),
+                "{$almacen->nombre} no cuadra con su propio kardex",
+            );
     }
 })->note('El kardex es la verdad y el saldo es su resumen. El día que no coincidan, gana el kardex — pero eso no puede empezar acá.');
 
