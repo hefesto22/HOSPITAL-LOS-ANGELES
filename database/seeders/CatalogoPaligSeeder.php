@@ -53,6 +53,17 @@ use RuntimeException;
  * viva. El día que el hospital suba un precio suelto, lo sube en el
  * tarifario y este seeder no tiene nada que decir al respecto.
  *
+ * ⚠️ LA LISTA QUE ARMA ESTE SEEDER YA NO ES LA VIGENTE.
+ *
+ * `CatalogoMilitarSeeder` la recalcula sobre un documento posterior —la
+ * propuesta al Hospital Militar, que trae precios más altos en varios
+ * renglones— y corre después. Acá quedó porque el día que se escribió
+ * era el único documento que existía, y porque el precio de PALIG —lo
+ * único que este archivo manda de verdad— se sigue leyendo de acá.
+ *
+ * Si mañana se corre este seeder solo, la lista vuelve a la de agosto:
+ * hay que correr el del Militar detrás.
+ *
  * ⚠️ El precio se guarda SIN ISV. Estos servicios son exentos por el
  * Art. 15 inciso d de la Ley del ISV, así que hoy da igual — pero el día
  * que entre un ítem gravado, el impuesto lo pone la factura y no el

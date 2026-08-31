@@ -18,6 +18,7 @@ use App\Models\Medico;
 use App\Models\Tarifario;
 use App\Models\Unidad;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
@@ -41,20 +42,29 @@ use RuntimeException;
  * QUÉ TRAE EL DOCUMENTO Y QUÉ SE HIZO CON CADA COSA
  * ─────────────────────────────────────────────────────────────────────
  *
+ * ⚠️ LOS PRECIOS DEL DOCUMENTO SON EL PRECIO FINAL PARA EL MILITAR, y
+ * la lista del hospital es ese número MÁS 20 %. Si el papel dice 500, el
+ * Militar paga 500 y el particular 600. De ahí salen las dos filas de
+ * `tarifarios` de cada ítem, y por eso este seeder SÍ recalcula la
+ * lista: ver `precioDeLista()`.
+ *
  *   · Hospitalización, equipo médico, rayos X y laboratorio — precios
- *     de ítems que ya están en el catálogo. Entran como una fila de
- *     `tarifarios` con `convenio_id` = MILITAR. El precio de lista del
- *     hospital NO se toca: ya lo fijó el seeder de PALIG.
+ *     de ítems que ya están en el catálogo. Se les pone la fila del
+ *     Militar y se les recalcula la de lista.
  *   · «Otros laboratorios» — 86 estudios que no estaban en el catálogo.
- *     Se crean con su precio del Militar y, además, con precio de lista
- *     (ese mismo número más 20 %, el mismo criterio con el que se armó
- *     la lista inicial). Sin fila de lista, al paciente que paga de su
- *     bolsillo no se le podría cobrar el examen.
+ *     Se crean con sus dos filas. Sin la de lista, al paciente que paga
+ *     de su bolsillo no se le podría cobrar el examen.
  *   · Consulta externa — el papel lista MÉDICOS con su identidad, su
  *     especialidad y cuánto cobra cada uno. Los ítems son por
  *     ESPECIALIDAD y el precio de cada doctor va en `honorarios_medicos`
  *     con `convenio_id` = MILITAR: es exactamente para lo que existe esa
- *     tabla —dos cirujanos generales, uno cobra 1,000 y el otro 1,500—.
+ *     tabla —cuatro cirujanos generales, tres cobran 1,000 y el otro
+ *     1,500—.
+ *
+ *     ⚠️ El ítem igual lleva precio: el MENOR de sus doctores. Es el que
+ *     responde si alguien carga la consulta sin elegir médico, y sin él
+ *     esa consulta caería en el precio de lista —el del particular— y se
+ *     le cobraría de más a la aseguradora.
  *   · Ambulancia — las tres filas vienen en cero y el documento dice
  *     «No contamos con el servicio en este momento». No se crea nada:
  *     un ítem con precio cero es un ítem que alguien va a cargar.
@@ -88,6 +98,19 @@ class CatalogoMilitarSeeder extends Seeder
 
     /** Cuánto más caro es el precio de lista respecto del del Militar. */
     private const FACTOR_LISTA = '1.20';
+
+    /** Cuántos dígitos usar cuando la familia todavía no tiene ninguno. */
+    private const ANCHO_POR_DEFECTO = 4;
+
+    /**
+     * El próximo número y su ancho, por prefijo. Se llena solo.
+     *
+     * @var array<string, array{0: int, 1: int}>
+     */
+    private array $numeracion = [];
+
+    /** Cuántos ítems creó de verdad esta corrida. */
+    private int $creados = 0;
 
     /**
      * Precio del Militar para ítems que YA existen en el catálogo.
@@ -196,123 +219,145 @@ class CatalogoMilitarSeeder extends Seeder
         ['LAB-046', '475.00'],  // TSH TOTAL
         ['LAB-047', '60.00'],  // VES
         ['LAB-048', '100.00'],  // WRIGHT
+        
+        // ── Consulta externa ───────────────────────────────────────────
+        // El documento no le pone precio al item: se lo pone a cada
+        // medico. Va el MENOR de los suyos, que es lo conservador —
+        // cobrar de menos se corrige, cobrar de mas se devuelve— y es
+        // el que responde si alguien carga la consulta sin elegir
+        // doctor. Con doctor elegido manda su honorario.
+        ['CON-001', '1000.00'],  // CONSULTA EXTERNA CIRUGIA GENERAL
+        ['CON-002', '1000.00'],  // CONSULTA EXTERNA GINECOLOGIA
+        ['CON-003', '1000.00'],  // CONSULTA EXTERNA MEDICINA INTERNA
+        ['CON-004', '1000.00'],  // CONSULTA EXTERNA ORTOPEDIA
+        ['CON-005', '1500.00'],  // CONSULTA EXTERNA NEUMOLOGIA
+        ['CON-006', '1000.00'],  // CONSULTA EXTERNA PEDIATRIA
+        ['CON-007', '1500.00'],  // CONSULTA EXTERNA REUMATOLOGIA
     ];
 
     /**
      * Lo que el documento del Militar trae y el catálogo no tenía.
      *
+     * ⚠️ El primer campo es el PREFIJO del código, no el código: el
+     * número se pide en tiempo de ejecución (ver `codigoLibre()`).
+     *
      * @var list<array{0: string, 1: string, 2: TipoItem, 3: CategoriaLegalDeDescuento, 4: string, 5: numeric-string}>
      */
     private const NUEVOS = [
-        ['RX-007', 'PROYECCION DIGITAL DE RAYOS X SIN LECTURA', TipoItem::EstudioImagen, CategoriaLegalDeDescuento::RadiologiaYLaboratorio, 'UND', '400.00'],
-        ['CON-008', 'CONSULTA EXTERNA NUTRICION', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada, 'UND', '1000.00'],
-        ['CON-009', 'CONSULTA EXTERNA ODONTOLOGIA', TipoItem::Honorario, CategoriaLegalDeDescuento::OdontologiaYOftalmologia, 'UND', '500.00'],
-        ['CON-010', 'CONSULTA EXTERNA PSICOLOGIA', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada, 'UND', '850.00'],
-        ['CON-011', 'CONSULTA EXTERNA MEDICINA GENERAL', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral, 'UND', '270.00'],
-        ['CON-012', 'CONSULTA EXTERNA MEDICINA GENERAL HORA INHABIL', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral, 'UND', '500.00'],
+        ['RX', 'PROYECCION DIGITAL DE RAYOS X SIN LECTURA', TipoItem::EstudioImagen, CategoriaLegalDeDescuento::RadiologiaYLaboratorio, 'UND', '400.00'],
+        ['CON', 'CONSULTA EXTERNA NUTRICION', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada, 'UND', '1000.00'],
+        ['CON', 'CONSULTA EXTERNA ODONTOLOGIA', TipoItem::Honorario, CategoriaLegalDeDescuento::OdontologiaYOftalmologia, 'UND', '500.00'],
+        ['CON', 'CONSULTA EXTERNA PSICOLOGIA', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada, 'UND', '850.00'],
+        ['CON', 'CONSULTA EXTERNA MEDICINA GENERAL', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral, 'UND', '270.00'],
+        ['CON', 'CONSULTA EXTERNA MEDICINA GENERAL HORA INHABIL', TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral, 'UND', '500.00'],
     ];
 
     /**
-     * La hoja «OTROS LABORATORIOS»: 86 estudios, todos nuevos.
+     * La hoja «OTROS LABORATORIOS»: 86 estudios.
      *
      * Aparte por volumen: todos son estudio de laboratorio y caen bajo
-     * el mismo numeral del Art. 30, así que solo hacen falta el código,
-     * el nombre y el precio.
+     * el mismo numeral del Art. 30, así que solo hacen falta el nombre
+     * y el precio. El código lo pone `codigoLibre('LAB')`.
      *
-     * @var list<array{0: string, 1: string, 2: numeric-string}>
+     * @var list<array{0: string, 1: numeric-string}>
      */
     private const OTROS_LABORATORIOS = [
-        ['LAB-049', 'TIEMPO DE SANGRADO', '150.00'],
-        ['LAB-050', 'TIEMPO DE COAGULACION', '150.00'],
-        ['LAB-051', 'TIEMPO DE PROTOMBINA', '210.00'],
-        ['LAB-052', 'TIEMPO PARCIAL DE', '210.00'],
-        ['LAB-053', 'FROTIS DE SANGRE PERIFERICA', '350.00'],
-        ['LAB-054', 'RECUENTO DE PLAQUETAS EN FROTIS', '300.00'],
-        ['LAB-055', 'ANTI PEPTIDO CICLICO', '2100.00'],
-        ['LAB-056', 'CURVA DE TOLERANCIA', '700.00'],
-        ['LAB-057', 'TESTOSTERONA', '800.00'],
-        ['LAB-058', 'ANTIGENOS FEBRILES', '700.00'],
-        ['LAB-059', 'HELICOBACTER PYLORI EN HECES', '650.00'],
-        ['LAB-060', 'CRUCE SANGUINEO', '3500.00'],
-        ['LAB-061', 'UROCULTIVO', '600.00'],
-        ['LAB-062', 'TRANSFUSION 1 UNIDAD DE SANGRE', '8000.00'],
-        ['LAB-063', 'HORMONA T4 LIBRE', '700.00'],
-        ['LAB-064', 'LAB MAGNESIO', '450.00'],
-        ['LAB-065', 'FACTOR REUMATOIDEO', '200.00'],
-        ['LAB-066', 'CULTIVO DE SECRECIONES', '600.00'],
-        ['LAB-067', 'VIH ANTICUERPOS', '550.00'],
-        ['LAB-068', 'LAB AMONIO', '550.00'],
-        ['LAB-069', 'TROPONINAS', '1000.00'],
-        ['LAB-070', 'ESTRELTOLISINA ASO', '250.00'],
-        ['LAB-071', 'FIBRINOGENO', '800.00'],
-        ['LAB-072', 'LAB INR', '250.00'],
-        ['LAB-073', 'GASES ARTERIALES', '2000.00'],
-        ['LAB-074', 'PROTEINAS 24 HORAS', '200.00'],
-        ['LAB-075', 'ANTIGENO CA 125', '720.00'],
-        ['LAB-076', 'HORMONA T3 LIBRE', '700.00'],
-        ['LAB-077', 'VITAMINA B12', '2250.00'],
-        ['LAB-078', 'ACIDO FOLICO', '2250.00'],
-        ['LAB-079', 'PANEL RESPIRATORIO', '6300.00'],
-        ['LAB-080', 'CULTIVO KOH', '500.00'],
-        ['LAB-081', 'PROTEINURIA', '175.00'],
-        ['LAB-082', 'PRUEBAS LIQUIDO CEFALORRAQUIDEO', '700.00'],
-        ['LAB-083', 'TRANSFUSION UNIDAD DE PLASMA', '3500.00'],
-        ['LAB-084', 'CORTISOL', '1700.00'],
-        ['LAB-085', 'CITOMEGALOVIRUS', '2400.00'],
-        ['LAB-086', 'EPSTEIN BAR VIRUS', '2400.00'],
-        ['LAB-087', 'LABORATORIO ADA', '2500.00'],
-        ['LAB-088', 'ROTAVIRUS Y ADENOVIRUS', '450.00'],
-        ['LAB-089', 'FOSFORO', '310.00'],
-        ['LAB-090', 'ALCOHOLEMIA EN SALIVA', '175.00'],
-        ['LAB-091', 'COCAINA EN ORINA', '175.00'],
-        ['LAB-092', 'MARIHUANA EN ORINA', '175.00'],
-        ['LAB-093', 'COPROCULTIVO', '600.00'],
-        ['LAB-094', 'HEPATITIS A', '350.00'],
-        ['LAB-095', 'EXAMEN SIFILIS', '500.00'],
-        ['LAB-096', 'GAMA GLUTAMIL TRANSFERASA', '600.00'],
-        ['LAB-097', 'EXAMEN GRAM', '240.00'],
-        ['LAB-098', 'PRUEBA ESPECIAL', '2100.00'],
-        ['LAB-099', 'ANTIGENOS INFLUENZA', '470.00'],
-        ['LAB-100', 'COOMBS DIRECTO E INDIRECTO', '310.00'],
-        ['LAB-101', 'HEMOCULTIVO', '900.00'],
-        ['LAB-102', 'MICRO ALBUMINURIA', '250.00'],
-        ['LAB-103', 'EXAMEN DE LEPTOSPIRA', '1500.00'],
-        ['LAB-104', 'CLOSTRIDIUM DIFFICILE GDH', '2600.00'],
-        ['LAB-105', 'VITAMINA D', '1600.00'],
-        ['LAB-106', 'EXAMEN DE BAAR', '270.00'],
-        ['LAB-107', 'COCIENTE ALBUMINA CREATININA', '440.00'],
-        ['LAB-108', 'ANTICUERPO HEPATITITS C', '450.00'],
-        ['LAB-109', 'INSULINA', '650.00'],
-        ['LAB-110', 'RECUENTO DE RETICULOCITOS', '400.00'],
-        ['LAB-111', 'NIVELES DE HIERRO', '1050.00'],
-        ['LAB-112', 'SUPERFICIE HEPATITIS B', '500.00'],
-        ['LAB-113', 'AC. HEPATITIS B', '450.00'],
-        ['LAB-114', 'HEPATITIS C', '500.00'],
-        ['LAB-115', 'PROLACTINA', '750.00'],
-        ['LAB-116', 'ANTIGENO PROSTATICO LIBRE', '1400.00'],
-        ['LAB-117', 'CITOLOGIA DE HECES', '750.00'],
-        ['LAB-118', '% ANTIGENO PROTATICO LIBRE', '1400.00'],
-        ['LAB-119', 'HELICOBACTER PILORI EN SANGRE', '500.00'],
-        ['LAB-120', 'EXAMEN CHAGAS', '650.00'],
-        ['LAB-121', 'EXAMEN ANTI-ESTREPTOLISINA O', '300.00'],
-        ['LAB-122', 'CITOQUIMA Y GRAM DE LIQUIDOS', '1000.00'],
-        ['LAB-123', 'HORMONA FOLICULOESTIMULANTE', '1000.00'],
-        ['LAB-124', 'GLOBULINA FIJADORA DE HORMONAS', '1650.00'],
-        ['LAB-125', 'ESTRADIOL', '1700.00'],
-        ['LAB-126', 'HORMONA ADENOCORTICOTROPICA', '3000.00'],
-        ['LAB-127', 'ELECTROLITOS EN ORINA', '6000.00'],
-        ['LAB-128', 'HORMONA LUTEINIZANTE', '1200.00'],
-        ['LAB-129', 'CA 19-9', '1600.00'],
-        ['LAB-130', 'ALFA FETO PROTEINA', '1100.00'],
-        ['LAB-131', 'CA 15-3', '1100.00'],
-        ['LAB-132', 'CA 125', '1100.00'],
-        ['LAB-133', 'MICROALBUMINA ORINA AL AZAR', '480.00'],
-        ['LAB-134', 'TOXOPLASMOSIS', '1400.00'],
+        ['TIEMPO DE SANGRADO', '150.00'],
+        ['TIEMPO DE COAGULACION', '150.00'],
+        ['TIEMPO DE PROTOMBINA', '210.00'],
+        ['TIEMPO PARCIAL DE', '210.00'],
+        ['FROTIS DE SANGRE PERIFERICA', '350.00'],
+        ['RECUENTO DE PLAQUETAS EN FROTIS', '300.00'],
+        ['ANTI PEPTIDO CICLICO', '2100.00'],
+        ['CURVA DE TOLERANCIA', '700.00'],
+        ['TESTOSTERONA', '800.00'],
+        ['ANTIGENOS FEBRILES', '700.00'],
+        ['HELICOBACTER PYLORI EN HECES', '650.00'],
+        ['CRUCE SANGUINEO', '3500.00'],
+        ['UROCULTIVO', '600.00'],
+        ['TRANSFUSION 1 UNIDAD DE SANGRE', '8000.00'],
+        ['HORMONA T4 LIBRE', '700.00'],
+        ['LAB MAGNESIO', '450.00'],
+        ['FACTOR REUMATOIDEO', '200.00'],
+        ['CULTIVO DE SECRECIONES', '600.00'],
+        ['VIH ANTICUERPOS', '550.00'],
+        ['LAB AMONIO', '550.00'],
+        ['TROPONINAS', '1000.00'],
+        ['ESTRELTOLISINA ASO', '250.00'],
+        ['FIBRINOGENO', '800.00'],
+        ['LAB INR', '250.00'],
+        ['GASES ARTERIALES', '2000.00'],
+        ['PROTEINAS 24 HORAS', '200.00'],
+        ['ANTIGENO CA 125', '720.00'],
+        ['HORMONA T3 LIBRE', '700.00'],
+        ['VITAMINA B12', '2250.00'],
+        ['ACIDO FOLICO', '2250.00'],
+        ['PANEL RESPIRATORIO', '6300.00'],
+        ['CULTIVO KOH', '500.00'],
+        ['PROTEINURIA', '175.00'],
+        ['PRUEBAS LIQUIDO CEFALORRAQUIDEO', '700.00'],
+        ['TRANSFUSION UNIDAD DE PLASMA', '3500.00'],
+        ['CORTISOL', '1700.00'],
+        ['CITOMEGALOVIRUS', '2400.00'],
+        ['EPSTEIN BAR VIRUS', '2400.00'],
+        ['LABORATORIO ADA', '2500.00'],
+        ['ROTAVIRUS Y ADENOVIRUS', '450.00'],
+        ['FOSFORO', '310.00'],
+        ['ALCOHOLEMIA EN SALIVA', '175.00'],
+        ['COCAINA EN ORINA', '175.00'],
+        ['MARIHUANA EN ORINA', '175.00'],
+        ['COPROCULTIVO', '600.00'],
+        ['HEPATITIS A', '350.00'],
+        ['EXAMEN SIFILIS', '500.00'],
+        ['GAMA GLUTAMIL TRANSFERASA', '600.00'],
+        ['EXAMEN GRAM', '240.00'],
+        ['PRUEBA ESPECIAL', '2100.00'],
+        ['ANTIGENOS INFLUENZA', '470.00'],
+        ['COOMBS DIRECTO E INDIRECTO', '310.00'],
+        ['HEMOCULTIVO', '900.00'],
+        ['MICRO ALBUMINURIA', '250.00'],
+        ['EXAMEN DE LEPTOSPIRA', '1500.00'],
+        ['CLOSTRIDIUM DIFFICILE GDH', '2600.00'],
+        ['VITAMINA D', '1600.00'],
+        ['EXAMEN DE BAAR', '270.00'],
+        ['COCIENTE ALBUMINA CREATININA', '440.00'],
+        ['ANTICUERPO HEPATITITS C', '450.00'],
+        ['INSULINA', '650.00'],
+        ['RECUENTO DE RETICULOCITOS', '400.00'],
+        ['NIVELES DE HIERRO', '1050.00'],
+        ['SUPERFICIE HEPATITIS B', '500.00'],
+        ['AC. HEPATITIS B', '450.00'],
+        ['HEPATITIS C', '500.00'],
+        ['PROLACTINA', '750.00'],
+        ['ANTIGENO PROSTATICO LIBRE', '1400.00'],
+        ['CITOLOGIA DE HECES', '750.00'],
+        ['% ANTIGENO PROTATICO LIBRE', '1400.00'],
+        ['HELICOBACTER PILORI EN SANGRE', '500.00'],
+        ['EXAMEN CHAGAS', '650.00'],
+        ['EXAMEN ANTI-ESTREPTOLISINA O', '300.00'],
+        ['CITOQUIMA Y GRAM DE LIQUIDOS', '1000.00'],
+        ['HORMONA FOLICULOESTIMULANTE', '1000.00'],
+        ['GLOBULINA FIJADORA DE HORMONAS', '1650.00'],
+        ['ESTRADIOL', '1700.00'],
+        ['HORMONA ADENOCORTICOTROPICA', '3000.00'],
+        ['ELECTROLITOS EN ORINA', '6000.00'],
+        ['HORMONA LUTEINIZANTE', '1200.00'],
+        ['CA 19-9', '1600.00'],
+        ['ALFA FETO PROTEINA', '1100.00'],
+        ['CA 15-3', '1100.00'],
+        ['CA 125', '1100.00'],
+        ['MICROALBUMINA ORINA AL AZAR', '480.00'],
+        ['TOXOPLASMOSIS', '1400.00'],
     ];
 
     /**
      * Los médicos de consulta externa: nombre, identidad, código de
-     * especialidad, ítem que se cobra y lo que cobra ESE doctor.
+     * especialidad, NOMBRE del ítem que se cobra y lo que cobra ESE
+     * doctor.
+     *
+     * ⚠️ El ítem va por nombre y no por código: tres de estas consultas
+     * las crea este mismo seeder y su código no se conoce hasta que
+     * corre.
      *
      * ⚠️ La especialidad es la que dice la columna «Especialidad» del
      * documento. Los dos que traen sub-especialidad —un urólogo y una
@@ -325,22 +370,22 @@ class CatalogoMilitarSeeder extends Seeder
      * @var list<array{0: string, 1: string, 2: string, 3: string, 4: numeric-string}>
      */
     private const MEDICOS = [
-        ['Dr. Juan Carlos Cardona Medina', '0401-1966-00708', 'CIRGEN', 'CON-001', '1000.00'],
-        ['Dr. Roberto Abner Sanabria Peña', '0801-1989-00076', 'CIRGEN', 'CON-001', '1000.00'],
-        ['Dra. Sayda Melissa Mejia Suarez', '0401-1995-01074', 'CIRGEN', 'CON-001', '1000.00'],
-        ['Dr. Juan Carlos Cardona Contreras', '0801-1990-09368', 'CIRGEN', 'CON-001', '1500.00'],  // Urologo
-        ['Dra. Nancy Lizzeth Rivera Henriquez', '0401-1984-00074', 'GINECO', 'CON-002', '1000.00'],
-        ['Dra. Wendy Rosalina Arias Aguilera', '0601-1993-01532', 'MEDINT', 'CON-003', '1000.00'],
-        ['Dra. Laure Mabel Reyes Pineda', '0503-1989-01717', 'NEUMOL', 'CON-005', '1500.00'],
-        ['Lic. Bianca Dallanara Ramirez Peña', '0401-1993-00336', 'NUTRIC', 'CON-008', '1000.00'],
-        ['Dra. Angela Lizeth Cardona Contreras', '0801-1993-14260', 'ODONTO', 'CON-009', '500.00'],
-        ['Dra. Elida Argentina Diaz Hernandez', '0401-1983-01302', 'ODONTO', 'CON-009', '500.00'],
-        ['Dra. Stefhany Maricela Castillo Mejia', '0401-1994-00347', 'ODONTO', 'CON-009', '500.00'],
-        ['Dr. Alexis Oswaldo Franco Mejia', '1401-1993-00036', 'ORTOPE', 'CON-004', '1000.00'],
-        ['Dra. Fabiola Carolina Ramos Benitez', '0401-1989-00105', 'PEDIAT', 'CON-006', '1000.00'],
-        ['Dra. Ana Polette Valeriano', '0801-1991-25267', 'PEDIAT', 'CON-006', '1500.00'],  // Neumologa
-        ['Lic. Rosa del Carmen Guerra Pineda', '0413-1992-00578', 'PSICOL', 'CON-010', '850.00'],
-        ['Dra. Silvia Siham Mendoza Kunkar', '0501-1991-03080', 'REUMAT', 'CON-007', '1500.00'],
+        ['Dr. Juan Carlos Cardona Medina', '0401-1966-00708', 'CIRGEN', 'CONSULTA EXTERNA CIRUGIA GENERAL', '1000.00'],
+        ['Dr. Roberto Abner Sanabria Peña', '0801-1989-00076', 'CIRGEN', 'CONSULTA EXTERNA CIRUGIA GENERAL', '1000.00'],
+        ['Dra. Sayda Melissa Mejia Suarez', '0401-1995-01074', 'CIRGEN', 'CONSULTA EXTERNA CIRUGIA GENERAL', '1000.00'],
+        ['Dr. Juan Carlos Cardona Contreras', '0801-1990-09368', 'CIRGEN', 'CONSULTA EXTERNA CIRUGIA GENERAL', '1500.00'],  // Urologo
+        ['Dra. Nancy Lizzeth Rivera Henriquez', '0401-1984-00074', 'GINECO', 'CONSULTA EXTERNA GINECOLOGIA', '1000.00'],
+        ['Dra. Wendy Rosalina Arias Aguilera', '0601-1993-01532', 'MEDINT', 'CONSULTA EXTERNA MEDICINA INTERNA', '1000.00'],
+        ['Dra. Laure Mabel Reyes Pineda', '0503-1989-01717', 'NEUMOL', 'CONSULTA EXTERNA NEUMOLOGIA', '1500.00'],
+        ['Lic. Bianca Dallanara Ramirez Peña', '0401-1993-00336', 'NUTRIC', 'CONSULTA EXTERNA NUTRICION', '1000.00'],
+        ['Dra. Angela Lizeth Cardona Contreras', '0801-1993-14260', 'ODONTO', 'CONSULTA EXTERNA ODONTOLOGIA', '500.00'],
+        ['Dra. Elida Argentina Diaz Hernandez', '0401-1983-01302', 'ODONTO', 'CONSULTA EXTERNA ODONTOLOGIA', '500.00'],
+        ['Dra. Stefhany Maricela Castillo Mejia', '0401-1994-00347', 'ODONTO', 'CONSULTA EXTERNA ODONTOLOGIA', '500.00'],
+        ['Dr. Alexis Oswaldo Franco Mejia', '1401-1993-00036', 'ORTOPE', 'CONSULTA EXTERNA ORTOPEDIA', '1000.00'],
+        ['Dra. Fabiola Carolina Ramos Benitez', '0401-1989-00105', 'PEDIAT', 'CONSULTA EXTERNA PEDIATRIA', '1000.00'],
+        ['Dra. Ana Polette Valeriano', '0801-1991-25267', 'PEDIAT', 'CONSULTA EXTERNA PEDIATRIA', '1500.00'],  // Neumologa
+        ['Lic. Rosa del Carmen Guerra Pineda', '0413-1992-00578', 'PSICOL', 'CONSULTA EXTERNA PSICOLOGIA', '850.00'],
+        ['Dra. Silvia Siham Mendoza Kunkar', '0501-1991-03080', 'REUMAT', 'CONSULTA EXTERNA REUMATOLOGIA', '1500.00'],
     ];
 
     public function run(): void
@@ -349,20 +394,22 @@ class CatalogoMilitarSeeder extends Seeder
         $puestos = 0;
 
         foreach (self::PRECIOS as [$codigo, $precio]) {
-            $this->precioDelMilitar($this->itemExistente($codigo), $militar, $precio);
-            $puestos++;
-        }
-
-        foreach (self::NUEVOS as [$codigo, $nombre, $tipo, $categoria, $unidad, $precio]) {
-            $item = $this->itemDeLaPropuesta($codigo, $nombre, $tipo, $categoria, $unidad);
+            $item = $this->itemExistente($codigo);
             $this->precioDeLista($item, $precio);
             $this->precioDelMilitar($item, $militar, $precio);
             $puestos++;
         }
 
-        foreach (self::OTROS_LABORATORIOS as [$codigo, $nombre, $precio]) {
+        foreach (self::NUEVOS as [$prefijo, $nombre, $tipo, $categoria, $unidad, $precio]) {
+            $item = $this->itemDeLaPropuesta($prefijo, $nombre, $tipo, $categoria, $unidad);
+            $this->precioDeLista($item, $precio);
+            $this->precioDelMilitar($item, $militar, $precio);
+            $puestos++;
+        }
+
+        foreach (self::OTROS_LABORATORIOS as [$nombre, $precio]) {
             $item = $this->itemDeLaPropuesta(
-                $codigo,
+                'LAB',
                 $nombre,
                 TipoItem::EstudioLaboratorio,
                 CategoriaLegalDeDescuento::RadiologiaYLaboratorio,
@@ -374,14 +421,15 @@ class CatalogoMilitarSeeder extends Seeder
             $puestos++;
         }
 
-        foreach (self::MEDICOS as [$nombre, $identidad, $especialidad, $codigoItem, $precio]) {
+        foreach (self::MEDICOS as [$nombre, $identidad, $especialidad, $nombreItem, $precio]) {
             $medico = $this->medico($nombre, $identidad, $especialidad);
-            $this->honorario($medico, $this->itemExistente($codigoItem), $militar, $precio);
+            $this->honorario($medico, $this->itemDeConsulta($nombreItem), $militar, $precio);
         }
 
         $this->command?->info("✓ {$puestos} precios del Hospital Militar cargados.");
         $this->command?->info('✓ '.count(self::MEDICOS).' médicos de consulta externa con su honorario para el Militar.');
-        $this->command?->comment('  Los 86 estudios de «otros laboratorios» son nuevos: llevan precio de lista (el del Militar más 20 %) además del del convenio.');
+        $this->command?->comment("  {$this->creados} ítems se crearon; el resto del documento ya estaba en el catálogo.");
+        $this->command?->comment('  El precio de lista de TODOS ellos quedó en el del Militar más 20 %: si el papel dice 500, el Militar paga 500 y el particular 600.');
         $this->command?->warn('  ⚠️ Ambulancia no se cargó: las tres filas vienen en cero y el documento dice que no hay servicio.');
         $this->command?->warn('  ⚠️ El convenio quedó con cobertura 0 %: el Militar aprueba un MONTO por caso, y ese monto se registra en la cuenta al facturar.');
         $this->command?->warn('  ⚠️ Falta el R.T.N. del Hospital Militar: cargalo en Seguros y convenios antes de emitirle una factura.');
@@ -440,55 +488,68 @@ class CatalogoMilitarSeeder extends Seeder
     }
 
     /**
+     * La consulta a la que se le cuelga el honorario del médico.
+     *
+     * Por NOMBRE: siete las creó el seeder de PALIG con código CON-00x y
+     * tres las acaba de crear este —con el número que estuviera libre—.
+     * El nombre es lo único que vale para las diez.
+     */
+    private function itemDeConsulta(string $nombre): Item
+    {
+        $item = Item::query()->where('nombre', $nombre)->first();
+
+        if (! $item instanceof Item) {
+            throw new RuntimeException(
+                "Falta el ítem «{$nombre}». Corré CatalogoPaligSeeder antes que este seeder, "
+                .'y si lo renombraron desde la pantalla, corregí el nombre en MEDICOS.'
+            );
+        }
+
+        return $item;
+    }
+
+    /**
      * El ítem nuevo de la propuesta: se busca POR NOMBRE y solo se crea
      * si de verdad no está.
      *
      * ─────────────────────────────────────────────────────────────────
-     * 🔴 POR QUÉ NO ES UN `updateOrCreate` POR CÓDIGO
+     * 🔴 EL CÓDIGO NO SE FIJA ACÁ, SE PIDE
      * ─────────────────────────────────────────────────────────────────
      *
-     * Los códigos que este seeder propone —LAB-049 en adelante— son los
-     * MISMOS que `AsignadorDeCodigoDeItem` reparte cuando alguien crea
-     * un examen desde la pantalla: toma el máximo con ese prefijo y le
-     * suma uno. Si el laboratorio dio de alta tres exámenes suyos entre
-     * el seeder de PALIG y hoy, LAB-049 ya existe y es de ellos — y un
-     * `updateOrCreate` por código le cambiaría el nombre y la categoría
-     * a un ítem que alguien está usando, sin decir nada.
+     * La primera versión traía los códigos escritos —LAB-049 en
+     * adelante— y reventó en la primera corrida: LAB-049 ya existía y
+     * era «EMOGRAMA», un examen que el laboratorio dio de alta desde la
+     * pantalla después del seeder de PALIG. Es lo normal: el catálogo
+     * está VIVO, y cualquier número que este archivo escriba hoy puede
+     * ser de otro mañana.
      *
-     * Buscar primero por nombre además hace que correrlo dos veces no
-     * pise correcciones hechas a mano: el ítem ya está, se le pone el
-     * precio y listo.
+     * Así que se pide el siguiente libre, igual que hace
+     * `AsignadorDeCodigoDeItem` cuando alguien carga un ítem a mano. El
+     * seeder ya no compite por códigos con nadie.
      *
-     * ⚠️ Si el código está tomado por OTRO ítem, esto revienta con los
-     * dos nombres en el mensaje. Es a propósito: quién se queda con el
-     * código es una decisión del hospital, no del seeder.
+     * Buscar primero por nombre hace además que correrlo dos veces no
+     * duplique nada ni pise correcciones hechas a mano: el ítem ya está,
+     * se le pone el precio y listo.
      */
     private function itemDeLaPropuesta(
-        string $codigo,
+        string $prefijo,
         string $nombre,
         TipoItem $tipo,
         CategoriaLegalDeDescuento $categoria,
         string $unidad,
     ): Item {
-        $porNombre = Item::query()->where('nombre', $nombre)->first();
+        $existente = Item::query()->where('nombre', $nombre)->first();
 
-        if ($porNombre instanceof Item) {
-            return $porNombre;
+        if ($existente instanceof Item) {
+            return $existente;
         }
 
-        $ocupado = Item::query()->where('codigo', $codigo)->first();
-
-        if ($ocupado instanceof Item) {
-            throw new RuntimeException(
-                "El código «{$codigo}» ya lo usa «{$ocupado->nombre}», y la propuesta del Militar lo "
-                ."quiere para «{$nombre}». Renombrá el código en el seeder o en el catálogo antes de seguir."
-            );
-        }
+        $this->creados++;
 
         /** @var Item $item */
         $item = Item::query()->create(
             [
-                'codigo' => $codigo,
+                'codigo' => $this->codigoLibre($prefijo),
                 'nombre' => $nombre,
                 'tipo'   => $tipo,
 
@@ -512,6 +573,72 @@ class CatalogoMilitarSeeder extends Seeder
         return $item;
     }
 
+    /**
+     * El siguiente código libre de la familia, con el ancho que esa
+     * familia ya usa.
+     *
+     * Copia la regla de `AsignadorDeCodigoDeItem` en vez de llamarlo:
+     * ese servicio recibe una `CategoriaItem` —que estos ítems no
+     * tienen— y devuelve UN código por consulta. Acá se piden 87
+     * seguidos, así que el máximo se lee una vez por prefijo y el resto
+     * se cuenta en memoria.
+     *
+     * ⚠️ `DB::table` y no el modelo: cuenta también los borrados. Un
+     * código retirado NO se reutiliza —aparece en facturas viejas— y dos
+     * ítems distintos con el mismo código a diez años de distancia es
+     * exactamente lo que hace que una auditoría no cierre.
+     */
+    private function codigoLibre(string $prefijo): string
+    {
+        if (! isset($this->numeracion[$prefijo])) {
+            $this->numeracion[$prefijo] = $this->ultimoDe($prefijo);
+        }
+
+        [$ultimo, $ancho] = $this->numeracion[$prefijo];
+        $this->numeracion[$prefijo] = [$ultimo + 1, $ancho];
+
+        return $prefijo.'-'.str_pad((string) ($ultimo + 1), $ancho, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * El número más alto ya usado con ese prefijo, y con cuántos dígitos
+     * se escribió.
+     *
+     * Se filtra por LIKE en la base y se valida el patrón en PHP, igual
+     * que en `AsignadorDeCodigoDeItem`: son decenas de filas por
+     * prefijo, no miles.
+     *
+     * @return array{0: int, 1: int}
+     */
+    private function ultimoDe(string $prefijo): array
+    {
+        /** @var array<int, string> $codigos */
+        $codigos = DB::table('items')
+            ->where('codigo', 'like', $prefijo.'-%')
+            ->pluck('codigo')
+            ->all();
+
+        $patron = '/^'.preg_quote($prefijo, '/').'-(\d+)$/';
+
+        $mayor = 0;
+        $ancho = self::ANCHO_POR_DEFECTO;
+
+        foreach ($codigos as $codigo) {
+            if (preg_match($patron, $codigo, $partes) !== 1) {
+                continue;
+            }
+
+            $numero = (int) $partes[1];
+
+            if ($numero >= $mayor) {
+                $mayor = $numero;
+                $ancho = mb_strlen($partes[1]);
+            }
+        }
+
+        return [$mayor, $ancho];
+    }
+
     /** @param numeric-string $precio */
     private function precioDelMilitar(Item $item, Convenio $militar, string $precio): void
     {
@@ -530,20 +657,32 @@ class CatalogoMilitarSeeder extends Seeder
     }
 
     /**
-     * El precio para quien paga de su bolsillo, solo para los ítems que
-     * este seeder crea.
+     * El precio para quien paga de su bolsillo: el del Militar más 20 %.
      *
-     * ⚠️ `firstOrCreate` y no `updateOrCreate`: los ítems que ya existían
-     * tienen su precio de lista puesto por el seeder de PALIG, y algunos
-     * pudieron corregirse a mano desde la pantalla. Pisarlos con una
-     * cuenta hecha sobre otro tarifario sería cambiar precios que nadie
-     * pidió cambiar.
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 SE PISA EL QUE HABÍA, Y ESO ES LO CORRECTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La lista la había armado `CatalogoPaligSeeder` como PALIG + 20 %,
+     * porque ese era el único documento que existía. Este es más nuevo
+     * —se llama «Propuesta Actualizada»— y trae precios que en varios
+     * renglones son más altos que aquellos: alimentación por día iba a
+     * L 360 de lista y el Militar paga L 500.
+     *
+     * Con la lista vieja, el particular pagaba MENOS que la aseguradora.
+     * Es al revés de como tiene que ser, y no es un detalle contable: es
+     * el hospital vendiéndole más barato al que no tiene seguro que al
+     * que sí, sobre el mismo servicio y el mismo día.
+     *
+     * Así que la lista se recalcula sobre el documento nuevo. El precio
+     * de PALIG NO se toca: ese es lo que PALIG negoció y sigue siendo lo
+     * que PALIG paga.
      *
      * @param numeric-string $precio
      */
     private function precioDeLista(Item $item, string $precio): void
     {
-        Tarifario::query()->firstOrCreate(
+        Tarifario::query()->updateOrCreate(
             [
                 'item_id'        => $item->id,
                 'convenio_id'    => null,
