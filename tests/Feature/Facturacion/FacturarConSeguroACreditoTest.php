@@ -87,6 +87,9 @@ function abonarle(Cuenta $cuenta, string $monto): void
     ]);
 }
 
+/**
+ * @param numeric-string $precio
+ */
 function conUnServicioDe(Cuenta $cuenta, string $precio): void
 {
     app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(

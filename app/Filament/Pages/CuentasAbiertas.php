@@ -2881,21 +2881,27 @@ class CuentasAbiertas extends Page
                             return new HtmlString('&nbsp;');
                         }
 
-        /*
-                         * 🔴 LO QUE FALTA ES LO DEL PACIENTE.
-                         *
-                         * Con seguro, el total de la cuenta y lo que hay
-                         * que cobrar antes de facturar son dos números
-                         * distintos: los L 7,000 de la aseguradora se
-                         * facturan y se cobran después. Anunciar el total
-                         * en rojo mandaba a cobrarle al paciente una
-                         * plata que no le toca.
-                         */
+                        /*
+                                         * 🔴 LO QUE FALTA ES LO DEL PACIENTE.
+                                         *
+                                         * Con seguro, el total de la cuenta y lo que hay
+                                         * que cobrar antes de facturar son dos números
+                                         * distintos: los L 7,000 de la aseguradora se
+                                         * facturan y se cobran después. Anunciar el total
+                                         * en rojo mandaba a cobrarle al paciente una
+                                         * plata que no le toca.
+                                         */
                         $saldo = $cuenta->saldoPendienteDelPaciente();
 
                         $texto = 'Total <strong>L '.number_format((float) $cuenta->total, 2).'</strong>';
 
-                        if ($cuenta->saldoDeLaAseguradora()->mayorQue('0')) {
+                        /*
+                         * `esCero()` y no `mayorQue('0')`: a diferencia
+                         * de `Decimal`, `Monto::mayorQue()` compara
+                         * contra otro `Monto` —lleva moneda adentro— y
+                         * un string suelto no lo es.
+                         */
+                        if (! $cuenta->saldoDeLaAseguradora()->esCero()) {
                             $texto .= ' · seguro L '
                                 .number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2);
                         }
