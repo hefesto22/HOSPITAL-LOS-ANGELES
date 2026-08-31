@@ -15,18 +15,25 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
- * Lo que un médico cobra por un honorario del catálogo.
+ * Lo que un médico cobra por un honorario del catálogo, para un pagador.
+ *
+ * `convenio_id` nulo = el precio GENERAL del médico: vale para todo
+ * pagador que no tenga fila propia. Un doctor no le cobra lo mismo al
+ * particular que al del Hospital Militar o al de PALIG, y esa diferencia
+ * es una fila más, no una corrección a mano en cada cobro.
  *
  * ⚠️ MISMA BASE QUE EL TARIFARIO: precio unitario ANTES de ISV.
  *
  * @property int $id
  * @property int $medico_id
  * @property int $item_id
+ * @property int|null $convenio_id
  * @property numeric-string $precio
  * @property CarbonInterface $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
  * @property-read Item $item
  * @property-read Medico $medico
+ * @property-read Convenio|null $convenio
  */
 class HonorarioMedico extends Model
 {
@@ -43,6 +50,7 @@ class HonorarioMedico extends Model
     protected $fillable = [
         'medico_id',
         'item_id',
+        'convenio_id',
         'precio',
         'vigencia_desde',
         'vigencia_hasta',
@@ -73,6 +81,18 @@ class HonorarioMedico extends Model
     public function item(): BelongsTo
     {
         return $this->belongsTo(Item::class);
+    }
+
+    /**
+     * El pagador al que le cobra este precio, o nulo cuando es el precio
+     * general del médico —el que vale para todo pagador que no tenga
+     * fila propia—.
+     *
+     * @return BelongsTo<Convenio, $this>
+     */
+    public function convenio(): BelongsTo
+    {
+        return $this->belongsTo(Convenio::class);
     }
 
     /**

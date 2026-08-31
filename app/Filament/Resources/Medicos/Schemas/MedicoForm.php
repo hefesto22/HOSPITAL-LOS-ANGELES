@@ -8,6 +8,7 @@ use App\Domain\Enums\TipoItem;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\MontoField;
 use App\Filament\Schemas\Components\TelefonoHondurasField;
+use App\Models\Convenio;
 use App\Models\Especialidad;
 use App\Models\Item;
 use App\Models\User;
@@ -121,7 +122,9 @@ final class MedicoForm
                     ->description(
                         'Solo los honorarios en los que este doctor cobra distinto del tarifario. '
                         .'Lo que no esté acá se cobra al precio de la lista del hospital, y eso es '
-                        .'lo normal: la lista puede quedar vacía.'
+                        .'lo normal: la lista puede quedar vacía. Y si le cobra distinto a una '
+                        .'aseguradora, es otro renglón con ese pagador: lo específico gana y el '
+                        .'precio general queda de respaldo.'
                     )
                     ->schema([
                         Repeater::make('honorarios')
@@ -129,17 +132,15 @@ final class MedicoForm
                             ->relationship()
                             ->addActionLabel('Agregar un honorario')
                             ->defaultItems(0)
-                            ->columns(4)
-                            ->itemLabel(fn (array $state): ?string => is_numeric($state['item_id'] ?? null)
-                                ? Item::query()->find((int) $state['item_id'])?->nombre
-                                : null)
+                            ->columns(6)
+                            ->itemLabel(fn (array $state): ?string => self::comoSeLee($state))
                             ->schema([
                                 Select::make('item_id')
                                     ->label('Honorario')
                                     ->required()
                                     ->native(false)
                                     ->searchable()
-                                    ->columnSpan(2)
+                                    ->columnSpan(4)
                                     /*
                                      * Solo honorarios. Un medicamento con
                                      * «precio de médico» no es una
@@ -158,7 +159,30 @@ final class MedicoForm
                                         ? Item::query()->find((int) $value)?->etiqueta()
                                         : null),
 
+                                /*
+                                 * 🔴 EL PAGADOR, PORQUE EL PRECIO CAMBIA
+                                 * CON ÉL.
+                                 *
+                                 * Un doctor no le cobra lo mismo al
+                                 * paciente de la calle que al del
+                                 * Hospital Militar o al de PALIG. Vacío
+                                 * es el precio general: el que se usa con
+                                 * todo pagador que no tenga su propio
+                                 * renglón.
+                                 */
+                                Select::make('convenio_id')
+                                    ->label('Pagador')
+                                    ->native(false)
+                                    ->columnSpan(2)
+                                    ->placeholder('Cualquiera (precio general)')
+                                    ->options(fn (): array => Convenio::query()
+                                        ->orderBy('nombre')
+                                        ->pluck('nombre', 'id')
+                                        ->all())
+                                    ->helperText('Vacío = vale para todos los que no tengan renglón propio.'),
+
                                 MontoField::make('precio', 'Cobra')
+                                    ->columnSpan(2)
                                     ->helperText('Antes de ISV, igual que el tarifario.'),
 
                                 DatePicker::make('vigencia_desde')
@@ -166,6 +190,7 @@ final class MedicoForm
                                     ->required()
                                     ->default(now())
                                     ->native(false)
+                                    ->columnSpan(3)
                                     ->displayFormat('d/m/Y'),
 
                                 DatePicker::make('vigencia_hasta')
@@ -173,11 +198,43 @@ final class MedicoForm
                                     ->native(false)
                                     ->displayFormat('d/m/Y')
                                     ->afterOrEqual('vigencia_desde')
-                                    ->columnSpanFull()
+                                    ->columnSpan(3)
                                     ->helperText('Vacío mientras siga cobrando este precio.'),
                             ]),
                     ]),
             ]);
+    }
+
+    /**
+     * El título del renglón plegado: «CONSULTA EXTERNA — PALIG».
+     *
+     * Con varios pagadores por honorario, mostrar solo el nombre del
+     * honorario deja tres renglones que se leen iguales y hay que abrir
+     * uno por uno para saber cuál es cuál.
+     *
+     * @param array<string, mixed> $state
+     */
+    private static function comoSeLee(array $state): ?string
+    {
+        $itemId = $state['item_id'] ?? null;
+
+        if (! is_numeric($itemId)) {
+            return null;
+        }
+
+        $nombre = Item::query()->find((int) $itemId)?->nombre;
+
+        if ($nombre === null) {
+            return null;
+        }
+
+        $convenioId = $state['convenio_id'] ?? null;
+
+        $pagador = is_numeric($convenioId)
+            ? Convenio::query()->find((int) $convenioId)?->nombre
+            : null;
+
+        return $pagador === null ? $nombre : $nombre.' — '.$pagador;
     }
 
     /**

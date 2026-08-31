@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\TipoItem;
+use App\Models\Convenio;
 use App\Models\HonorarioMedico;
 use App\Models\Item;
 use App\Models\Medico;
 use App\Services\ResolutorDeHonorario;
+use Illuminate\Database\QueryException;
 
 /**
  * El mismo honorario del catálogo, un precio distinto por médico.
@@ -70,7 +72,7 @@ it('ignora el precio cuya vigencia ya se cerro', function (): void {
     expect(resolutorDeHonorario()->para($medico, $consulta))->toBeNull();
 });
 
-it('con dos precios abiertos manda el que empezo despues', function (): void {
+it('🔴 la base rechaza dos precios vigentes a la vez para el mismo pagador', function (): void {
     $consulta = honorarioDelCatalogo();
     $medico = Medico::factory()->create();
 
@@ -81,15 +83,67 @@ it('con dos precios abiertos manda el que empezo despues', function (): void {
         'vigencia_desde' => now()->subMonths(6)->toDateString(),
     ]);
 
-    HonorarioMedico::factory()->create([
+    expect(fn () => HonorarioMedico::factory()->create([
         'medico_id'      => $medico->id,
         'item_id'        => $consulta->id,
         'precio'         => '650.0000',
         'vigencia_desde' => now()->subMonth()->toDateString(),
+    ]))->toThrow(QueryException::class);
+})->note('Dos precios abiertos del mismo médico dejarían el cobro a merced del ORDER BY: dos pacientes atendidos el mismo día por lo mismo pagarían distinto según el orden en que se cargaron los datos. Se impide en la base, no en un first() prolijo.');
+
+it('le cobra al asegurado el precio negociado con su seguro', function (): void {
+    $consulta = honorarioDelCatalogo();
+    $medico = Medico::factory()->create();
+    $palig = Convenio::factory()->create(['nombre' => 'PALIG']);
+
+    HonorarioMedico::factory()->create([
+        'medico_id' => $medico->id,
+        'item_id'   => $consulta->id,
+        'precio'    => '600.0000',
     ]);
 
-    expect(resolutorDeHonorario()->para($medico, $consulta)?->valor())->toBe('650.00');
-})->note('El índice único impide dos filas con la misma fecha de inicio, pero no una de enero y otra de junio las dos abiertas: manda la última que alguien decidió.');
+    HonorarioMedico::factory()->paraElPagador($palig)->create([
+        'medico_id' => $medico->id,
+        'item_id'   => $consulta->id,
+        'precio'    => '450.0000',
+    ]);
+
+    expect(resolutorDeHonorario()->para($medico, $consulta, $palig)?->valor())->toBe('450.00');
+})->note('Lo específico gana: la fila del pagador manda sobre el precio general del médico.');
+
+it('cae al precio general cuando ese seguro no tiene renglon propio', function (): void {
+    $consulta = honorarioDelCatalogo();
+    $medico = Medico::factory()->create();
+    $militar = Convenio::factory()->create(['nombre' => 'HOSPITAL MILITAR']);
+
+    HonorarioMedico::factory()->create([
+        'medico_id' => $medico->id,
+        'item_id'   => $consulta->id,
+        'precio'    => '600.0000',
+    ]);
+
+    expect(resolutorDeHonorario()->para($medico, $consulta, $militar)?->valor())->toBe('600.00');
+})->note('Lo general siempre responde: sin fila propia, el pagador paga el precio general del médico.');
+
+it('🔴 no le cobra a un pagador el precio negociado con otro', function (): void {
+    $consulta = honorarioDelCatalogo();
+    $medico = Medico::factory()->create();
+    $palig = Convenio::factory()->create(['nombre' => 'PALIG']);
+    $militar = Convenio::factory()->create(['nombre' => 'HOSPITAL MILITAR']);
+
+    HonorarioMedico::factory()->paraElPagador($palig)->create([
+        'medico_id' => $medico->id,
+        'item_id'   => $consulta->id,
+        'precio'    => '450.0000',
+    ]);
+
+    /*
+     * Sin precio general y sin fila del militar: nulo, o sea «cobrá lo
+     * que dice el tarifario». Devolver los 450 de PALIG seria aplicarle
+     * a un seguro la tarifa que se negocio con otro.
+     */
+    expect(resolutorDeHonorario()->para($medico, $consulta, $militar))->toBeNull();
+});
 
 it('🔴 no le pone precio de medico a lo que no es un honorario', function (): void {
     $medicamento = Item::factory()->medicamento()->create();

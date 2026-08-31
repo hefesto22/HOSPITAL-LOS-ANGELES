@@ -295,6 +295,14 @@ class CuentasAbiertas extends Page
     private array $medicosPorId = [];
 
     /**
+     * La cuenta del formulario, leída una sola vez por pintada.
+     *
+     * El pagador manda en el precio del honorario, así que se pregunta
+     * en cada tecla; sin esto son dos consultas por pulsación.
+     */
+    private ?Cuenta $cuentaLeida = null;
+
+    /**
      * La línea cuya ✕ está esperando que le escriban el porqué.
      *
      * Nula casi siempre: solo se llena cuando la línea es de otro turno o
@@ -1163,6 +1171,7 @@ class CuentasAbiertas extends Page
                  */
                 $this->precioPropuestoPorItem = [];
                 $this->medicosPorId = [];
+                $this->cuentaLeida = null;
 
                 /*
                  * Cada línea arranca sin filtro. Corre al abrir el modal y
@@ -2277,7 +2286,45 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        return app(ResolutorDeHonorario::class)->para($medico, $item);
+        /*
+         * 🔴 CON EL PAGADOR DE ESTA CUENTA. El doctor no le cobra lo
+         * mismo al paciente de la calle que al del Hospital Militar o al
+         * de PALIG; preguntar sin convenio devolvería siempre su precio
+         * general y le cobraría de más al asegurado.
+         */
+        return app(ResolutorDeHonorario::class)->para($medico, $item, $this->pagadorDeLaCuenta());
+    }
+
+    /**
+     * El convenio de la cuenta que se está cobrando.
+     *
+     * Memoriza: se pregunta en cada pintada del modal, y son dos
+     * consultas —la cuenta y su pagador—.
+     */
+    private function pagadorDeLaCuenta(): ?Convenio
+    {
+        $cuenta = $this->cuentaEnCurso();
+
+        return $cuenta instanceof Cuenta ? $cuenta->convenio : null;
+    }
+
+    /**
+     * La cuenta del formulario, ya con su pagador y su sede.
+     */
+    private function cuentaEnCurso(): ?Cuenta
+    {
+        if ($this->cuentaDelFormulario === null) {
+            return null;
+        }
+
+        if ($this->cuentaLeida instanceof Cuenta
+            && (int) $this->cuentaLeida->getKey() === $this->cuentaDelFormulario) {
+            return $this->cuentaLeida;
+        }
+
+        $cuenta = Cuenta::query()->with(['convenio', 'sede'])->find($this->cuentaDelFormulario);
+
+        return $this->cuentaLeida = $cuenta instanceof Cuenta ? $cuenta : null;
     }
 
     /**
@@ -2400,7 +2447,13 @@ class CuentasAbiertas extends Page
          * unos pocos doctores negociaron tarifa.
          */
         if ($medicoId !== null) {
-            $suyo = app(ResolutorDeHonorario::class)->paraId($medicoId, (int) $item->getKey());
+            $pagador = $this->pagadorDeLaCuenta();
+
+            $suyo = app(ResolutorDeHonorario::class)->paraId(
+                $medicoId,
+                (int) $item->getKey(),
+                $pagador instanceof Convenio ? (int) $pagador->getKey() : null,
+            );
 
             if ($suyo instanceof Monto) {
                 return $suyo->valor();
@@ -2427,7 +2480,7 @@ class CuentasAbiertas extends Page
             return $this->precioPropuestoPorItem[$item->id];
         }
 
-        $cuenta = Cuenta::query()->with(['convenio', 'sede'])->find($this->cuentaDelFormulario);
+        $cuenta = $this->cuentaEnCurso();
 
         if (! $cuenta instanceof Cuenta) {
             return null;

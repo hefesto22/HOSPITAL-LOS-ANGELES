@@ -6,13 +6,27 @@ namespace App\Services;
 
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Monto;
+use App\Models\Convenio;
 use App\Models\HonorarioMedico;
 use App\Models\Item;
 use App\Models\Medico;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Cuánto cobra este médico por este honorario.
+ * Cuánto cobra este médico por este honorario, a este pagador.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * LO ESPECÍFICO GANA, LO GENERAL SIEMPRE RESPONDE
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Un doctor no le cobra lo mismo al paciente que llega de la calle que
+ * al del Hospital Militar o al de PALIG. La escalera es la misma del
+ * tarifario:
+ *
+ *   1. La fila de ESE pagador, si el médico tiene una.
+ *   2. Si no, su precio general —`convenio_id` nulo—.
+ *   3. Si tampoco, nulo: se cobra lo que dice el tarifario del hospital.
  *
  * ─────────────────────────────────────────────────────────────────────
  * DEVUELVE NULO CUANDO NO TIENE LISTA PROPIA, Y ESO ES LO NORMAL
@@ -40,8 +54,12 @@ final class ResolutorDeHonorario
      */
     private array $memoria = [];
 
-    public function para(Medico $medico, Item $item, ?CarbonInterface $momento = null): ?Monto
-    {
+    public function para(
+        Medico $medico,
+        Item $item,
+        ?Convenio $convenio = null,
+        ?CarbonInterface $momento = null,
+    ): ?Monto {
         /*
          * ⚠️ Solo los honorarios. Un medicamento con precio «de médico»
          * no es una negociación: es una fila cargada en la pantalla
@@ -52,13 +70,22 @@ final class ResolutorDeHonorario
             return null;
         }
 
-        return $this->paraId((int) $medico->getKey(), (int) $item->getKey(), $momento);
+        return $this->paraId(
+            (int) $medico->getKey(),
+            (int) $item->getKey(),
+            $convenio instanceof Convenio ? (int) $convenio->getKey() : null,
+            $momento,
+        );
     }
 
-    public function paraId(int $medicoId, int $itemId, ?CarbonInterface $momento = null): ?Monto
-    {
+    public function paraId(
+        int $medicoId,
+        int $itemId,
+        ?int $convenioId = null,
+        ?CarbonInterface $momento = null,
+    ): ?Monto {
         $dia = ($momento ?? now())->toDateString();
-        $clave = $medicoId.':'.$itemId.':'.$dia;
+        $clave = $medicoId.':'.$itemId.':'.($convenioId ?? 'general').':'.$dia;
 
         if (array_key_exists($clave, $this->memoria)) {
             return $this->memoria[$clave];
@@ -69,13 +96,27 @@ final class ResolutorDeHonorario
             ->where('item_id', $itemId)
             ->vigentes($momento)
             /*
-             * La más reciente de las vigentes. El índice único impide dos
-             * filas con la misma fecha de inicio, pero no impide una que
-             * arrancó en enero y otra en junio, las dos abiertas: manda la
-             * de junio, que es la última que alguien decidió.
+             * La del pagador o la general, nunca la de OTRO pagador: el
+             * precio negociado con PALIG no se le cobra al del Hospital
+             * Militar solo porque exista.
              */
-            ->orderByDesc('vigencia_desde')
-            ->orderByDesc('id')
+            ->where(fn (Builder $consulta): Builder => $consulta
+                ->whereNull('convenio_id')
+                ->when(
+                    $convenioId !== null,
+                    fn (Builder $conPagador): Builder => $conPagador->orWhere('convenio_id', $convenioId),
+                ))
+            /*
+             * 🔴 Lo específico primero. En PostgreSQL `false` ordena antes
+             * que `true`, así que «no es nulo» —la fila del pagador— sale
+             * arriba y la general queda de respaldo.
+             *
+             * La base impide dos vigencias traslapadas del mismo médico,
+             * honorario y pagador, así que dentro de cada escalón hay una
+             * sola candidata: este orden desempata ENTRE escalones, no
+             * entre filas equivalentes.
+             */
+            ->orderByRaw('convenio_id IS NULL')
             ->first();
 
         return $this->memoria[$clave] = $fila instanceof HonorarioMedico ? $fila->monto() : null;
