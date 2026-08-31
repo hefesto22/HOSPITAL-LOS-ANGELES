@@ -429,7 +429,27 @@ class CuentasAbiertas extends Page
                             )
                     )
             ))
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL ORDEN TIENE QUE SER ESTABLE, NO SOLO CORRECTO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Con `abierta_en` solo, las cuentas abiertas en el mismo
+             * minuto —las tres que deja un comando de demo, o las cuatro
+             * del ingreso de la mañana— quedan empatadas, y ante un
+             * empate PostgreSQL devuelve las filas en el orden que le
+             * convenga. Puede ser otro después de cargarle algo a una.
+             *
+             * Eso se ve como tarjetas que saltan de lugar mientras
+             * alguien trabaja: se va a tocar la de Pedro y aparece la de
+             * Marta donde estaba. Con el paciente enfrente, ese salto es
+             * un cargo en la cuenta equivocada.
+             *
+             * El id desempata y no se repite nunca: 40, 39, 38, siempre
+             * en el mismo lugar aunque se les agregue o se les quite.
+             */
             ->orderByDesc('abierta_en')
+            ->orderByDesc('id')
             ->limit((int) config('sihla.facturacion.tarjetas_por_pantalla', 24))
             ->get();
     }
