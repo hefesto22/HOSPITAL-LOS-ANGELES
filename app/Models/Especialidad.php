@@ -35,6 +35,20 @@ class Especialidad extends Model
 
     use SoftDeletes;
 
+    /**
+     * ⚠️ EL PLURAL SE DICE A MANO.
+     *
+     * Laravel pluriza en inglés y de «Especialidad» saca
+     * «especialidads», que no es ninguna tabla. El modelo se llama en
+     * español —como todo el dominio de este sistema— así que el
+     * pluralizador no lo puede acertar y hay que decírselo.
+     *
+     * Cualquier modelo en español cuyo plural no sea «+s» necesita esta
+     * línea: si algún día aparece un `Ciudad`, un `Region` o un
+     * `Especificacion`, es lo primero que hay que revisar.
+     */
+    protected $table = 'especialidades';
+
     /** @var list<string> */
     protected $fillable = [
         'codigo',
