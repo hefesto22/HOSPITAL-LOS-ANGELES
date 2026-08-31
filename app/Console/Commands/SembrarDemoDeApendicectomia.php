@@ -157,7 +157,15 @@ class SembrarDemoDeApendicectomia extends Command
 
         $this->newLine();
         $this->info('Cuenta '.$cuenta->numero.' — '.$cuenta->encuentro->persona->nombreCompleto());
-        $this->line('Presupuesto '.$presupuesto->numero.' · '.$presupuesto->lineas()->count().' renglones adentro');
+        /*
+         * `detalle` y no `lineas`: la relación de los renglones de un
+         * presupuesto se llama así en el modelo. El nombre de la tabla
+         * —`presupuesto_lineas`— no es el nombre de la relación, y
+         * suponerlo cuesta un BadMethodCallException en tiempo de
+         * ejecución que ni PHPStan ve, porque `__call` acepta cualquier
+         * cosa.
+         */
+        $this->line('Presupuesto '.$presupuesto->numero.' · '.$presupuesto->detalle()->count().' renglones adentro');
 
         $this->table(
             ['Total de la cuenta', 'Le toca al paciente', 'Le toca al seguro'],
