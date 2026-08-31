@@ -2881,15 +2881,30 @@ class CuentasAbiertas extends Page
                             return new HtmlString('&nbsp;');
                         }
 
-                        $saldo = $cuenta->saldoPendiente();
+        /*
+                         * 🔴 LO QUE FALTA ES LO DEL PACIENTE.
+                         *
+                         * Con seguro, el total de la cuenta y lo que hay
+                         * que cobrar antes de facturar son dos números
+                         * distintos: los L 7,000 de la aseguradora se
+                         * facturan y se cobran después. Anunciar el total
+                         * en rojo mandaba a cobrarle al paciente una
+                         * plata que no le toca.
+                         */
+                        $saldo = $cuenta->saldoPendienteDelPaciente();
 
                         $texto = 'Total <strong>L '.number_format((float) $cuenta->total, 2).'</strong>';
 
+                        if ($cuenta->saldoDeLaAseguradora()->mayorQue('0')) {
+                            $texto .= ' · seguro L '
+                                .number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2);
+                        }
+
                         $texto .= $saldo->mayorQue('0')
-                            ? ' · <span style="color:rgb(220 38 38)">debe L '
+                            ? ' · <span style="color:rgb(220 38 38)">el paciente debe L '
                                 .number_format((float) $saldo->redondeado(2), 2)
-                                .', hay que recibir el abono antes de facturar</span>'
-                            : ' · <span style="color:rgb(22 163 74)">saldada</span>';
+                                .', hay que recibir ese abono antes de facturar</span>'
+                            : ' · <span style="color:rgb(22 163 74)">el paciente ya puso lo suyo</span>';
 
                         return new HtmlString('<span style="font-size:.95rem">'.$texto.'</span>');
                     }),
@@ -3008,8 +3023,12 @@ class CuentasAbiertas extends Page
                  * cobrarle acá.
                  */
                 Section::make('Cobrar ahora')
-                    ->description('Lo que falta, en el mismo acto: se recibe el abono y se emite la factura seguido.')
-                    ->visible(fn (): bool => $this->cuentaFacturando()?->saldoPendiente()->mayorQue('0') ?? false)
+                    ->description(
+                        'Lo que le falta AL PACIENTE, en el mismo acto: se recibe el abono y se '
+                        .'emite la factura seguido. Lo que cubre el seguro no se cobra acá — se '
+                        .'factura y queda por cobrar.'
+                    )
+                    ->visible(fn (): bool => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->mayorQue('0') ?? false)
                     ->schema([
                         Repeater::make('medios')
                             ->hiddenLabel()
@@ -3039,7 +3058,15 @@ class CuentasAbiertas extends Page
                                     ->hiddenLabel()
                                     ->prefix('L')
                                     ->inputMode('decimal')
-                                    ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendiente()->redondeado(2)),
+                                    /*
+                                     * 🔴 LA PORCIÓN DEL PACIENTE, NO EL
+                                     * TOTAL. Con un seguro que cubre el
+                                     * 70 %, proponer el total le cobra al
+                                     * paciente los L 7,000 de la
+                                     * aseguradora — y el que teclea está
+                                     * mirando al paciente, no al número.
+                                     */
+                                    ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->redondeado(2)),
 
                                 Select::make('banco')
                                     ->hiddenLabel()
@@ -3077,7 +3104,7 @@ class CuentasAbiertas extends Page
                  */
                 $usuario = Auth::user();
 
-                if ($usuario instanceof User && $cuenta->saldoPendiente()->mayorQue('0')) {
+                if ($usuario instanceof User && $cuenta->saldoPendienteDelPaciente()->mayorQue('0')) {
                     $medios = $this->mediosDelFormulario($data['medios'] ?? []);
 
                     if ($medios !== []) {

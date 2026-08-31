@@ -512,6 +512,44 @@ class Cuenta extends Model
     }
 
     /**
+     * Lo que el PACIENTE todavía debe de su bolsillo.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 ES LO QUE HAY QUE COBRAR ANTES DE FACTURAR, NO EL TOTAL
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Una cuenta de L 10,000 con un seguro que cubre el 70 % le pide al
+     * paciente L 3,000 y a la aseguradora L 7,000. Esos L 7,000 no los
+     * va a dejar nadie en la ventanilla: llegan a treinta días, contra
+     * la factura que todavía no se emitió. Medir el «ya pagó» contra el
+     * total dejaba la cuenta trabada para siempre —había que cobrarle al
+     * paciente los L 7,000 del seguro para poder facturar—.
+     *
+     * ⚠️ Los abonos se restan ENTEROS de la porción del paciente, y eso
+     * es a propósito: en la ventanilla paga el paciente. El día que el
+     * hospital reciba el cheque de la aseguradora, eso es un abono
+     * contra la factura ya emitida, no contra la cuenta.
+     *
+     * Para el paciente de contado `total_paciente` ES el total, así que
+     * esto y `saldoPendiente()` dan lo mismo y nada cambia.
+     */
+    public function saldoPendienteDelPaciente(): Decimal
+    {
+        return Decimal::de($this->total_paciente)->restar($this->abonado());
+    }
+
+    /**
+     * ¿El paciente ya puso lo suyo? Es la condición para facturar: lo
+     * del seguro queda como cuenta por cobrar.
+     */
+    public function elPacientePusoLoSuyo(): bool
+    {
+        $saldo = $this->saldoPendienteDelPaciente();
+
+        return $saldo->esCero() || $saldo->esNegativo();
+    }
+
+    /**
      * ¿Ya está pagada? Es la condición que el bloque 7 va a mirar antes
      * de dejar emitir la factura.
      */

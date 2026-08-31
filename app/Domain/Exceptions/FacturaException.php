@@ -36,6 +36,19 @@ final class FacturaException extends SihlaException
         );
     }
 
+    /**
+     * Falta lo del PACIENTE. Lo del seguro no traba la factura: se
+     * factura y se cobra después, que es de lo que vive un convenio.
+     */
+    public static function alPacienteLeFalta(string $numero, string $saldo): self
+    {
+        return new self(
+            "En la cuenta {$numero} el paciente todavía debe L {$saldo} de su parte. Recibí ese "
+            .'abono y volvé a facturar. Lo que cubre el seguro no hace falta cobrarlo antes: eso '
+            .'se factura y queda por cobrar.'
+        );
+    }
+
     public static function faltaElDocumento(string $umbral): self
     {
         return new self(

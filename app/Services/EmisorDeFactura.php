@@ -82,15 +82,29 @@ final class EmisorDeFactura
             }
 
             /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SE MIDE LO DEL PACIENTE, NO EL TOTAL DE LA CUENTA
+             * ─────────────────────────────────────────────────────────
+             *
+             * Una cuenta de L 10,000 con un seguro que cubre el 70 % le
+             * pide al paciente L 3,000; los otros L 7,000 llegan a
+             * treinta días CONTRA LA FACTURA, que es justamente la que
+             * se está por emitir. Exigir el total dejaba esa cuenta
+             * trabada para siempre: había que cobrarle al paciente la
+             * parte del seguro para poder facturarle al seguro.
+             *
+             * Para el paciente de contado `total_paciente` es el total,
+             * así que la regla es la misma de antes y nada cambia.
+             *
              * El saldo se mide con los totales YA materializados de la
              * cuenta, que es lo que la pantalla viene mostrando. Si
              * alguien cargó algo entre que se abrió el modal y se apretó
              * Emitir, la cuenta bloqueada arriba ya trae el número nuevo.
              */
-            $saldo = $bloqueada->saldoPendiente();
+            $saldo = $bloqueada->saldoPendienteDelPaciente();
 
             if ($saldo->mayorQue('0')) {
-                throw FacturaException::laCuentaTieneSaldo($bloqueada->numero, $saldo->redondeado(2));
+                throw FacturaException::alPacienteLeFalta($bloqueada->numero, $saldo->redondeado(2));
             }
 
             $totales = $this->sumar($cargos);
