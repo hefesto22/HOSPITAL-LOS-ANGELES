@@ -65,6 +65,46 @@ final class CuentaException extends SihlaException
         );
     }
 
+    /**
+     * La cuenta ya no admite que se le cambie la autorización.
+     */
+    public static function noAdmiteCambios(string $numero, string $estado): self
+    {
+        return new self(
+            "La cuenta {$numero} está {$estado}: el reparto entre el paciente y el seguro ya salió "
+            .'impreso en la factura. Para corregirlo hay que anular esa factura, no cambiar la '
+            .'autorización por debajo.'
+        );
+    }
+
+    /**
+     * Porcentaje y monto juntos no es más preciso: es no saber cuánto
+     * cubre el seguro.
+     */
+    public static function laAutorizacionEsUnaSolaForma(): self
+    {
+        return new self(
+            'El seguro autoriza un PORCENTAJE o un MONTO, no los dos. Dejá vacío el que no aplique: '
+            .'con los dos puestos, cuál manda lo decidiría el código y alguna vez elegiría mal.'
+        );
+    }
+
+    public static function laCoberturaVaEntreCeroYUno(): self
+    {
+        return new self(
+            'La cobertura se escribe en fracción: 0.30 es el 30 %. Cero significa que el paciente '
+            .'paga todo, y uno que el seguro cubre la cuenta entera.'
+        );
+    }
+
+    public static function elMontoAutorizadoNoEsNegativo(): self
+    {
+        return new self(
+            'Un seguro no autoriza un monto negativo. Si no cubre nada, la autorización es cero o '
+            .'se deja vacía para que mande lo que dice el convenio.'
+        );
+    }
+
     public static function saldoNoCuadra(string $numero): self
     {
         return new self(

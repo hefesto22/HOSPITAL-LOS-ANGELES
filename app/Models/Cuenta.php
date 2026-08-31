@@ -38,6 +38,10 @@ use Illuminate\Support\Collection;
  * @property int $convenio_id
  * @property string|null $numero_poliza
  * @property string|null $numero_autorizacion
+ * @property numeric-string|null $cobertura_autorizada
+ * @property numeric-string|null $monto_autorizado
+ * @property CarbonInterface|null $autorizacion_en
+ * @property int|null $autorizacion_por
  * @property int|null $responsable_persona_id
  * @property EstadoCuenta $estado
  * @property CarbonInterface $abierta_en
@@ -78,6 +82,10 @@ class Cuenta extends Model
         'convenio_id',
         'numero_poliza',
         'numero_autorizacion',
+        'cobertura_autorizada',
+        'monto_autorizado',
+        'autorizacion_en',
+        'autorizacion_por',
         'responsable_persona_id',
         'estado',
         'abierta_en',
@@ -91,8 +99,9 @@ class Cuenta extends Model
     protected function casts(): array
     {
         return [
-            'estado'       => EstadoCuenta::class,
-            'abierta_en'   => 'datetime',
+            'estado'          => EstadoCuenta::class,
+            'abierta_en'      => 'datetime',
+            'autorizacion_en' => 'datetime',
             'congelada_en' => 'datetime',
             'cerrada_en'   => 'datetime',
             'anulada_en'   => 'datetime',
@@ -450,17 +459,90 @@ class Cuenta extends Model
             ];
         }
 
+        $total = Monto::de((string) $suma->getAttribute('total'));
+
+        $reparto = $this->repartir(
+            $total,
+            Monto::de((string) $suma->getAttribute('aseguradora')),
+        );
+
         return [
             'total_bruto'       => Monto::de((string) $suma->getAttribute('bruto'))->valor(),
             'total_descuento'   => Monto::de((string) $suma->getAttribute('descuento'))->valor(),
             'total_exento'      => Monto::de((string) $suma->getAttribute('exento'))->valor(),
             'total_gravado'     => Monto::de((string) $suma->getAttribute('gravado'))->valor(),
             'total_isv'         => Monto::de((string) $suma->getAttribute('isv'))->valor(),
-            'total'             => Monto::de((string) $suma->getAttribute('total'))->valor(),
-            'total_paciente'    => Monto::de((string) $suma->getAttribute('paciente'))->valor(),
-            'total_aseguradora' => Monto::de((string) $suma->getAttribute('aseguradora'))->valor(),
+            'total'             => $total->valor(),
+            'total_paciente'    => $reparto['paciente']->valor(),
+            'total_aseguradora' => $reparto['aseguradora']->valor(),
             'lineas'            => (int) $suma->getAttribute('lineas'),
         ];
+    }
+
+    /**
+     * Cómo se reparte el total entre el paciente y el seguro.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * LA AUTORIZACIÓN MANDA SOBRE LO QUE SUMARON LOS CARGOS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mientras la cuenta se carga, cada cargo se parte con la cobertura
+     * general del convenio: es lo único que se sabe en ese momento. La
+     * autorización llega después —el Hospital Militar aprueba L 5,000 de
+     * los L 10,000, PALIG dice «de esto solo cubro el 30 %»— y entonces
+     * el reparto de los cargos deja de describir la realidad.
+     *
+     * 🔴 Los cargos NO se corrigen: cada uno guarda lo que se calculó el
+     * día que ocurrió, y el trigger `cargos_append_only` lo impide a
+     * propósito. Lo que la autorización cambia no es ningún asiento —el
+     * total es el mismo— sino a quién se le cobra. Eso vive en la cuenta.
+     *
+     * ⚠️ El monto autorizado se RECORTA al total: si el seguro aprobó
+     * L 5,000 y la cuenta terminó en L 3,000, cubre 3,000 y no queda un
+     * paciente con saldo a favor de 2,000 que nadie le debe.
+     *
+     * @return array{paciente: Monto, aseguradora: Monto}
+     */
+    private function repartir(Monto $total, Monto $segunLosCargos): array
+    {
+        $aseguradora = $this->loQueAutorizoElSeguro($total) ?? $segunLosCargos;
+
+        if ($aseguradora->mayorQue($total)) {
+            $aseguradora = $total;
+        }
+
+        return [
+            /* El residuo del redondeo cae del lado del paciente, igual que en el cargo. */
+            'paciente'    => $total->restar($aseguradora),
+            'aseguradora' => $aseguradora,
+        ];
+    }
+
+    /**
+     * Lo que el seguro autorizó para esta cuenta, o nulo cuando nadie lo
+     * anotó y manda lo que sumaron los cargos.
+     */
+    private function loQueAutorizoElSeguro(Monto $total): ?Monto
+    {
+        if ($this->monto_autorizado !== null) {
+            return Monto::de($this->monto_autorizado);
+        }
+
+        if ($this->cobertura_autorizada !== null) {
+            return Monto::de(
+                $total->cantidad()->por(Decimal::de($this->cobertura_autorizada))->redondeado(2)
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * ¿Alguien anotó lo que el seguro autorizó para esta cuenta?
+     */
+    public function tieneAutorizacionPropia(): bool
+    {
+        return $this->monto_autorizado !== null || $this->cobertura_autorizada !== null;
     }
 
     // ── La plata que ya entró ─────────────────────────────────────────

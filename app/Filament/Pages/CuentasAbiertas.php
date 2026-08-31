@@ -57,6 +57,7 @@ use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
+use App\Services\RegistradorDeAutorizacion;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
 use App\Services\ResolutorDeHonorario;
@@ -2837,7 +2838,137 @@ class CuentasAbiertas extends Page
     {
         return $this->cuentaAFacturar === null
             ? null
-            : Cuenta::query()->with('encuentro.persona.identificadores')->find($this->cuentaAFacturar);
+            : Cuenta::query()->with(['encuentro.persona.identificadores', 'convenio'])->find($this->cuentaAFacturar);
+    }
+
+    /**
+     * El porcentaje que viene propuesto en el campo, en enteros.
+     *
+     * Manda lo que ya se autorizó para ESTA cuenta; si nadie anotó nada,
+     * lo que cubre el convenio en general. Vacío cuando la autorización
+     * es por monto: ahí el porcentaje no aplica.
+     */
+    private function coberturaPropuesta(): ?string
+    {
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return null;
+        }
+
+        if ($cuenta->monto_autorizado !== null) {
+            return null;
+        }
+
+        $fraccion = $cuenta->cobertura_autorizada ?? $cuenta->convenio->cobertura_fraccion;
+
+        if (! is_numeric($fraccion)) {
+            return null;
+        }
+
+        return rtrim(rtrim(Decimal::de((string) $fraccion)->por('100')->redondeado(2), '0'), '.');
+    }
+
+    /**
+     * «El seguro pone L 5,000 · el paciente L 5,000» — el reparto que va
+     * a quedar con lo que está tecleado, antes de apretar Emitir.
+     *
+     * 🔴 Se calcula EN VIVO y no se lee de la cuenta: la cuenta todavía
+     * tiene el reparto anterior, y el número que hay que mirar antes de
+     * emitir es el que va a quedar, no el que había.
+     */
+    private function comoQuedaElReparto(Get $get): HtmlString
+    {
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return new HtmlString('&nbsp;');
+        }
+
+        $total = Monto::de($cuenta->total);
+        $delSeguro = $this->loQueAutorizaElFormulario($get, $total) ?? $cuenta->saldoDeLaAseguradora();
+
+        if ($delSeguro->mayorQue($total)) {
+            $delSeguro = $total;
+        }
+
+        $delPaciente = $total->restar($delSeguro);
+
+        return new HtmlString(sprintf(
+            '<span style="font-size:.9rem">El seguro pone <strong>%s</strong> · '
+            .'el paciente <strong>%s</strong> de un total de %s</span>',
+            e($delSeguro->formateado()),
+            e($delPaciente->formateado()),
+            e($total->formateado()),
+        ));
+    }
+
+    /**
+     * Lo que el formulario está diciendo que cubre el seguro, o nulo
+     * cuando los dos campos están vacíos y manda el convenio.
+     */
+    private function loQueAutorizaElFormulario(Get $get, Monto $total): ?Monto
+    {
+        $monto = NumeroDeFormulario::aDecimal($get('monto_autorizado'));
+
+        if ($monto instanceof Decimal) {
+            return Monto::de($monto->redondeado(2));
+        }
+
+        $porcentaje = NumeroDeFormulario::aDecimal($get('cobertura_autorizada'));
+
+        if (! $porcentaje instanceof Decimal) {
+            return null;
+        }
+
+        return Monto::de($total->cantidad()->por($porcentaje->entre('100'))->redondeado(2));
+    }
+
+    /**
+     * Deja anotada la autorización antes de emitir. Devuelve false cuando
+     * algo no cuadra y ya avisó en pantalla.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function aplicarLaAutorizacion(Cuenta $cuenta, array $data): bool
+    {
+        if (! $cuenta->convenio->tipo->pagaUnTercero()) {
+            return true;
+        }
+
+        $monto = NumeroDeFormulario::aDecimal($data['monto_autorizado'] ?? null);
+        $porcentaje = NumeroDeFormulario::aDecimal($data['cobertura_autorizada'] ?? null);
+
+        /*
+         * ⚠️ El porcentaje se guarda en FRACCIÓN aunque se teclee en
+         * enteros: la columna, el CHECK y el motor de cobertura hablan en
+         * fracción, y convertir en un solo lugar es lo que evita que
+         * alguien guarde «50» donde va «0.50» y el seguro termine
+         * cubriendo cincuenta veces la cuenta.
+         */
+        $fraccion = $porcentaje instanceof Decimal && ! $monto instanceof Decimal
+            ? $porcentaje->entre('100')
+            : null;
+
+        try {
+            app(RegistradorDeAutorizacion::class)->registrar(
+                cuenta: $cuenta,
+                fraccion: $fraccion,
+                monto: $monto instanceof Decimal ? Monto::de($monto->redondeado(2)) : null,
+                quien: Auth::user() instanceof User ? Auth::user() : null,
+            );
+
+            return true;
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se pudo anotar la autorización')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return false;
+        }
     }
 
     /**
@@ -2914,6 +3045,65 @@ class CuentasAbiertas extends Page
 
                         return new HtmlString('<span style="font-size:.95rem">'.$texto.'</span>');
                     }),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 LO QUE EL SEGURO AUTORIZÓ, ANTES DE EMITIR
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * El convenio trae lo que ese pagador cubre EN GENERAL, y
+                 * con eso se fue cargando la cuenta. Pero la autorización
+                 * llega después y no siempre coincide: el Hospital
+                 * Militar aprueba un MONTO —L 5,000 de los L 10,000—, y
+                 * PALIG puede decir «de esto solo cubro el 30 %».
+                 *
+                 * Sin este campo la única salida era corregir a mano cada
+                 * cobro, o sea que tarde o temprano se cobrara mal.
+                 *
+                 * Solo aparece cuando paga un tercero: en una cuenta de
+                 * contado no hay nada que autorizar.
+                 */
+                Section::make('Lo que autorizó el seguro')
+                    ->description(
+                        'Dejalo vacío y manda lo que cubre el convenio. Escribí un porcentaje o un '
+                        .'monto solo si para esta cuenta autorizaron otra cosa: al guardar se '
+                        .'reparte de nuevo el total entre el paciente y el seguro.'
+                    )
+                    ->visible(fn (): bool => $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false)
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('cobertura_autorizada')
+                            ->label('Cubre este porcentaje')
+                            ->numeric()
+                            ->minValue(0)
+                            ->maxValue(100)
+                            ->suffix('%')
+                            ->live(onBlur: true)
+                            ->default(fn (): ?string => $this->coberturaPropuesta())
+                            /*
+                             * Uno u otro, nunca los dos: con los dos
+                             * puestos, cuál manda lo decidiría el código
+                             * y alguna vez elegiría mal. La base lo
+                             * rechaza igual con un CHECK.
+                             */
+                            ->disabled(fn (Get $get): bool => filled($get('monto_autorizado')))
+                            ->helperText('Como en PALIG: 50 es la mitad.'),
+
+                        TextInput::make('monto_autorizado')
+                            ->label('O aprobó este monto')
+                            ->numeric()
+                            ->minValue(0)
+                            ->step('0.01')
+                            ->prefix('L')
+                            ->live(onBlur: true)
+                            ->disabled(fn (Get $get): bool => filled($get('cobertura_autorizada')))
+                            ->helperText('Como el Hospital Militar: aprueba una cantidad, no un porcentaje.'),
+
+                        Placeholder::make('como_queda_el_reparto')
+                            ->hiddenLabel()
+                            ->columnSpanFull()
+                            ->content(fn (Get $get): HtmlString => $this->comoQuedaElReparto($get)),
+                    ]),
 
                 /*
                  * ─────────────────────────────────────────────────────
@@ -3099,6 +3289,20 @@ class CuentasAbiertas extends Page
                 }
 
                 abort_unless(Gate::allows('create', Factura::class), 403);
+
+                /*
+                 * 🔴 LA AUTORIZACIÓN, ANTES QUE TODO LO DEMÁS.
+                 *
+                 * Cambia el reparto entre el paciente y el seguro, y de
+                 * ese reparto depende cuánto hay que cobrarle al paciente
+                 * dos líneas más abajo. Aplicarla después cobraría la
+                 * cifra vieja.
+                 */
+                if (! $this->aplicarLaAutorizacion($cuenta, $data)) {
+                    return;
+                }
+
+                $cuenta->refresh();
 
                 /*
                  * ⚠️ El cobro va PRIMERO y en su propia transacción.
