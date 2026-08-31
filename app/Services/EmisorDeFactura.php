@@ -192,9 +192,27 @@ final class EmisorDeFactura
                      * El texto congelado del cargo, no el nombre actual
                      * del ítem: el papel dice lo que decía ese día.
                      */
-                    'descripcion'     => $cargo->texto,
-                    'cantidad'        => $cargo->cantidad,
-                    'precio_unitario' => $cargo->precio_unitario,
+                    'descripcion' => $cargo->texto,
+
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 EL PAPEL DICE LO QUE SE VENDIÓ, NO LO QUE SALIÓ
+                     * DEL ESTANTE
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Un frasco de 60 ml salía impreso como «60 × L
+                     * 61.11»: los números correctos leídos mal. Nadie
+                     * entregó sesenta de nada, y L 61.11 no es un precio
+                     * de este hospital —es el frasco dividido entre sus
+                     * mililitros—. El paciente recibe una factura donde
+                     * no reconoce ni la cantidad ni el precio.
+                     *
+                     * El kardex sigue en 60 ML: eso vive en el cargo y no
+                     * se toca. Acá se imprime «1 × L 3,666.67», que es lo
+                     * que se le cobró.
+                     */
+                    'cantidad'        => $this->cuantoSeVendio($cargo),
+                    'precio_unitario' => $this->aCuantoSeVendio($cargo),
 
                     'bruto'               => $cargo->bruto,
                     'descuento_legal'     => $cargo->descuento_legal,

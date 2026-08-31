@@ -33,13 +33,18 @@ use Illuminate\Support\Str;
  * tienen que convivir. Eso también se prueba acá.
  */
 /**
+ * ⚠️ `unFrascoDeJarabe` y no `unFrascoDe`: ese nombre ya lo usa
+ * `PrecioAlRecibirTest` con otra firma, y los ayudantes de Pest son
+ * funciones GLOBALES —dos con el mismo nombre chocan en cuanto los dos
+ * archivos caen en el mismo proceso.
+ *
  * Un frasco de 60 ml cuyo contenido vale L 100 el mililitro: el frasco
  * entero sale L 6,000 y los números del test se leen sin calculadora.
  *
  * ⚠️ `unidad_id` de la presentación es la unidad del ENVASE —FRASCO—, no
  * la de su contenido. El contenido lo dice `unidades_por_presentacion`.
  */
-function unFrascoDe(string $mililitros): ItemPresentacion
+function unFrascoDeJarabe(string $mililitros): ItemPresentacion
 {
     $envase = Unidad::factory()->create(['codigo' => 'FRASCO', 'nombre' => 'FRASCO']);
 
@@ -70,7 +75,7 @@ function cargarEnvases(
 
 it('🔴 el cargo guarda el envase sin tocar la cantidad del kardex', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
-    $frasco = unFrascoDe('60.0000');
+    $frasco = unFrascoDeJarabe('60.0000');
 
     $cargo = cargarEnvases($cuenta, $frasco, '1', '60');
 
@@ -81,7 +86,7 @@ it('🔴 el cargo guarda el envase sin tocar la cantidad del kardex', function (
 
 it('🔴 el renglon se lee «1 FRASCO» y no «60»', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
-    $frasco = unFrascoDe('60.0000');
+    $frasco = unFrascoDeJarabe('60.0000');
 
     $cargo = cargarEnvases($cuenta, $frasco, '1', '60');
 
@@ -113,7 +118,7 @@ it('sin envase la cantidad de dispensacion sigue siendo la que se lee', function
 it('🔴 ignora una presentacion que no es de este item', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
 
-    $frascoDeOtro = unFrascoDe('60.0000');
+    $frascoDeOtro = unFrascoDeJarabe('60.0000');
     $elQueSeCobra = unServicioDe('500.0000');
 
     app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
@@ -132,7 +137,7 @@ it('🔴 ignora una presentacion que no es de este item', function (): void {
 
 it('varias entregas del mismo envase suman envases, no mililitros', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
-    $frasco = unFrascoDe('60.0000');
+    $frasco = unFrascoDeJarabe('60.0000');
 
     $uno = cargarEnvases($cuenta, $frasco, '1', '60');
     $dos = cargarEnvases($cuenta, $frasco, '1', '60');
