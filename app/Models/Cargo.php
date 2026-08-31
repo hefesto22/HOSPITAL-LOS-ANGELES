@@ -52,6 +52,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $encuentro_id
  * @property int $item_id
  * @property int|null $servicio_id
+ * @property int|null $medico_id
  * @property int|null $almacen_id
  * @property int|null $lote_id
  * @property int|null $movimiento_id
@@ -271,6 +272,18 @@ class Cargo extends Model
     public function servicio(): BelongsTo
     {
         return $this->belongsTo(Servicio::class);
+    }
+
+    /**
+     * De qué médico es este honorario. Nulo en todo lo que no lo es —y
+     * también en los honorarios cobrados antes de que existiera el
+     * registro de médicos: el histórico no se inventa.
+     *
+     * @return BelongsTo<Medico, $this>
+     */
+    public function medico(): BelongsTo
+    {
+        return $this->belongsTo(Medico::class);
     }
 
     // ── Consultas ─────────────────────────────────────────────────────

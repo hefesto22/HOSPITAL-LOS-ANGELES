@@ -321,6 +321,13 @@ final class RegistradorDeCargo
             'encuentro_id'    => $encuentro->id,
             'item_id'         => $item->id,
             'servicio_id'     => $linea->servicioId ?? $encuentro->servicio_id,
+
+            /*
+             * De quién es el honorario. Nulo en todo lo demás: un
+             * medicamento con médico puesto ensuciaría la liquidación
+             * con renglones que no son honorarios suyos.
+             */
+            'medico_id' => $linea->medicoId,
             /*
              * El almacén se guarda solo si de verdad salió algo de él. Un
              * ítem que no mueve inventario con `almacen_id` puesto

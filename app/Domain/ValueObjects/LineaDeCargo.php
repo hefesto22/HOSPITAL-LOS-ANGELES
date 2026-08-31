@@ -76,6 +76,21 @@ final readonly class LineaDeCargo
          */
         public ?Monto $precioAcordado = null,
         public ?string $referenciaAcordada = null,
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * DE QUÉ MÉDICO ES EL HONORARIO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `referenciaAcordada` ya venía guardando «Dr. Fulano · cirujano»
+         * y sigue: es lo que el paciente lee en la cuenta y en la
+         * factura. Esto es lo otro: la FK con la que se contesta cuánto
+         * hay que liquidarle al doctor Carlos a fin de mes, que sobre
+         * texto libre no se puede contestar.
+         *
+         * Nulo para todo lo que no es honorario.
+         */
+        public ?int $medicoId = null,
         public ?int $presupuestoId = null,
         public ?int $presupuestoLineaId = null,
         public ?PoliticaCargo $politica = null,

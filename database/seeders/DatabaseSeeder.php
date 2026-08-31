@@ -56,6 +56,12 @@ class DatabaseSeeder extends Seeder
             //    del Código de Salud queda sin con qué cumplirse.
             Cie10DeArranqueSeeder::class,
 
+            // 10. Las especialidades médicas. Van antes del primer
+            //     médico: con la lista vacía, quien registra al doctor
+            //     inventa la especialidad desde el «crear al vuelo» y a
+            //     la semana hay tres formas de escribir «cirugía».
+            EspecialidadesSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }

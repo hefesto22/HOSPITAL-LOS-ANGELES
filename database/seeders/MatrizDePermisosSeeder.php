@@ -109,6 +109,14 @@ class MatrizDePermisosSeeder extends Seeder
             'Convenio'        => ['ViewAny', 'View'],
 
             /*
+             * Y quién cobra los honorarios. Es la mitad de la pregunta
+             * «a quién se le pagó esto»: sin el registro de médicos, un
+             * honorario es un renglón sin dueño.
+             */
+            'Medico'       => ['ViewAny', 'View'],
+            'Especialidad' => ['ViewAny', 'View'],
+
+            /*
              * Las compras también, y es de lo primero que mira una
              * auditoría: qué entró, con qué papel, quién lo cargó y
              * quién lo confirmó. Sin verlas no se puede cerrar ningún
@@ -251,6 +259,8 @@ class MatrizDePermisosSeeder extends Seeder
             'Producto'      => ['ViewAny', 'View'],
             'Unidad'        => ['ViewAny', 'View'],
             'Encuentro'     => ['ViewAny', 'View'],
+            'Medico'        => ['ViewAny', 'View'],
+            'Especialidad'  => ['ViewAny', 'View'],
         ],
 
         /*
@@ -266,6 +276,16 @@ class MatrizDePermisosSeeder extends Seeder
             'Producto'      => ['ViewAny', 'View'],
             'Unidad'        => ['ViewAny', 'View'],
             'Convenio'      => ['ViewAny', 'View'],
+
+            /*
+             * 🔴 Caja es quien carga el honorario, y para eso tiene que
+             * poder elegir al médico: el precio propuesto sale de su
+             * lista. Sin esto el selector aparece vacío y el honorario
+             * termina cobrado al precio del tarifario sin que nadie lo
+             * haya decidido.
+             */
+            'Medico'       => ['ViewAny', 'View'],
+            'Especialidad' => ['ViewAny', 'View'],
             'Encuentro'     => ['ViewAny', 'View', 'Update'],
             'Cuenta'        => ['ViewAny', 'View', 'Create', 'Update'],
             'Cargo'         => ['ViewAny', 'View', 'Create'],

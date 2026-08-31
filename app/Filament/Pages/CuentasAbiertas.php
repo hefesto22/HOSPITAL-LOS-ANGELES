@@ -29,6 +29,7 @@ use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\MedioDePago;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
 use App\Models\Almacen;
 use App\Models\Cargo;
@@ -36,11 +37,13 @@ use App\Models\Cie10;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Diagnostico;
+use App\Models\Especialidad;
 use App\Models\Existencia;
 use App\Models\Expediente;
 use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Models\Medico;
 use App\Models\Persona;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
@@ -56,6 +59,7 @@ use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
+use App\Services\ResolutorDeHonorario;
 use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
@@ -282,6 +286,13 @@ class CuentasAbiertas extends Page
      * @var array<int, string|null>
      */
     private array $precioPropuestoPorItem = [];
+
+    /**
+     * Memoria por pintada de los médicos ya leídos.
+     *
+     * @var array<int, Medico|null>
+     */
+    private array $medicosPorId = [];
 
     /**
      * La línea cuya ✕ está esperando que le escriban el porqué.
@@ -966,19 +977,79 @@ class CuentasAbiertas extends Page
                              */
                             ->helperText(function (Get $get): string {
                                 $item = $this->itemDe($get('item_id'));
+                                $medico = $this->medicoDe($get('medico_id'));
 
-                                return $this->precioPropuesto($item) === null
+                                if ($medico instanceof Medico && $this->loQueCobraElMedico($item, $medico) !== null) {
+                                    return 'Es lo que cobra '.$medico->nombre.'. Cambialo solo para este cobro.';
+                                }
+
+                                return $this->precioPropuesto($item, $this->idDelMedico($get('medico_id'))) === null
                                     ? 'Este honorario no tiene precio en el tarifario: escribí cuánto se le cobra.'
                                     : 'Propuesto del tarifario. Cambialo si este médico cobra otra cosa.';
                             }),
 
-                        TextInput::make('referencia_acordada')
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 EL MÉDICO SE ELIGE, NO SE ESCRIBE
+                         * ─────────────────────────────────────────────
+                         *
+                         * Esto era un campo de texto libre, y con texto
+                         * libre «Dr. Carlos», «Dr Carlos Pineda» y
+                         * «CARLOS PINEDA» son tres doctores para un GROUP
+                         * BY y uno solo para quien firma el cheque a fin
+                         * de mes.
+                         *
+                         * Elegirlo además trae su precio: el doctor
+                         * Carlos cobra L 500 por la consulta y el doctor
+                         * Juan L 100, y eso ya no hay que acordarse de
+                         * teclearlo.
+                         */
+                        Select::make('medico_id')
                             ->label('¿De quién es el honorario?')
-                            ->maxLength(120)
+                            ->native(false)
+                            ->searchable()
+                            ->live()
                             ->columnSpan(4)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
-                            ->placeholder('Dr. Fulano · cirujano')
-                            ->helperText('Queda escrito en el renglón de la cuenta y en la factura.'),
+                            ->placeholder('Escribí el apellido')
+                            ->options(fn (): array => $this->medicosVigentes())
+                            ->getSearchResultsUsing(fn (string $search): array => $this->medicosVigentes($search))
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->medicoDe($value)?->etiqueta())
+                            /*
+                             * Elegir al médico repone el precio: el suyo
+                             * si tiene lista propia, y si no el del
+                             * tarifario. Se PISA lo que hubiera —incluso
+                             * algo tecleado a mano— porque cambiar de
+                             * médico es cambiar de honorario, y dejar el
+                             * número del doctor anterior es cobrarle al
+                             * paciente la tarifa de alguien que no lo
+                             * atendió.
+                             */
+                            ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
+                                $set('precio_acordado', $this->precioPropuesto(
+                                    $this->itemDe($get('item_id')),
+                                    is_numeric($state) ? (int) $state : null,
+                                ));
+                            })
+                            /*
+                             * El cirujano nuevo que opera un sábado se da
+                             * de alta sin salir de acá. Solo para quien
+                             * puede crear médicos: al resto ni le aparece
+                             * el botón.
+                             */
+                            ->createOptionForm(fn (): ?array => Gate::allows('create', Medico::class)
+                                ? self::altaRapidaDeMedico()
+                                : null)
+                            ->createOptionUsing(function (array $data): ?int {
+                                abort_unless(Gate::allows('create', Medico::class), 403);
+
+                                return (int) Medico::create([
+                                    'nombre'          => $data['nombre'] ?? '',
+                                    'especialidad_id' => $data['especialidad_id'] ?? null,
+                                    'colegiacion'     => $data['colegiacion'] ?? null,
+                                    'vigencia_desde'  => now()->toDateString(),
+                                ])->getKey();
+                            }),
 
                         /*
                          * ─────────────────────────────────────────────
@@ -1082,6 +1153,7 @@ class CuentasAbiertas extends Page
                  * formulario anterior no sirve acá.
                  */
                 $this->precioPropuestoPorItem = [];
+                $this->medicosPorId = [];
 
                 /*
                  * Cada línea arranca sin filtro. Corre al abrir el modal y
@@ -1115,6 +1187,7 @@ class CuentasAbiertas extends Page
                     'precio_acordado' => $this->esHonorario($puesto)
                         ? $this->precioPropuesto($puesto)
                         : null,
+                    'medico_id'           => null,
                     'referencia_acordada' => null,
 
                     /*
@@ -1368,6 +1441,15 @@ class CuentasAbiertas extends Page
                      */
                     precioAcordado: $this->honorarioAcordado($item, $cuenta, $data),
                     referenciaAcordada: $this->deQuienEsElHonorario($item, $data),
+
+                    /*
+                     * La FK, además del texto: «cuánto hay que liquidarle
+                     * al doctor Carlos» no se contesta sobre un renglón
+                     * que dice «Dr. Carlos» escrito de tres formas.
+                     */
+                    medicoId: $this->esHonorario($item)
+                        ? $this->idDelMedico($data['medico_id'] ?? null)
+                        : null,
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {
@@ -2055,6 +2137,14 @@ class CuentasAbiertas extends Page
          * obligatorio.
          */
         $set('precio_acordado', $this->esHonorario($item) ? $this->precioPropuesto($item) : null);
+
+        /*
+         * 🔴 El médico se limpia SIEMPRE al cambiar de producto. Dejarlo
+         * pegado le atribuiría al cirujano anterior el honorario del
+         * anestesiólogo, y esos renglones son los que después se
+         * liquidan.
+         */
+        $set('medico_id', null);
         $set('referencia_acordada', null);
     }
 
@@ -2083,6 +2173,24 @@ class CuentasAbiertas extends Page
          * negociado un honorario que salió tal cual del convenio.
          */
         $this->cuentaDelFormulario ??= $cuenta->id;
+
+        $medico = $this->medicoDe($data['medico_id'] ?? null);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL PRECIO DEL MÉDICO SIEMPRE VIAJA COMO ACORDADO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * La lista del doctor NO está en el tarifario, así que devolver
+         * nulo acá —«coincide con lo propuesto, que lo resuelva el
+         * motor»— haría que el motor cobrara el precio de lista del
+         * hospital y no los L 500 del doctor Carlos. El número tiene que
+         * ir, aunque nadie lo haya cambiado.
+         */
+        if ($medico instanceof Medico && $this->loQueCobraElMedico($item, $medico) instanceof Monto) {
+            return Monto::de($tecleado->redondeado(2));
+        }
+
         $propuesto = $this->precioPropuesto($item);
 
         if ($propuesto !== null && $tecleado->igualA($propuesto)) {
@@ -2104,11 +2212,128 @@ class CuentasAbiertas extends Page
             return null;
         }
 
+        /*
+         * Sale del médico elegido: «CARLOS PINEDA · CIRUGIA GENERAL». El
+         * texto libre sigue aceptándose para el llamador programático y
+         * para los cargos viejos, pero en la pantalla ya no se teclea.
+         */
+        $medico = $this->medicoDe($data['medico_id'] ?? null);
+
+        if ($medico instanceof Medico) {
+            return mb_substr($medico->etiqueta(), 0, 120);
+        }
+
         $texto = is_string($data['referencia_acordada'] ?? null)
             ? trim($data['referencia_acordada'])
             : '';
 
         return $texto === '' ? null : mb_substr($texto, 0, 120);
+    }
+
+    /**
+     * El médico detrás del valor del selector.
+     *
+     * Memoriza: se pregunta en el texto de ayuda del precio, o sea con
+     * cada tecla del formulario.
+     */
+    private function medicoDe(mixed $valor): ?Medico
+    {
+        $id = $this->idDelMedico($valor);
+
+        if ($id === null) {
+            return null;
+        }
+
+        if (array_key_exists($id, $this->medicosPorId)) {
+            return $this->medicosPorId[$id];
+        }
+
+        $medico = Medico::query()->with('especialidad')->find($id);
+
+        return $this->medicosPorId[$id] = $medico instanceof Medico ? $medico : null;
+    }
+
+    private function idDelMedico(mixed $valor): ?int
+    {
+        return is_numeric($valor) ? (int) $valor : null;
+    }
+
+    /**
+     * Lo que ESE médico cobra por ESE honorario, o nulo si no tiene lista
+     * propia y hay que cobrar el precio del tarifario.
+     */
+    private function loQueCobraElMedico(?Item $item, ?Medico $medico): ?Monto
+    {
+        if (! $item instanceof Item || ! $medico instanceof Medico) {
+            return null;
+        }
+
+        return app(ResolutorDeHonorario::class)->para($medico, $item);
+    }
+
+    /**
+     * Los médicos vigentes para el selector, con su especialidad.
+     *
+     * @return array<int, string>
+     */
+    private function medicosVigentes(?string $termino = null): array
+    {
+        $limpio = trim((string) $termino);
+
+        return Medico::query()
+            ->with('especialidad')
+            ->vigentes()
+            ->when(
+                $limpio !== '',
+                fn (Builder $consulta): Builder => $consulta->where(
+                    fn (Builder $filtro): Builder => $filtro
+                        ->where('nombre', 'ilike', '%'.$limpio.'%')
+                        ->orWhere('colegiacion', 'ilike', '%'.$limpio.'%')
+                        ->orWhereHas(
+                            'especialidad',
+                            fn (Builder $especialidad): Builder => $especialidad->where('nombre', 'ilike', '%'.$limpio.'%'),
+                        ),
+                ),
+            )
+            ->orderBy('nombre')
+            ->limit(30)
+            ->get()
+            ->mapWithKeys(fn (Medico $medico): array => [(int) $medico->getKey() => $medico->etiqueta()])
+            ->all();
+    }
+
+    /**
+     * El alta rápida del médico, desde el mismo modal del cargo.
+     *
+     * Pide lo mínimo con lo que un honorario queda bien atribuido; el
+     * resto —colegiación completa, teléfono, sus precios— se completa
+     * después en la ficha.
+     *
+     * @return array<int, mixed>
+     */
+    private static function altaRapidaDeMedico(): array
+    {
+        return [
+            CampoMayusculas::make('nombre')
+                ->label('Nombre completo')
+                ->required()
+                ->maxLength(255),
+
+            Select::make('especialidad_id')
+                ->label('Especialidad')
+                ->required()
+                ->native(false)
+                ->options(fn (): array => Especialidad::query()
+                    ->vigentes()
+                    ->orderBy('nombre')
+                    ->pluck('nombre', 'id')
+                    ->all()),
+
+            CampoMayusculas::make('colegiacion')
+                ->label('Colegiación')
+                ->maxLength(30)
+                ->helperText('Se puede completar después.'),
+        ];
     }
 
     /**
@@ -2146,10 +2371,31 @@ class CuentasAbiertas extends Page
      * cuenta abierta. Nulo si no hay precio: ahí el campo queda vacío y
      * quien cobra escribe el número, que es mejor que proponerle un cero.
      */
-    private function precioPropuesto(?Item $item): ?string
+    private function precioPropuesto(?Item $item, ?int $medicoId = null): ?string
     {
         if (! $item instanceof Item || $this->cuentaDelFormulario === null) {
             return null;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 MANDA LA LISTA DEL MÉDICO SOBRE EL TARIFARIO
+         * ─────────────────────────────────────────────────────────────
+         *
+         * «CONSULTA EXTERNA MEDICINA INTERNA» es un solo ítem del
+         * catálogo, pero el doctor Carlos cobra L 500 y el doctor Juan L
+         * 100: el precio no es del servicio, es de quien lo presta. Si
+         * ese médico tiene lista propia, es la suya la que se propone.
+         *
+         * Sin lista propia se cae al tarifario, y eso es lo normal: solo
+         * unos pocos doctores negociaron tarifa.
+         */
+        if ($medicoId !== null) {
+            $suyo = app(ResolutorDeHonorario::class)->paraId($medicoId, (int) $item->getKey());
+
+            if ($suyo instanceof Monto) {
+                return $suyo->valor();
+            }
         }
 
         /*
@@ -2162,6 +2408,11 @@ class CuentasAbiertas extends Page
          * cuando el honorario no tiene precio de lista, y con `isset` ese
          * caso volvería a consultar cada vez — justo el que más se repite
          * en los honorarios que cambian con cada médico.
+         */
+        /*
+         * La memoria es del precio DE TARIFARIO —el que no depende del
+         * médico—. El del doctor ya se resolvió arriba y lo memoriza
+         * `ResolutorDeHonorario`.
          */
         if (array_key_exists($item->id, $this->precioPropuestoPorItem)) {
             return $this->precioPropuestoPorItem[$item->id];
