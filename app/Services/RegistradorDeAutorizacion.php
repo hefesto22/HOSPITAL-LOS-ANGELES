@@ -32,8 +32,8 @@ use Illuminate\Support\Facades\DB;
 final class RegistradorDeAutorizacion
 {
     /**
-     * @param  Decimal|null  $fraccion  0.30 = el seguro cubre el 30 %
-     * @param  Monto|null  $monto  Lo que el seguro aprobó, en lempiras
+     * @param Decimal|null $fraccion 0.30 = el seguro cubre el 30 %
+     * @param Monto|null $monto Lo que el seguro aprobó, en lempiras
      */
     public function registrar(
         Cuenta $cuenta,

@@ -1,15 +1,28 @@
 <?php
 
 declare(strict_types=1);
+use App\Domain\Enums\BaseDelDescuentoLegal;
+use App\Domain\Enums\CategoriaLegalDeDescuento;
+use App\Domain\Enums\RegimenIsv;
+use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoEncuentro;
+use App\Domain\Enums\TipoItem;
+use App\Domain\ValueObjects\Decimal;
+use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
+use App\Models\Abono;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Expediente;
+use App\Models\Item;
 use App\Models\Persona;
 use App\Models\Sede;
+use App\Models\Tarifario;
+use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
+use App\Services\RegistradorDeCargo;
+use Illuminate\Support\Str;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Pest\Expectation;
 use Tests\TestCase;
@@ -116,4 +129,76 @@ function unaCuentaCon(Convenio $convenio, int $edad = 40): Cuenta
         convenio: $convenio,
         sede: $sede,
     );
+}
+
+/**
+ * Un pagador que cubre la fracción que se le pida.
+ *
+ * `0.5000` es el 50 %. Es el seguro con el que se prueba todo lo que
+ * tiene que ver con el reparto entre el paciente y la aseguradora.
+ */
+function unSeguroQueCubre(string $fraccion): Convenio
+{
+    return Convenio::factory()->create([
+        'tipo'                  => TipoConvenio::AseguradoraPrivada,
+        'base_descuento_legal'  => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
+        'cobertura_fraccion'    => $fraccion,
+        'cubre_por_defecto'     => true,
+        'requiere_autorizacion' => false,
+    ]);
+}
+
+/**
+ * Un servicio exento con su fila de tarifario, listo para cargarse.
+ *
+ * Exento y sin descuento legal a propósito: quien prueba el reparto de
+ * una cuenta no quiere el ISV ni el Art. 30 metidos en el número — esos
+ * tienen sus propias pruebas.
+ *
+ * @param numeric-string $precio
+ */
+function unServicioDe(string $precio): Item
+{
+    $item = Item::factory()->create([
+        'tipo'                      => TipoItem::Servicio,
+        'regimen_isv'               => RegimenIsv::Exento,
+        'categoria_legal_descuento' => CategoriaLegalDeDescuento::SinDescuentoLegal,
+        'se_almacena'               => false,
+    ]);
+
+    Tarifario::factory()->delItem($item)->a($precio)->create();
+
+    return $item;
+}
+
+/**
+ * Le carga a la cuenta un servicio de ese precio.
+ *
+ * @param numeric-string $precio
+ */
+function conUnServicioDe(Cuenta $cuenta, string $precio): void
+{
+    app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
+        item: unServicioDe($precio),
+        cantidad: Decimal::de('1'),
+        claveIdempotencia: (string) Str::uuid(),
+    ));
+}
+
+/**
+ * Deja entrada esa plata sin pasar por caja: el abono real tiene sus
+ * propias pruebas, y acá lo que se prueba es otra cosa.
+ *
+ * @param numeric-string $monto
+ */
+function abonarle(Cuenta $cuenta, string $monto): void
+{
+    $turno = TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    Abono::factory()->create([
+        'sede_id'   => $cuenta->sede_id,
+        'cuenta_id' => $cuenta->id,
+        'turno_id'  => $turno->id,
+        'total'     => $monto,
+    ]);
 }

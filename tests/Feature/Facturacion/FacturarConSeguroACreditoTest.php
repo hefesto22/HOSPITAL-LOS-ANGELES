@@ -3,24 +3,11 @@
 declare(strict_types=1);
 
 use App\Domain\Enums\BaseDelDescuentoLegal;
-use App\Domain\Enums\CategoriaLegalDeDescuento;
-use App\Domain\Enums\RegimenIsv;
-use App\Domain\Enums\TipoConvenio;
-use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
-use App\Domain\ValueObjects\Decimal;
-use App\Domain\ValueObjects\LineaDeCargo;
-use App\Models\Abono;
 use App\Models\Convenio;
-use App\Models\Cuenta;
-use App\Models\Item;
 use App\Models\RangoCai;
-use App\Models\Tarifario;
-use App\Models\TurnoDeCaja;
 use App\Services\EmisorDeFactura;
-use App\Services\RegistradorDeCargo;
-use Illuminate\Support\Str;
 
 /**
  * FACTURAR CON EL SEGURO A CRÉDITO.
@@ -44,61 +31,6 @@ use Illuminate\Support\Str;
  * ⚠️ Y para el paciente de contado NADA cambió: su porción ES el total.
  * Eso también se prueba acá, porque es la mitad que no se puede romper.
  */
-function unSeguroQueCubre(string $fraccion): Convenio
-{
-    return Convenio::factory()->create([
-        'tipo'                  => TipoConvenio::AseguradoraPrivada,
-        'base_descuento_legal'  => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
-        'cobertura_fraccion'    => $fraccion,
-        'cubre_por_defecto'     => true,
-        'requiere_autorizacion' => false,
-    ]);
-}
-
-/**
- * @param numeric-string $precio
- */
-function unServicioDe(string $precio): Item
-{
-    $item = Item::factory()->create([
-        'tipo'                      => TipoItem::Servicio,
-        'regimen_isv'               => RegimenIsv::Exento,
-        'categoria_legal_descuento' => CategoriaLegalDeDescuento::SinDescuentoLegal,
-        'se_almacena'               => false,
-    ]);
-
-    Tarifario::factory()->delItem($item)->a($precio)->create();
-
-    return $item;
-}
-
-/**
- * @param numeric-string $monto
- */
-function abonarle(Cuenta $cuenta, string $monto): void
-{
-    $turno = TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id]);
-
-    Abono::factory()->create([
-        'sede_id'   => $cuenta->sede_id,
-        'cuenta_id' => $cuenta->id,
-        'turno_id'  => $turno->id,
-        'total'     => $monto,
-    ]);
-}
-
-/**
- * @param numeric-string $precio
- */
-function conUnServicioDe(Cuenta $cuenta, string $precio): void
-{
-    app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
-        item: unServicioDe($precio),
-        cantidad: Decimal::de('1'),
-        claveIdempotencia: (string) Str::uuid(),
-    ));
-}
-
 it('🔴 factura con el paciente al dia aunque el seguro no haya pagado', function (): void {
     $cuenta = unaCuentaCon(unSeguroQueCubre('0.7000'));
     RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
