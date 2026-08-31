@@ -239,7 +239,21 @@ final class AnuladorDeCargo
         $columnas['texto'] = mb_substr('Reversa · '.$cargo->texto, 0, 200);
 
         foreach ([
-            'cantidad'            => 4,
+            'cantidad' => 4,
+
+            /*
+             * 🔴 Los envases también se niegan. Sin esto la reversa
+             * copiaba «de qué envase» pero no «cuántos», y el CHECK
+             * `cargos_envase_completo` la rechazaba: quitar un renglón
+             * moría con un error de base de datos en la cara del que
+             * estaba cobrando.
+             *
+             * Y tienen que ser negativos, no positivos: el par original +
+             * reversa suma cero envases, que es lo que hace que el
+             * renglón desaparezca de la cuenta sin borrar nada.
+             */
+            'cantidad_presentacion' => 4,
+
             'descuento_legal'     => 2,
             'descuento_comercial' => 2,
             'bruto'               => 2,

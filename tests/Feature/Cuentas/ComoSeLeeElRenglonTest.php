@@ -7,6 +7,7 @@ use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\RenglonDeCuenta;
 use App\Models\Cargo;
 use App\Models\Convenio;
+use App\Models\Cuenta;
 use App\Models\ItemPresentacion;
 use App\Models\Unidad;
 use App\Services\RegistradorDeCargo;
@@ -51,7 +52,7 @@ function unFrascoDe(string $mililitros): ItemPresentacion
 }
 
 function cargarEnvases(
-    App\Models\Cuenta $cuenta,
+    Cuenta $cuenta,
     ItemPresentacion $presentacion,
     string $envases,
     string $enDispensacion,

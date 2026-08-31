@@ -335,10 +335,10 @@ final class RegistradorDeCargo
              * atribuye una consulta médica a la bodega central, y ese
              * ruido después no se limpia.
              */
-            'almacen_id'       => $movimiento instanceof MovimientoKardex ? $linea->almacen?->id : null,
-            'lote_id'          => $lote?->id,
-            'movimiento_id'    => $movimiento instanceof MovimientoKardex ? $movimiento->id : null,
-            'unidad_id'        => $item->unidad_dispensacion_id,
+            'almacen_id'    => $movimiento instanceof MovimientoKardex ? $linea->almacen?->id : null,
+            'lote_id'       => $lote?->id,
+            'movimiento_id' => $movimiento instanceof MovimientoKardex ? $movimiento->id : null,
+            'unidad_id'     => $item->unidad_dispensacion_id,
 
             /*
              * En qué envase se cobró. Solo si de verdad se cobró por
@@ -355,15 +355,15 @@ final class RegistradorDeCargo
                 ? null
                 : $linea->presentacion?->id,
             'cantidad_presentacion' => $this->envaseDelCargo($item, $linea)?->redondeado(4),
-            'ocurrido_en'      => $ocurridoEn,
-            'registrado_en'    => now(),
-            'cantidad'         => $cantidad->redondeado(4),
-            'texto'            => $linea->textoDelCargo ?? $this->textoCongelado($item->nombre, $lote),
-            'convenio_id'      => $convenio->id,
-            'motivo_descuento' => $llevaDescuento ? $linea->motivoDescuento : null,
-            'autorizado_por'   => $llevaDescuento ? $linea->autorizadoPor : null,
-            'costo_unitario'   => $costoUnitario?->redondeado(6),
-            'costo_total'      => $costoUnitario === null
+            'ocurrido_en'           => $ocurridoEn,
+            'registrado_en'         => now(),
+            'cantidad'              => $cantidad->redondeado(4),
+            'texto'                 => $linea->textoDelCargo ?? $this->textoCongelado($item->nombre, $lote),
+            'convenio_id'           => $convenio->id,
+            'motivo_descuento'      => $llevaDescuento ? $linea->motivoDescuento : null,
+            'autorizado_por'        => $llevaDescuento ? $linea->autorizadoPor : null,
+            'costo_unitario'        => $costoUnitario?->redondeado(6),
+            'costo_total'           => $costoUnitario === null
                 ? null
                 : $costoUnitario->por($cantidad)->redondeado(2),
             /*

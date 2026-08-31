@@ -10,6 +10,7 @@ use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Sede;
+use App\Domain\ValueObjects\Decimal;
 use App\Models\Tarifario;
 use App\Services\FijadorDePrecio;
 use Carbon\Carbon;
@@ -60,6 +61,49 @@ class PreciosRelationManager extends RelationManager
     protected static function getPluralModelLabel(): ?string
     {
         return 'precios';
+    }
+
+    /**
+     * Lo que cuesta el envase entero.
+     *
+     * El tarifario guarda el precio por unidad de dispensación; si la
+     * fila declara un envase, se multiplica por su contenido. Sin envase
+     * —la fila de respaldo— el precio ya es el que se cobra.
+     */
+    private static function porEnvase(Tarifario $tarifario): Monto
+    {
+        $presentacion = $tarifario->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
+            return $tarifario->monto();
+        }
+
+        return Monto::de(
+            Decimal::de($tarifario->precio)
+                ->por(Decimal::de($presentacion->unidades_por_presentacion))
+                ->redondeado(2)
+        );
+    }
+
+    /**
+     * De dónde sale la cifra de arriba: «antes del ISV · L 61.11 el ML».
+     *
+     * El precio unitario no se esconde. Es el que se cobra cuando el
+     * producto se fracciona, y es el que hay que mirar para comparar dos
+     * envases del mismo jarabe.
+     */
+    private static function comoSeCalcula(Tarifario $tarifario): string
+    {
+        $presentacion = $tarifario->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
+            return 'antes del ISV';
+        }
+
+        $unidad = $tarifario->item?->unidadDispensacion?->codigo;
+
+        return 'antes del ISV · '.$tarifario->monto()->formateado()
+            .($unidad === null ? ' por unidad' : ' el '.$unidad);
     }
 
     public function table(Table $table): Table
@@ -114,12 +158,31 @@ class PreciosRelationManager extends RelationManager
                     ->placeholder('Todas')
                     ->toggleable(),
 
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL PRECIO DEL ENVASE, NO EL DEL MILILITRO
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * El tarifario se guarda por unidad de dispensación —L
+                 * 61.11 el mililitro— y así tiene que seguir: es la
+                 * unidad en la que se cobra un jarabe fraccionado y la
+                 * que cuadra con el kardex.
+                 *
+                 * Pero al lado de una fila que dice «FRASCO 60 ML», ese
+                 * 61.11 se lee como el precio del frasco. Y el frasco
+                 * cuesta L 3,666.67: sesenta veces más. Alguien que
+                 * revisa precios y ve 61.11 concluye que están mal
+                 * cargados, o peor, que el hospital vende regalado.
+                 *
+                 * Arriba va lo que se cobra por envase; debajo, en chico,
+                 * el precio unitario del que sale.
+                 */
                 TextColumn::make('precio')
                     ->label('Precio')
                     ->weight('bold')
                     ->alignEnd()
-                    ->formatStateUsing(fn (Tarifario $record): string => $record->monto()->formateado())
-                    ->description('antes del ISV'),
+                    ->formatStateUsing(fn (Tarifario $record): string => self::porEnvase($record)->formateado())
+                    ->description(fn (Tarifario $record): string => self::comoSeCalcula($record)),
 
                 TextColumn::make('vigencia_desde')
                     ->label('Desde')
