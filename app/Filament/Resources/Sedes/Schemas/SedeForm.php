@@ -8,13 +8,16 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\RTNField;
 use App\Filament\Schemas\Components\TelefonoHondurasField;
 use App\Models\Sede;
+use App\Support\ImageOptimizer;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 /**
  * Formulario de Sede — patrón aprobado del §10.
@@ -56,6 +59,49 @@ final class SedeForm
                     ->required()
                     ->maxLength(255)
                     ->columnSpan(2),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * EL MEMBRETE DE LA FACTURA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * ⚠️ NO es el logo del panel. Ese vive en «Identidad
+                 * visual» y es la marca del sistema —lo que se ve al
+                 * entrar y en la pestaña del navegador—. Este es el que
+                 * va impreso arriba del documento fiscal, y por eso es
+                 * de la SEDE: el día que el hospital abra una segunda,
+                 * cada una imprime la suya al lado de su propio RTN.
+                 *
+                 * 🔴 Se convierte a WebP al guardar, con el mismo
+                 * `ImageOptimizer` del panel. Un logo que alguien sube
+                 * desde su teléfono son tres megas de PNG que después
+                 * viajan en cada impresión; en WebP son unos pocos kilos
+                 * y se ve igual. El SVG se guarda tal cual: es vectorial
+                 * y convertirlo sería empeorarlo.
+                 */
+                FileUpload::make('logo_path')
+                    ->label('Logo de la factura')
+                    ->columnSpanFull()
+                    ->image()
+                    ->imageEditor()
+                    ->disk('public')
+                    ->directory('sedes')
+                    ->visibility('public')
+                    ->maxSize(5120)
+                    ->acceptedFileTypes([
+                        'image/png',
+                        'image/jpeg',
+                        'image/svg+xml',
+                        'image/webp',
+                    ])
+                    ->saveUploadedFileUsing(
+                        static fn (TemporaryUploadedFile $file): string => ImageOptimizer::toWebp($file, 'sedes'),
+                    )
+                    ->helperText(
+                        'Sale impreso arriba de la factura, junto al nombre. PNG, JPG, WebP o SVG, '
+                        .'hasta 5 MB: se convierte solo a WebP para que no pese. Si se deja vacío, '
+                        .'la factura sale con el nombre en texto, como hasta ahora.'
+                    ),
             ])
             ->columns(3);
     }

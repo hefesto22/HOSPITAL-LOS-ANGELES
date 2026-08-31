@@ -11,6 +11,7 @@ use Database\Factories\SedeFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -38,6 +39,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $direccion
  * @property string|null $telefono
  * @property string|null $email
+ * @property string|null $logo_path
  * @property CarbonInterface|null $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
  * @property CarbonInterface|null $created_at
@@ -55,6 +57,55 @@ class Sede extends Model
     use SoftDeletes;
 
     /** @var list<string> */
+    /**
+     * La ruta ABSOLUTA del logo en disco, o nulo si no tiene.
+     *
+     * ⚠️ Ruta de archivo y no URL. La factura se imprime desde un iframe
+     * y el navegador tiene que tener la imagen ANTES de abrir el diálogo
+     * de impresión: una URL que todavía se está descargando sale como un
+     * hueco blanco en el papel. Con la ruta se incrusta el binario en el
+     * HTML y ya está ahí cuando se imprime.
+     */
+    public function rutaDelLogo(): ?string
+    {
+        if ($this->logo_path === null || trim($this->logo_path) === '') {
+            return null;
+        }
+
+        $ruta = Storage::disk('public')->path($this->logo_path);
+
+        return is_file($ruta) ? $ruta : null;
+    }
+
+    /**
+     * El logo listo para incrustar en el HTML de la factura.
+     *
+     * Devuelve nulo cuando no hay logo o cuando el archivo desapareció
+     * del disco: la factura sale con el nombre en texto, que es como
+     * salía antes de que esto existiera. Una factura no se cae por una
+     * imagen.
+     */
+    public function logoIncrustado(): ?string
+    {
+        $ruta = $this->rutaDelLogo();
+
+        if ($ruta === null) {
+            return null;
+        }
+
+        $binario = @file_get_contents($ruta);
+
+        if ($binario === false) {
+            return null;
+        }
+
+        $tipo = str_ends_with(mb_strtolower($ruta), '.svg')
+            ? 'image/svg+xml'
+            : 'image/webp';
+
+        return 'data:'.$tipo.';base64,'.base64_encode($binario);
+    }
+
     protected $fillable = [
         'codigo',
         'nombre',
@@ -65,6 +116,7 @@ class Sede extends Model
         'direccion',
         'telefono',
         'email',
+        'logo_path',
         'vigencia_desde',
         'vigencia_hasta',
     ];

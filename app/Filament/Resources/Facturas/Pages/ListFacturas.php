@@ -18,9 +18,16 @@ class ListFacturas extends ListRecords
 {
     protected static string $resource = FacturaResource::class;
 
-    public function getSubheading(): string
+    public function getSubheading(): ?string
     {
-        return 'Se emiten desde la cuenta del paciente. Acá se consultan y, si hace falta, se anulan con motivo.';
+        /*
+         * Sin subtítulo. Decía cómo se emite una factura en la pantalla
+         * donde NO se emite ninguna: quien llega acá viene a buscar una
+         * que ya existe, y ese párrafo solo empujaba la tabla hacia
+         * abajo. Lo que hay que saber para emitir está en la cuenta, que
+         * es donde se emite.
+         */
+        return null;
     }
 
     /**

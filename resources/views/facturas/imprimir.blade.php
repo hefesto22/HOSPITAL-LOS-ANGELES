@@ -69,6 +69,13 @@
         .emisor p { margin: 0; font-size: 9px; line-height: 1.35; }
 
         .marca { text-align: center; font-size: 17px; font-weight: 700; letter-spacing: .01em; line-height: 1.1; }
+
+        /*
+         * Alto tope y no ancho: el membrete tiene que ocupar siempre la
+         * misma franja para que el encabezado no se mueva entre una
+         * factura y otra. El ancho lo decide la proporción del logo.
+         */
+        .logo { display: block; margin: 0 auto; max-height: 46px; max-width: 100%; }
         .rotulo-factura { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .12em; margin-top: 4px; }
 
         .rtn-emisor { text-align: right; font-size: 10px; font-weight: 700; }
@@ -128,7 +135,24 @@
                 </td>
 
                 <td style="width: 26%">
-                    <div class="marca">{{ mb_strtoupper($sede->nombre) }}</div>
+                    {{--
+                        🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO.
+
+                        La factura se imprime desde un iframe y el
+                        navegador abre el diálogo apenas carga: una
+                        imagen que todavía se está descargando sale como
+                        un hueco blanco en el papel. En base64 ya está
+                        ahí. Si no hay logo o el archivo desapareció, se
+                        imprime el nombre como siempre — una factura no
+                        se cae por una imagen.
+                    --}}
+                    @php($logo = $sede->logoIncrustado())
+
+                    @if ($logo)
+                        <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
+                    @else
+                        <div class="marca">{{ mb_strtoupper($sede->nombre) }}</div>
+                    @endif
                     <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
                 </td>
 
