@@ -22,8 +22,8 @@ use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\RegistradorDeCargo;
-use Illuminate\Support\Str;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Pest\Expectation;
 use Tests\TestCase;
 
