@@ -11,9 +11,9 @@ use Database\Factories\SedeFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Sede — establecimiento del hospital.
@@ -57,6 +57,21 @@ class Sede extends Model
     use SoftDeletes;
 
     /** @var list<string> */
+    protected $fillable = [
+        'codigo',
+        'nombre',
+        'razon_social',
+        'rtn',
+        'codigo_establecimiento',
+        'registro_sesal',
+        'direccion',
+        'telefono',
+        'email',
+        'logo_path',
+        'vigencia_desde',
+        'vigencia_hasta',
+    ];
+
     /**
      * La ruta ABSOLUTA del logo en disco, o nulo si no tiene.
      *
@@ -105,21 +120,6 @@ class Sede extends Model
 
         return 'data:'.$tipo.';base64,'.base64_encode($binario);
     }
-
-    protected $fillable = [
-        'codigo',
-        'nombre',
-        'razon_social',
-        'rtn',
-        'codigo_establecimiento',
-        'registro_sesal',
-        'direccion',
-        'telefono',
-        'email',
-        'logo_path',
-        'vigencia_desde',
-        'vigencia_hasta',
-    ];
 
     /**
      * Reemplaza al mutator `codigo()` que vivia aca.

@@ -9,55 +9,66 @@ use App\Domain\Enums\Genero;
 use App\Domain\Enums\SexoBiologico;
 use App\Domain\Enums\TipoEncuentro;
 use App\Domain\Exceptions\PosibleDuplicadoException;
-use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\DatosDePaciente;
-use App\Domain\ValueObjects\Decimal;
-use App\Domain\ValueObjects\LineaDeCargo;
+use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Persona;
-use App\Models\PlantillaLinea;
 use App\Models\PlantillaPresupuesto;
 use App\Models\Sede;
 use App\Services\AbridorDeEncuentro;
-use App\Services\RegistradorDeCargo;
+use App\Services\AgregadorDePresupuestoALaCuenta;
+use App\Services\AnuladorDeCargo;
+use App\Services\CotizadorDePresupuesto;
 use App\Services\RegistradorDePacientes;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Str;
 
 /**
- * Una apendicectomía completa, con seguro y con descuento de tercera edad.
+ * Una apendicectomía como la cobra el hospital: un PAQUETE, no una lista.
  *
  * ─────────────────────────────────────────────────────────────────────
- * EL CASO DONDE SE CRUZA TODO
+ * 🔴 SE COBRA EL PAQUETE, NO LOS INSUMOS UNO POR UNO
  * ─────────────────────────────────────────────────────────────────────
  *
- * Una cirugía con un paciente de 72 años y PALIG de por medio junta en
- * una sola cuenta las cuatro reglas que se pisan entre sí:
+ * La primera versión de este comando le cargaba a la cuenta las
+ * dieciocho líneas de la plantilla, cada una con su precio. Y así no es
+ * como el hospital cobra una cirugía: la familia acepta un número
+ * —«la apendicectomía sale L 21,499»— y ese número es lo que ve en su
+ * cuenta, en UN renglón. Lo que hay adentro se despliega en «qué
+ * incluye», pero no se le cobra suelto.
  *
- *   · El descuento del Art. 30 para intervención quirúrgica, que es el
- *     más alto del catálogo.
- *   · La cobertura del seguro, que se aplica DESPUÉS del descuento.
- *   · Veinte renglones de distinta naturaleza —quirófano, estancia,
- *     equipo, laboratorio— cada uno con su régimen de ISV y su categoría
- *     legal propia.
- *   · Medicamentos que descuentan existencia, junto a servicios que no.
+ * El camino real, y el que este comando reproduce (ADR-0009):
  *
- * Es el escenario en el que un error de orden de operaciones se ve, y en
- * el que no se ve en una consulta de L 900.
+ *   1. Se cotiza desde la plantilla, que agrega su HOLGURA —el colchón
+ *      del 10 %— por lo que siempre se sale de lo previsto.
+ *   2. El presupuesto se agrega a la cuenta: entra un cargo por el monto
+ *      acordado, con `precioAcordado`, que es el único camino legítimo
+ *      para un precio que no sale del tarifario.
+ *   3. Lo que se vaya consumiendo sale de bodega marcado
+ *      `IncluidoEnTarifa`: descuenta existencia, congela su costo, y NO
+ *      se le vuelve a cobrar al paciente.
+ *
+ * Cobrar los insumos sueltos Y el paquete sería cobrar dos veces lo
+ * mismo, que es exactamente lo que la política de cargo existe para
+ * impedir.
  *
  * ─────────────────────────────────────────────────────────────────────
- * LO QUE NO ALCANZA SE INFORMA, NO SE INVENTA
+ * POR QUÉ ESTE CASO Y NO UNA CONSULTA
  * ─────────────────────────────────────────────────────────────────────
  *
- * ⚠️ Los renglones que mueven inventario necesitan existencia de verdad.
- * Si no hay, el cargo se salta y se dice cuál: sembrar existencia por
- * atrás para que la demo se vea completa dejaría el kardex diciendo que
- * entró mercadería que nadie recibió.
+ * Una cirugía con un paciente de 72 años y seguro de por medio junta las
+ * reglas que se pisan entre sí: el descuento del Art. 30 para
+ * intervención quirúrgica —el más alto del catálogo—, la cobertura del
+ * seguro que se aplica DESPUÉS del descuento, y un paquete cuyo precio
+ * no sale del tarifario. En una consulta de L 900 un error de orden de
+ * operaciones no se ve; acá sí.
  *
- * Es idempotente: correrlo dos veces no duplica el paciente, y si ya
- * tiene cuenta abierta le sigue cargando ahí.
+ * ⚠️ Es idempotente y NO borra: si Fausto ya tiene cargos sueltos de una
+ * corrida anterior, se ANULAN con el mismo servicio que usa la pantalla
+ * —que devuelve la existencia al estante y deja la reversa escrita— y
+ * recién entonces entra el paquete. Borrar filas a mano dejaría el
+ * kardex diciendo que salió mercadería que nadie devolvió.
  */
 class SembrarDemoDeApendicectomia extends Command
 {
@@ -79,7 +90,9 @@ class SembrarDemoDeApendicectomia extends Command
     public function handle(
         RegistradorDePacientes $registrador,
         AbridorDeEncuentro $abridor,
-        RegistradorDeCargo $cargador,
+        CotizadorDePresupuesto $cotizador,
+        AgregadorDePresupuestoALaCuenta $agregador,
+        AnuladorDeCargo $anulador,
     ): int {
         $sede = Sede::query()->orderBy('id')->first();
 
@@ -100,7 +113,6 @@ class SembrarDemoDeApendicectomia extends Command
         }
 
         $plantilla = PlantillaPresupuesto::query()
-            ->with('lineas.item')
             ->where('codigo', self::PLANTILLA)
             ->first();
 
@@ -116,53 +128,76 @@ class SembrarDemoDeApendicectomia extends Command
             return self::FAILURE;
         }
 
-        $puestos = 0;
-        $saltados = [];
+        $this->limpiarLoQueSeCargoSuelto($cuenta, $anulador);
 
-        foreach ($plantilla->lineas as $linea) {
-            if (! $linea instanceof PlantillaLinea || $linea->item === null) {
-                continue;
-            }
+        /*
+         * La cotización sale con la fecha de HOY y con el pagador de la
+         * cuenta: el precio de un paquete es el de su día y el de su
+         * convenio, no el de cuando alguien escribió la plantilla.
+         */
+        $presupuesto = $cotizador->desdePlantilla(
+            plantilla: $plantilla,
+            expediente: $cuenta->encuentro->expediente,
+            convenio: $convenio,
+            sede: $sede,
+            fecha: now(),
+            encuentro: $cuenta->encuentro,
+        );
 
-            try {
-                $cargador->registrar($cuenta, new LineaDeCargo(
-                    item: $linea->item,
-                    cantidad: Decimal::de($linea->cantidad),
-                    claveIdempotencia: (string) Str::uuid(),
-                ));
+        $cargo = $agregador->sincronizar($presupuesto);
 
-                $puestos++;
-            } catch (SihlaException $e) {
-                /*
-                 * Casi siempre es falta de existencia. Se dice cuál y por
-                 * qué, en vez de sembrar inventario que nadie recibió.
-                 */
-                $saltados[] = [$linea->item->codigo, $linea->item->nombre, $e->getMessage()];
-            }
+        if (! $cargo instanceof Cargo) {
+            $this->error('El presupuesto quedó sin nada que cobrar. Revisá que la plantilla tenga renglones con precio.');
+
+            return self::FAILURE;
         }
 
         $cuenta->refresh();
+        $presupuesto->refresh();
 
         $this->newLine();
         $this->info('Cuenta '.$cuenta->numero.' — '.$cuenta->encuentro->persona->nombreCompleto());
+        $this->line('Presupuesto '.$presupuesto->numero.' · '.$presupuesto->lineas()->count().' renglones adentro');
+
         $this->table(
-            ['Renglones', 'Total', 'Le toca al paciente', 'Le toca al seguro'],
+            ['Total de la cuenta', 'Le toca al paciente', 'Le toca al seguro'],
             [[
-                $puestos,
                 'L '.number_format((float) $cuenta->total, 2),
                 'L '.number_format((float) $cuenta->total_paciente, 2),
                 'L '.number_format((float) $cuenta->total_aseguradora, 2),
             ]],
         );
 
-        if ($saltados !== []) {
-            $this->newLine();
-            $this->warn('No se pudieron cargar '.count($saltados).' renglones:');
-            $this->table(['Código', 'Producto', 'Por qué'], $saltados);
-            $this->line('Casi siempre es falta de existencia. Recibí mercadería y volvé a correr el comando.');
-        }
+        $this->newLine();
+        $this->line('En la cuenta se lee UN renglón —«'.$cargo->texto.'»— con su «qué incluye» adentro.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Anula lo que una corrida anterior haya dejado cargado suelto.
+     *
+     * ⚠️ ANULA, no borra. El servicio es el mismo que usa la pantalla:
+     * devuelve la existencia al estante y deja la reversa escrita.
+     * Borrar las filas dejaría el kardex diciendo que salió mercadería
+     * que nadie devolvió, y eso no se arregla después.
+     */
+    private function limpiarLoQueSeCargoSuelto(Cuenta $cuenta, AnuladorDeCargo $anulador): void
+    {
+        $sueltos = $cuenta->cargos()
+            ->whereNull('presupuesto_id')
+            ->get()
+            ->filter(static fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta());
+
+        if ($sueltos->isEmpty()) {
+            return;
+        }
+
+        foreach ($sueltos as $cargo) {
+            $anulador->anular($cargo, 'Se reemplaza por el paquete presupuestado de la apendicectomía.');
+        }
+
+        $this->line('Se anularon '.$sueltos->count().' cargos sueltos de una corrida anterior.');
     }
 
     /**
@@ -220,7 +255,7 @@ class SembrarDemoDeApendicectomia extends Command
         }
 
         $abierta = Cuenta::query()
-            ->with(['convenio', 'encuentro.persona'])
+            ->with(['convenio', 'encuentro.persona', 'encuentro.expediente'])
             ->whereHas(
                 'encuentro',
                 fn (Builder $query): Builder => $query->where('persona_id', $persona->getKey()),
