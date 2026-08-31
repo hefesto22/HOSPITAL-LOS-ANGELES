@@ -14,6 +14,7 @@ use App\Models\Item;
 use App\Models\User;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
@@ -120,27 +121,52 @@ final class MedicoForm
             ->schema([
                 Section::make('Precios propios de este médico')
                     ->description(
-                        'Solo los honorarios en los que este doctor cobra distinto del tarifario. '
-                        .'Lo que no esté acá se cobra al precio de la lista del hospital, y eso es '
-                        .'lo normal: la lista puede quedar vacía. Y si le cobra distinto a una '
-                        .'aseguradora, es otro renglón con ese pagador: lo específico gana y el '
-                        .'precio general queda de respaldo.'
+                        'Solo los honorarios en los que cobra distinto del tarifario; lo que no esté '
+                        .'acá se cobra al precio de la lista del hospital. Los precios son antes de '
+                        .'ISV. Pagador vacío vale para todos los que no tengan renglón propio, y '
+                        .'«Hasta» vacío mientras siga cobrando ese precio.'
                     )
                     ->schema([
+                        /*
+                         * ─────────────────────────────────────────────
+                         * EN TABLA, NO EN TARJETAS
+                         * ─────────────────────────────────────────────
+                         *
+                         * Cada precio era una tarjeta con sus cinco
+                         * etiquetas y sus tres textos de ayuda: un doctor
+                         * con cuatro honorarios llenaba dos pantallas y
+                         * el botón de Guardar quedaba abajo del pliegue.
+                         * Y como cada campo traía su propia frase, los
+                         * renglones terminaban a alturas distintas.
+                         *
+                         * En tabla los encabezados se escriben una sola
+                         * vez, lo que hay que saber está en la
+                         * descripción de arriba, y cinco precios ocupan
+                         * lo que antes ocupaba uno.
+                         *
+                         * Sin reordenar: el orden de los precios de un
+                         * médico no significa nada —manda la vigencia y
+                         * el pagador—, y la manija de arrastre solo
+                         * gastaba ancho.
+                         */
                         Repeater::make('honorarios')
                             ->hiddenLabel()
-                            ->relationship()
+                            ->table([
+                                TableColumn::make('Honorario')->width('34%')->markAsRequired(),
+                                TableColumn::make('Pagador')->width('24%'),
+                                TableColumn::make('Cobra')->width('14%')->markAsRequired(),
+                                TableColumn::make('Desde')->width('14%')->markAsRequired(),
+                                TableColumn::make('Hasta')->width('14%'),
+                            ])
                             ->addActionLabel('Agregar un honorario')
+                            ->reorderable(false)
                             ->defaultItems(0)
-                            ->columns(6)
-                            ->itemLabel(fn (array $state): ?string => self::comoSeLee($state))
                             ->schema([
                                 Select::make('item_id')
-                                    ->label('Honorario')
+                                    ->hiddenLabel()
                                     ->required()
                                     ->native(false)
                                     ->searchable()
-                                    ->columnSpan(4)
                                     /*
                                      * Solo honorarios. Un medicamento con
                                      * «precio de médico» no es una
@@ -161,80 +187,37 @@ final class MedicoForm
 
                                 /*
                                  * 🔴 EL PAGADOR, PORQUE EL PRECIO CAMBIA
-                                 * CON ÉL.
-                                 *
-                                 * Un doctor no le cobra lo mismo al
-                                 * paciente de la calle que al del
-                                 * Hospital Militar o al de PALIG. Vacío
-                                 * es el precio general: el que se usa con
-                                 * todo pagador que no tenga su propio
-                                 * renglón.
+                                 * CON ÉL. Un doctor no le cobra lo mismo
+                                 * al paciente de la calle que al del
+                                 * Hospital Militar o al de PALIG.
                                  */
                                 Select::make('convenio_id')
-                                    ->label('Pagador')
+                                    ->hiddenLabel()
                                     ->native(false)
-                                    ->columnSpan(2)
-                                    ->placeholder('Cualquiera (precio general)')
+                                    ->placeholder('Cualquiera')
                                     ->options(fn (): array => Convenio::query()
                                         ->orderBy('nombre')
                                         ->pluck('nombre', 'id')
-                                        ->all())
-                                    ->helperText('Vacío = vale para todos los que no tengan renglón propio.'),
+                                        ->all()),
 
-                                MontoField::make('precio', 'Cobra')
-                                    ->columnSpan(2)
-                                    ->helperText('Antes de ISV, igual que el tarifario.'),
+                                MontoField::make('precio')
+                                    ->hiddenLabel(),
 
                                 DatePicker::make('vigencia_desde')
-                                    ->label('Desde')
+                                    ->hiddenLabel()
                                     ->required()
                                     ->default(now())
                                     ->native(false)
-                                    ->columnSpan(3)
                                     ->displayFormat('d/m/Y'),
 
                                 DatePicker::make('vigencia_hasta')
-                                    ->label('Hasta')
+                                    ->hiddenLabel()
                                     ->native(false)
                                     ->displayFormat('d/m/Y')
-                                    ->afterOrEqual('vigencia_desde')
-                                    ->columnSpan(3)
-                                    ->helperText('Vacío mientras siga cobrando este precio.'),
+                                    ->afterOrEqual('vigencia_desde'),
                             ]),
                     ]),
             ]);
-    }
-
-    /**
-     * El título del renglón plegado: «CONSULTA EXTERNA — PALIG».
-     *
-     * Con varios pagadores por honorario, mostrar solo el nombre del
-     * honorario deja tres renglones que se leen iguales y hay que abrir
-     * uno por uno para saber cuál es cuál.
-     *
-     * @param array<string, mixed> $state
-     */
-    private static function comoSeLee(array $state): ?string
-    {
-        $itemId = $state['item_id'] ?? null;
-
-        if (! is_numeric($itemId)) {
-            return null;
-        }
-
-        $nombre = Item::query()->find((int) $itemId)?->nombre;
-
-        if ($nombre === null) {
-            return null;
-        }
-
-        $convenioId = $state['convenio_id'] ?? null;
-
-        $pagador = is_numeric($convenioId)
-            ? Convenio::query()->find((int) $convenioId)?->nombre
-            : null;
-
-        return $pagador === null ? $nombre : $nombre.' — '.$pagador;
     }
 
     /**
