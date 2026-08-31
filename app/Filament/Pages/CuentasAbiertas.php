@@ -2847,6 +2847,25 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * Qué dato falta cuando el documento del cliente sale vacío, dicho
+     * en términos de dónde se arregla.
+     */
+    private function queDocumentoFalta(): ?string
+    {
+        if ($this->clientePropuesto()['numero'] !== null) {
+            return null;
+        }
+
+        $convenio = $this->cuentaFacturando()?->convenio;
+
+        if ($convenio instanceof Convenio && $convenio->tipo->pagaUnTercero()) {
+            return 'Falta el RTN de '.$convenio->nombre.' — cargalo en Seguros y convenios';
+        }
+
+        return 'Sin documento en el expediente del paciente';
+    }
+
+    /**
      * El documento que el paciente ya tiene registrado, si tiene alguno.
      *
      * Prefiere el RTN —es el que el SAR espera— y cae a la identidad.
@@ -3204,9 +3223,21 @@ class CuentasAbiertas extends Page
                      * evita que alguien lo teclee a mano cada vez en vez
                      * de agregarlo al expediente una sola vez.
                      */
-                            ->hint(fn (): ?string => $this->clientePropuesto()['numero'] === null
-                                ? 'Sin documento en el expediente'
-                                : null)
+                            /*
+                             * 🔴 EL AVISO TIENE QUE APUNTAR AL DATO QUE
+                             * FALTA DE VERDAD.
+                             *
+                             * Decía «sin documento en el expediente»
+                             * también cuando la cuenta era de un seguro,
+                             * y ahí el que falta NO es el documento del
+                             * paciente: es el RTN de la aseguradora, que
+                             * es quien paga y a cuyo nombre sale la
+                             * factura. Quien facturaba salía a buscar la
+                             * identidad del paciente —o la tecleaba a
+                             * mano cada vez— por un dato que se carga una
+                             * sola vez en el convenio.
+                             */
+                            ->hint(fn (): ?string => $this->queDocumentoFalta())
                             ->helperText(function (): string {
                                 $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
 

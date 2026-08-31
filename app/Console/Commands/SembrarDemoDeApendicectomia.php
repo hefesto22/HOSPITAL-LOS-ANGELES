@@ -15,7 +15,6 @@ use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
-use App\Models\Expediente;
 use App\Models\Persona;
 use App\Models\PlantillaLinea;
 use App\Models\PlantillaPresupuesto;
