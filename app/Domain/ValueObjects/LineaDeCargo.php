@@ -8,6 +8,7 @@ use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Exceptions\CargoException;
 use App\Models\Almacen;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use Carbon\CarbonInterface;
 
@@ -91,6 +92,27 @@ final readonly class LineaDeCargo
          * Nulo para todo lo que no es honorario.
          */
         public ?int $medicoId = null,
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EN QUÉ SE COBRÓ, QUE NO ES LO MISMO QUE CUÁNTO SALIÓ
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `cantidad` está y seguirá estando en unidad de dispensación:
+         * es la que descuenta existencia y cuadra con el kardex (§8.7).
+         * Un frasco de 60 ml son 60 ML saliendo del estante, siempre.
+         *
+         * Esto es el otro dato: que lo que se entregó fue UN FRASCO. Sin
+         * él, el renglón de la cuenta dice «60 × L 61.11» —una cantidad
+         * que nadie entregó a un precio que el hospital nunca fijó— y el
+         * paciente lee su factura sin reconocer nada.
+         *
+         * Nulos cuando no se cobra por envase: un honorario, una
+         * consulta, un jarabe fraccionable vendido por mililitro. Ahí la
+         * cantidad de dispensación YA es la que hay que leer.
+         */
+        public ?ItemPresentacion $presentacion = null,
+        public ?Decimal $envases = null,
         public ?int $presupuestoId = null,
         public ?int $presupuestoLineaId = null,
         public ?PoliticaCargo $politica = null,

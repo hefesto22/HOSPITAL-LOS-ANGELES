@@ -60,6 +60,13 @@ final readonly class RenglonDeCuenta
         public Decimal $total,
         public ?string $quien,
         public array $entregas,
+
+        /*
+         * Cómo se lee la cantidad: «FRASCO 60 ML», «TABLETA». Nulo
+         * cuando el ítem no tiene unidad declarada —un honorario, una
+         * consulta—, y ahí la cantidad se lee sola.
+         */
+        public ?string $unidad = null,
     ) {}
 
     /**
@@ -71,22 +78,50 @@ final readonly class RenglonDeCuenta
         $primero = $cargos->first();
 
         $cantidad = Decimal::cero();
+        $envases = Decimal::cero();
         $descuento = Decimal::cero();
+        $bruto = Decimal::cero();
         $total = Decimal::cero();
 
         foreach ($cargos as $cargo) {
             $cantidad = $cantidad->sumar($cargo->cantidad);
+            $envases = $envases->sumar($cargo->comoSeCobro()['envases'] ?? Decimal::cero());
             $descuento = $descuento
                 ->sumar($cargo->descuento_legal)
                 ->sumar($cargo->descuento_comercial);
+            $bruto = $bruto->sumar($cargo->bruto);
             $total = $total->sumar($cargo->total);
         }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 SE LEE COMO SE COBRÓ, NO COMO SALIÓ DEL ESTANTE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El renglón decía «60 × L 61.11» por UN frasco de 60 ml. Los
+         * números eran correctos y la lectura estaba mal: nadie entregó
+         * sesenta de nada, y L 61.11 no es un precio de este hospital —es
+         * lo que sale de dividir el frasco entre sus mililitros—.
+         *
+         * Cuando el cargo guardó en qué envase se cobró, se lee de ahí:
+         * «1 FRASCO 60 ML a L 3,666.67». El precio unitario se DERIVA del
+         * bruto entre los envases y no se guarda por segunda vez: dos
+         * copias del mismo número son dos números que alguna vez van a
+         * diferir.
+         *
+         * Sin envase —un honorario, un jarabe vendido por mililitro— la
+         * cantidad de dispensación ya es la correcta y no se toca nada.
+         */
+        $comoSeCobro = $primero->comoSeCobro();
+        $porEnvase = $comoSeCobro !== null && ! $envases->esCero();
 
         return new self(
             texto: $primero->texto,
             nota: $primero->regimen_isv->etiqueta().($primero->es_tardio ? ' · cargo tardío' : ''),
-            cantidad: $cantidad,
-            precioUnitario: $primero->precio_unitario,
+            cantidad: $porEnvase ? $envases : $cantidad,
+            precioUnitario: $porEnvase
+                ? $bruto->entre($envases)->redondeado(4)
+                : $primero->precio_unitario,
             descuento: $descuento,
             total: $total,
             quien: $primero->createdBy?->name,
@@ -97,6 +132,12 @@ final readonly class RenglonDeCuenta
              * parámetro pide una `list`.
              */
             entregas: array_values($cargos->all()),
+            /*
+             * Solo se rotula el envase. Sin él la cantidad ya se lee
+             * sola —el texto del renglón dice qué es— y agregar «ML» a
+             * un renglón y nada al de al lado deja la columna despareja.
+             */
+            unidad: $porEnvase ? $comoSeCobro['presentacion']->unidad->codigo : null,
         );
     }
 

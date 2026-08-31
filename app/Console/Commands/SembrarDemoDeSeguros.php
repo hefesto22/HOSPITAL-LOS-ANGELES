@@ -19,8 +19,8 @@ use App\Models\Sede;
 use App\Services\AbridorDeEncuentro;
 use App\Services\RegistradorDePacientes;
 use Carbon\CarbonInterface;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Tres pacientes con seguro, uno por cada rango de edad.

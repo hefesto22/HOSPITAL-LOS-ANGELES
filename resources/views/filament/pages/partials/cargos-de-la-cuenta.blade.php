@@ -89,7 +89,18 @@
                                     </span>
                                 </td>
 
-                                <td class="sihla-num">{{ rtrim(rtrim($renglon->cantidad->redondeado(4), '0'), '.') }}</td>
+                                {{--
+                                    La cantidad y su envase juntos: «1
+                                    FRASCO 60 ML» y no un «60» suelto que
+                                    nadie entregó. El rótulo solo aparece
+                                    cuando se cobró por envase.
+                                --}}
+                                <td class="sihla-num">
+                                    {{ rtrim(rtrim($renglon->cantidad->redondeado(4), '0'), '.') }}
+                                    @if ($renglon->unidad)
+                                        <span class="sihla-linea-unidad">{{ $renglon->unidad }}</span>
+                                    @endif
+                                </td>
                                 <td class="sihla-num">{{ number_format((float) $renglon->precioUnitario, 2) }}</td>
                                 <td class="sihla-num">
                                     {{ $renglon->descuento->esCero() ? '—' : number_format((float) $renglon->descuento->redondeado(2), 2) }}
@@ -460,6 +471,13 @@
 
         .sihla-linea-texto { display: block; color: rgb(24 24 27); }
         .sihla-linea-nota { display: block; font-size: .68rem; color: rgb(161 161 170); }
+
+        /*
+         * El envase pegado a la cantidad, más chico y en gris: es el
+         * rótulo del número, no otro dato. En el mismo tamaño competiría
+         * con la cifra, que es lo que hay que leer.
+         */
+        .sihla-linea-unidad { font-size: .68rem; color: rgb(161 161 170); margin-left: .15rem; }
 
         .sihla-anulado { opacity: .45; }
         .sihla-anulado .sihla-linea-texto { text-decoration: line-through; }

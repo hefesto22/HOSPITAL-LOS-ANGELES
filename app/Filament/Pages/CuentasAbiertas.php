@@ -1469,6 +1469,24 @@ class CuentasAbiertas extends Page
                     medicoId: $this->esHonorario($item)
                         ? $this->idDelMedico($data['medico_id'] ?? null)
                         : null,
+
+                    /*
+                     * 🔴 EN QUÉ SE COBRÓ, PARA QUE EL RENGLÓN SE LEA.
+                     *
+                     * `cantidad` va en unidad de dispensación —60 ML— y
+                     * eso no cambia: es lo que sale del estante. Esto es
+                     * lo otro: que fue UN FRASCO. Sin los dos, el renglón
+                     * dice «60 × L 61.11» y el paciente no reconoce ni la
+                     * cantidad ni el precio.
+                     *
+                     * `$tecleada` ya está en envases cuando la unidad de
+                     * cobro es una presentación: es el mismo número que
+                     * la persona escribió mirando el frasco.
+                     */
+                    presentacion: $this->presentacionDeLaUnidad($item, $unidadDeCobro),
+                    envases: $this->presentacionDeLaUnidad($item, $unidadDeCobro) instanceof ItemPresentacion
+                        ? $tecleada
+                        : null,
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {

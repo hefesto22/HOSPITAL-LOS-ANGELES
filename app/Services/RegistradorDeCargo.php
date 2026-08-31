@@ -20,6 +20,7 @@ use App\Models\Almacen;
 use App\Models\Cargo;
 use App\Models\Cuenta;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use App\Models\Persona;
@@ -338,6 +339,22 @@ final class RegistradorDeCargo
             'lote_id'          => $lote?->id,
             'movimiento_id'    => $movimiento instanceof MovimientoKardex ? $movimiento->id : null,
             'unidad_id'        => $item->unidad_dispensacion_id,
+
+            /*
+             * En qué envase se cobró. Solo si de verdad se cobró por
+             * envase: un honorario o un jarabe vendido por mililitro
+             * viajan sin esto, y el renglón se lee con la cantidad de
+             * dispensación, que ahí es la correcta.
+             *
+             * ⚠️ Se valida que la presentación sea DE ESTE ítem. Una de
+             * otro producto convertiría el renglón en «1 CAJA X 100» de
+             * algo que se entregó en frasco, y eso el CHECK de la base no
+             * lo puede ver.
+             */
+            'item_presentacion_id' => $this->envaseDelCargo($item, $linea) === null
+                ? null
+                : $linea->presentacion?->id,
+            'cantidad_presentacion' => $this->envaseDelCargo($item, $linea)?->redondeado(4),
             'ocurrido_en'      => $ocurridoEn,
             'registrado_en'    => now(),
             'cantidad'         => $cantidad->redondeado(4),
@@ -593,6 +610,32 @@ final class RegistradorDeCargo
             : $nombre;
 
         return mb_substr($texto, 0, 200);
+    }
+
+    /**
+     * Cuántos envases se cobraron, o nulo cuando no se cobró por envase.
+     *
+     * ⚠️ Devuelve nulo también cuando la presentación NO es de este
+     * ítem. Una de otro producto dejaría el renglón diciendo «1 CAJA X
+     * 100» de algo que se entregó en frasco, y ese es un error que el
+     * CHECK de la base no puede ver: las dos columnas estarían llenas y
+     * la fila sería válida.
+     */
+    private function envaseDelCargo(Item $item, LineaDeCargo $linea): ?Decimal
+    {
+        $presentacion = $linea->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion || $presentacion->item_id !== $item->id) {
+            return null;
+        }
+
+        $envases = $linea->envases;
+
+        if (! $envases instanceof Decimal || $envases->esCero() || $envases->esNegativo()) {
+            return null;
+        }
+
+        return $envases;
     }
 
     /**

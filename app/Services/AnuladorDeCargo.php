@@ -208,6 +208,7 @@ final class AnuladorDeCargo
         $columnas = $cargo->only([
             'fecha_operacion', 'sede_id', 'cuenta_id', 'encuentro_id', 'item_id',
             'servicio_id', 'medico_id', 'almacen_id', 'lote_id', 'unidad_id', 'ocurrido_en',
+            'item_presentacion_id',
             'convenio_id', 'tarifario_id', 'condicion_id', 'origen_precio',
             'precio_unitario', 'factor_convenio', 'categoria_legal',
             'descuento_legal_fraccion', 'base_descuento_legal', 'regimen_isv',

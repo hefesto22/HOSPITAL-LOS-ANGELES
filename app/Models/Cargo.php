@@ -57,6 +57,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int|null $lote_id
  * @property int|null $movimiento_id
  * @property int|null $unidad_id
+ * @property int|null $item_presentacion_id
+ * @property numeric-string|null $cantidad_presentacion
  * @property CarbonInterface $ocurrido_en
  * @property CarbonInterface $registrado_en
  * @property numeric-string $cantidad
@@ -284,6 +286,43 @@ class Cargo extends Model
     public function medico(): BelongsTo
     {
         return $this->belongsTo(Medico::class);
+    }
+
+    /**
+     * El envase en el que se cobró. Nulo cuando no se cobró por envase
+     * —un honorario, un jarabe vendido por mililitro— y también en los
+     * cargos anteriores a que esto se guardara.
+     *
+     * @return BelongsTo<ItemPresentacion, $this>
+     */
+    public function presentacion(): BelongsTo
+    {
+        return $this->belongsTo(ItemPresentacion::class, 'item_presentacion_id');
+    }
+
+    /**
+     * Cuántos envases y de cuál, para leer el renglón como se cobró.
+     *
+     * 🔴 «60 × L 61.11» son los números correctos leídos mal: nadie
+     * entregó sesenta de nada y ningún precio del hospital es L 61.11.
+     * Con esto el renglón dice «1 FRASCO 60 ML a L 3,666.67», que es lo
+     * que pasó — y `cantidad` sigue diciendo 60 ML, que es lo que salió
+     * del estante.
+     *
+     * @return array{envases: Decimal, presentacion: ItemPresentacion}|null
+     */
+    public function comoSeCobro(): ?array
+    {
+        $presentacion = $this->presentacion;
+
+        if (! $presentacion instanceof ItemPresentacion || ! is_numeric($this->cantidad_presentacion)) {
+            return null;
+        }
+
+        return [
+            'envases'      => Decimal::de($this->cantidad_presentacion),
+            'presentacion' => $presentacion,
+        ];
     }
 
     // ── Consultas ─────────────────────────────────────────────────────

@@ -470,6 +470,46 @@ final class EmisorDeFactura
     }
 
     /**
+     * La cantidad tal como se vendió: envases si se cobró por envase, y
+     * la de dispensación si no.
+     *
+     * @return numeric-string
+     */
+    private function cuantoSeVendio(Cargo $cargo): string
+    {
+        $comoSeCobro = $cargo->comoSeCobro();
+
+        return $comoSeCobro === null
+            ? $cargo->cantidad
+            : $comoSeCobro['envases']->redondeado(4);
+    }
+
+    /**
+     * El precio de lo que se vendió.
+     *
+     * Se DERIVA del bruto entre los envases y no se guarda por segunda
+     * vez: dos copias del mismo número son dos números que alguna vez van
+     * a diferir, y en una factura fiscal eso es una discrepancia que hay
+     * que explicar.
+     *
+     * ⚠️ `bruto` y no `total`: el precio unitario del papel es el de
+     * lista, ANTES del descuento. El descuento tiene su propia columna y
+     * meterlo acá lo restaría dos veces.
+     *
+     * @return numeric-string
+     */
+    private function aCuantoSeVendio(Cargo $cargo): string
+    {
+        $comoSeCobro = $cargo->comoSeCobro();
+
+        if ($comoSeCobro === null || $comoSeCobro['envases']->esCero()) {
+            return $cargo->precio_unitario;
+        }
+
+        return Decimal::de($cargo->bruto)->entre($comoSeCobro['envases'])->redondeado(4);
+    }
+
+    /**
      * Lo que se imprime: cobrable y todavía sin facturar.
      *
      * Lo `IncluidoEnTarifa` NO va —ya está adentro del renglón del
