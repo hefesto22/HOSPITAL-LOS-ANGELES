@@ -25,6 +25,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *
  * @property int $id
  * @property string $nombre
+ * @property string|null $identidad
  * @property int $especialidad_id
  * @property string|null $colegiacion
  * @property string|null $telefono
@@ -46,6 +47,7 @@ class Medico extends Model
     /** @var list<string> */
     protected $fillable = [
         'nombre',
+        'identidad',
         'especialidad_id',
         'colegiacion',
         'telefono',

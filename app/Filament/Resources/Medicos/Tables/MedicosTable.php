@@ -30,9 +30,22 @@ final class MedicosTable
                     ->color('info')
                     ->sortable(),
 
+                /*
+                 * Buscable y plegada: nadie la lee de corrido, pero
+                 * cuando la aseguradora pregunta por «el médico
+                 * 0801-1990-09368» es el único campo por el que se lo
+                 * puede encontrar.
+                 */
+                TextColumn::make('identidad')
+                    ->label('Identidad')
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true)
+                    ->placeholder('—'),
+
                 TextColumn::make('colegiacion')
                     ->label('Colegiación')
                     ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->placeholder('—'),
 
                 /*

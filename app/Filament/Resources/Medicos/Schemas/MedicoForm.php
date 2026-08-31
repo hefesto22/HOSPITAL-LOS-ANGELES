@@ -16,6 +16,7 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -52,6 +53,22 @@ final class MedicoForm
                     ->maxLength(255)
                     ->columnSpanFull()
                     ->helperText('Como tiene que aparecer en el renglón de la cuenta y en la factura.'),
+
+                /*
+                 * 🔴 ES CON LO QUE LA ASEGURADORA LO IDENTIFICA.
+                 *
+                 * Los tarifarios que el hospital presenta listan a cada
+                 * especialista por su número de identidad, y contra ese
+                 * número liquidan. Se puede dejar vacío —no vale trabar
+                 * el alta de un médico por un dato que se completa
+                 * después— pero sin él, ese médico no se puede incluir
+                 * en la próxima propuesta.
+                 */
+                TextInput::make('identidad')
+                    ->label('Identidad')
+                    ->placeholder('0801-1990-12345')
+                    ->maxLength(20)
+                    ->helperText('Con este número lo identifican las aseguradoras en los tarifarios.'),
 
                 Select::make('especialidad_id')
                     ->label('Especialidad')

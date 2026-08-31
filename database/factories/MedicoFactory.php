@@ -23,6 +23,7 @@ class MedicoFactory extends Factory
         return [
             'nombre'          => mb_strtoupper($this->faker->name()),
             'especialidad_id' => Especialidad::factory(),
+            'identidad'       => $this->faker->unique()->numerify('####-####-#####'),
             'colegiacion'     => mb_strtoupper($this->faker->unique()->bothify('CMH####')),
             'telefono'        => null,
             'user_id'         => null,

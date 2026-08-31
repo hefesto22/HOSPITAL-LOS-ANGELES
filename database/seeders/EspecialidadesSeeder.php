@@ -54,6 +54,20 @@ class EspecialidadesSeeder extends Seeder
         'GASTRO' => 'GASTROENTEROLOGIA',
         'NEUMOL' => 'NEUMOLOGIA',
         'ODONTO' => 'ODONTOLOGIA',
+
+        /*
+         * Reumatología, nutrición y psicología pasan consulta externa en
+         * el hospital —están en el tarifario que se le presentó al
+         * Hospital Militar— y no estaban acá.
+         *
+         * ⚠️ Las dos últimas no son médicas: son licenciadas. La ficha
+         * de `medicos` igual las contempla, porque lo que la tabla
+         * modela es «quién cobra honorario», no «quién tiene título de
+         * médico».
+         */
+        'REUMAT' => 'REUMATOLOGIA',
+        'NUTRIC' => 'NUTRICION',
+        'PSICOL' => 'PSICOLOGIA',
     ];
 
     public function run(): void

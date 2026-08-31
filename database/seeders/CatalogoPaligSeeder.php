@@ -107,15 +107,16 @@ class CatalogoPaligSeeder extends Seeder
         ['HOS-012', 'SALA DE LABOR Y PARTO USO 2H', TipoItem::Procedimiento, CategoriaLegalDeDescuento::IntervencionQuirurgica, 'UND', '2500.00'],
 
         /*
-         * ⚠️ VERIFICAR — «RECARGO HORA EXTRA SALA DE OPERACIONES» aparece
-         * DOS veces en el tarifario, con L 1,300.00 y con L 1,500.00, sin
-         * nada que las distinga en el papel. Se cargaron como dos ítems
-         * separados asumiendo que una acompaña al paquete de cesárea y la
-         * otra al uso básico, que es el orden en que están impresas.
+         * «RECARGO HORA EXTRA SALA DE OPERACIONES» aparece DOS veces en
+         * el tarifario, con L 1,300.00 y con L 1,500.00, sin nada que
+         * las distinga en el papel. Se cargaron como dos ítems separados
+         * asumiendo que una acompaña al paquete de cesárea y la otra al
+         * uso básico, que es el orden en que están impresas.
          *
-         * Si la distinción es otra —hora hábil e inhábil, por ejemplo—
-         * hay que renombrarlas. Lo que NO se puede es dejar una sola: el
-         * catálogo no puede tener dos precios para el mismo nombre.
+         * ✓ La propuesta al Hospital Militar repite el mismo par en el
+         * mismo orden —L 1,500.00 después de la cesárea, L 1,750.00
+         * después del básico—, así que la lectura por posición era la
+         * correcta. Dos documentos distintos, la misma secuencia.
          */
         ['HOS-013', 'RECARGO HORA EXTRA SALA DE OPERACIONES PAQUETE CESAREA', TipoItem::Servicio, CategoriaLegalDeDescuento::IntervencionQuirurgica, 'HORA', '1300.00'],
         ['HOS-014', 'RECARGO HORA EXTRA SALA DE OPERACIONES BASICO', TipoItem::Servicio, CategoriaLegalDeDescuento::IntervencionQuirurgica, 'HORA', '1500.00'],
@@ -214,10 +215,14 @@ class CatalogoPaligSeeder extends Seeder
         ['LAB-027', 'GLUCOSA POST PRANDIAL', '120.00'],
 
         /*
-         * ⚠️ VERIFICAR — en la foto, «HEMOGLOBINA GLICOSILADA» y
-         * «HEMOGRAMA» están en filas consecutivas con L 400.00 y
-         * L 130.00, y el orden de las dos columnas no es inequívoco.
-         * Se cargó la lectura alfabética: glicosilada primero.
+         * En la foto, «HEMOGLOBINA GLICOSILADA» y «HEMOGRAMA» están en
+         * filas consecutivas con L 400.00 y L 130.00, y el orden de las
+         * dos columnas no era inequívoco. Se cargó la lectura
+         * alfabética: glicosilada primero.
+         *
+         * ✓ La propuesta al Hospital Militar trae los dos exámenes
+         * separados y con los mismos precios: hemograma L 130.00,
+         * glicosilada L 400.00. Confirmado.
          */
         ['LAB-028', 'HEMOGLOBINA GLICOSILADA', '400.00'],
         ['LAB-029', 'HEMOGRAMA', '130.00'],
