@@ -1,9 +1,9 @@
 # Preguntas abiertas de dominio — SIHLA
 
-**Última actualización:** 18 de agosto de 2026
+**Última actualización:** 31 de agosto de 2026
 **Responsable de conseguir las respuestas:** Mauricio Cruz
 
-Este documento existe porque el `CLAUDE.md` §8.11 exige responder por escrito, **antes de codificar el módulo correspondiente**, quince preguntas que hoy no tienen respuesta verificada.
+Este documento existe porque el `CLAUDE.md` §8.11 exige responder por escrito, **antes de codificar el módulo correspondiente**, las preguntas que hoy no tienen respuesta verificada.
 
 Las marcadas 🚧 **bloquean** su módulo. No es una formalidad: construir sobre una suposición equivocada en cualquiera de ellas significa refactor con datos reales de pacientes adentro.
 
@@ -136,6 +136,17 @@ Expediente a 20 años, imágenes en el PACS, PDFs generados con expiración. Def
 **Lo que se verificó el 18-ago-2026:** el Artículo 30 del Decreto 199-2006 **no menciona seguros, aseguradoras ni pólizas**. La regla de "no acumulable con otras rebajas" que sí existe está en la Sección II (servicios básicos), que es otro artículo y otro decreto — extenderla a salud es interpretación, no lectura.
 **Estado asumido hoy:** ninguno. El convenio lleva un campo explícito `base_del_descuento_legal` (total · porción del paciente · no aplica) y el cargo guarda cuál se usó, así que la respuesta se aplica sin migración.
 **Bloquea:** el motor de cobertura de Facturación (bloque 7). **No bloquea la estructura del bloque 3.**
+**Respuesta:** _pendiente_
+
+### 17. ¿Se puede facturarle a un seguro sin póliza y sin autorización?
+
+**A quién:** dirección del hospital y el contacto de cada aseguradora con convenio.
+**Qué preguntar exactamente:** (a) ¿una factura a nombre de la aseguradora sin número de póliza se paga, o rebota?; (b) ¿qué pasa si sale sin número de autorización cuando el convenio la exige?; (c) ¿hay casos legítimos en que el hospital tiene que facturar sin uno de los dos —una emergencia de madrugada, un asegurado sin su carné— o siempre se consiguen antes?
+**Por qué importa:** hoy **el sistema no exige ninguno de los dos**. La póliza se pide al abrir la cuenta y es opcional; el interruptor `requiere_autorizacion` del convenio se guarda y **nadie lo lee**. Una factura sale a nombre de PALIG sin póliza y sin autorización, y si la aseguradora la rechaza el hospital se entera semanas después, con la cuenta cerrada y el paciente en su casa.
+**Lo que hay que decidir además:** si se exige, **¿bloquea la emisión o solo avisa?** Trabar la caja por un dato que a veces no está a mano puede costar más que la factura rebotada — eso lo sabe el hospital, no el código.
+**Estado asumido hoy:** ninguno. Los dos campos existen y se guardan; lo único que falta es la regla que los exija, así que la respuesta se aplica sin migración.
+**Bloquea:** nada. El hospital puede arrancar y facturar; esto es cuánto se protege contra el rechazo.
+**Detectado:** 31-ago-2026, revisando el modal de emisión.
 **Respuesta:** _pendiente_
 
 ---
