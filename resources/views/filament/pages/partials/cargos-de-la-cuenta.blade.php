@@ -619,6 +619,23 @@
             font-size: .7rem; opacity: .6; margin-left: .35rem;
             text-transform: uppercase; letter-spacing: .04em;
         }
+
+        /*
+         * El costo de cada renglón del paquete.
+         *
+         * `tabular-nums` no es cosmético: sin él los dígitos tienen
+         * anchos distintos y la columna de precios queda en zigzag,
+         * justo la columna que alguien va a leer de arriba abajo para
+         * ver si la suma da.
+         */
+        .sihla-desglose-precio {
+            width: 7rem; white-space: nowrap; font-variant-numeric: tabular-nums;
+        }
+        .sihla-desglose-suma td {
+            padding-top: .35rem; font-weight: 600;
+            border-top: 1px solid rgb(212 212 216);
+        }
+        .dark .sihla-desglose-suma td { border-top-color: rgb(63 63 70); }
         .sihla-desglose-pie { margin-top: .4rem; opacity: .65; font-size: .72rem; }
         .sihla-desglose-enlace {
             display: inline-block; margin-left: .35rem;

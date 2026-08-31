@@ -65,18 +65,49 @@
 
         .marco td, .marco th { border: 1px solid #000; padding: 3px 5px; }
 
-        .emisor h1 { margin: 0; font-size: 14px; font-weight: 700; }
+        .emisor h1 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.15; }
         .emisor p { margin: 0; font-size: 9px; line-height: 1.35; }
 
-        .marca { text-align: center; font-size: 17px; font-weight: 700; letter-spacing: .01em; line-height: 1.1; }
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EL LOGO Y LA RAZÓN SOCIAL SON UNA SOLA COSA: EL MEMBRETE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El logo iba en su propia columna del encabezado, en el medio
+         * de la hoja: quedaba flotando lejos del nombre al que
+         * pertenece, apretado en una franja angosta, y con el nombre a
+         * un lado y el CAI al otro el encabezado se leía en tres
+         * pedazos que no se hablaban.
+         *
+         * Acá el logo y la razón social son UNA cosa —membrete— y el
+         * lado derecho queda entero para lo fiscal: rótulo, R.T.N. y
+         * CAI, que es lo que se busca con el dedo.
+         *
+         * 🔴 EL NOMBRE SE IMPRIME AUNQUE HAYA LOGO. La razón social del
+         * emisor es obligatoria en el papel; un logotipo no la
+         * sustituye ante el SAR ni aunque la lleve dibujada adentro.
+         */
+        /*
+         * ⚠️ FLEX Y NO UNA TABLA ADENTRO DE LA CELDA.
+         *
+         * Se probó con `<table>`: un logo SVG —que trae `viewBox` y no
+         * `width`— sale de 0×0 adentro de una celda. El layout de tabla
+         * calcula el ancho mínimo antes de resolver la proporción de la
+         * imagen, y como no hay ancho intrínseco le da cero: la factura
+         * salía impresa SIN logo y sin ningún error a la vista.
+         *
+         * Fuera de la tabla el navegador resuelve la proporción y el
+         * `max-height` manda. Vale para los WebP y para los SVG.
+         */
+        .membrete { display: flex; align-items: center; gap: 8px; }
 
         /*
          * Alto tope y no ancho: el membrete tiene que ocupar siempre la
          * misma franja para que el encabezado no se mueva entre una
          * factura y otra. El ancho lo decide la proporción del logo.
          */
-        .logo { display: block; margin: 0 auto; max-height: 46px; max-width: 100%; }
-        .rotulo-factura { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .12em; margin-top: 4px; }
+        .logo { display: block; max-height: 52px; max-width: 40mm; flex: none; }
+        .rotulo-factura { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .12em; }
 
         .rtn-emisor { text-align: right; font-size: 10px; font-weight: 700; }
         .cai { text-align: center; font-weight: 700; letter-spacing: .02em; }
@@ -91,6 +122,11 @@
         }
         .detalle tbody td { border-left: 1px solid #000; border-right: 1px solid #000; padding: 2px 5px; }
         .detalle tbody tr:last-child td { border-bottom: 1px solid #000; }
+
+        .detalle tfoot td {
+            border: 1px solid #000; padding: 3px 5px; font-weight: 700;
+        }
+        .detalle .rotulo-sumas { text-align: right; font-size: 9px; letter-spacing: .08em; }
 
         .totales td { border: 1px solid #000; padding: 3px 5px; }
         .totales .rot { text-align: right; font-size: 9px; }
@@ -121,20 +157,7 @@
         {{-- ── Encabezado ───────────────────────────────────────────── --}}
         <table>
             <tr>
-                <td style="width: 42%" class="emisor">
-                    <h1>{{ mb_strtoupper($sede->razon_social) }}</h1>
-                    @if ($sede->direccion)
-                        <p>{{ $sede->direccion }}</p>
-                    @endif
-                    @if ($sede->telefono)
-                        <p>Tel.: {{ $sede->telefono }}</p>
-                    @endif
-                    @if ($sede->email)
-                        <p>Correo Electrónico: {{ $sede->email }}</p>
-                    @endif
-                </td>
-
-                <td style="width: 26%">
+                <td style="width: 58%; padding-right: 6px" class="emisor">
                     {{--
                         🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO.
 
@@ -142,21 +165,34 @@
                         navegador abre el diálogo apenas carga: una
                         imagen que todavía se está descargando sale como
                         un hueco blanco en el papel. En base64 ya está
-                        ahí. Si no hay logo o el archivo desapareció, se
-                        imprime el nombre como siempre — una factura no
-                        se cae por una imagen.
+                        ahí. Si no hay logo o el archivo desapareció, el
+                        membrete se imprime solo con el nombre — una
+                        factura no se cae por una imagen.
                     --}}
                     @php($logo = $sede->logoIncrustado())
 
-                    @if ($logo)
-                        <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
-                    @else
-                        <div class="marca">{{ mb_strtoupper($sede->nombre) }}</div>
-                    @endif
-                    <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
+                    <div class="membrete">
+                        @if ($logo)
+                            <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
+                        @endif
+
+                        <div>
+                            <h1>{{ mb_strtoupper($sede->razon_social) }}</h1>
+                            @if ($sede->direccion)
+                                <p>{{ $sede->direccion }}</p>
+                            @endif
+                            @if ($sede->telefono)
+                                <p>Tel.: {{ $sede->telefono }}</p>
+                            @endif
+                            @if ($sede->email)
+                                <p>Correo Electrónico: {{ $sede->email }}</p>
+                            @endif
+                        </div>
+                    </div>
                 </td>
 
-                <td style="width: 32%">
+                <td style="width: 42%">
+                    <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
                     <p class="rtn-emisor">R.T.N.: {{ $sede->rtn ?? '—' }}</p>
 
                     {{--
@@ -263,11 +299,41 @@
                     </tr>
                 @endforeach
 
-                {{-- Renglones en blanco para que el recuadro llegue abajo. --}}
-                @for ($i = $lineas->count(); $i < 18; $i++)
+                {{--
+                    Renglones en blanco para que el recuadro tenga cuerpo
+                    y no quede una tira de una línea flotando arriba de
+                    los totales.
+
+                    ⚠️ OCHO Y NO DIECIOCHO. Con dieciocho, una factura de
+                    un solo renglón —el caso normal cuando se cobra un
+                    paquete— salía con media hoja en blanco adentro del
+                    recuadro y parecía que la impresión se había cortado.
+                --}}
+                @for ($i = $lineas->count(); $i < 8; $i++)
                     <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>
                 @endfor
             </tbody>
+
+            {{--
+                🔴 LAS SUMAS DE COLUMNA VAN BAJO SU COLUMNA.
+
+                Estaban en el bloque de totales, en una tabla aparte y
+                más angosta: los dos números caían corridos respecto de
+                las columnas que sumaban y quien revisaba el papel no
+                tenía cómo saber que ese «0.00» era el de los descuentos.
+                Acá caen exactamente debajo, que es donde el ojo los
+                busca.
+            --}}
+            <tfoot>
+                <tr class="sumas">
+                    <td></td>
+                    <td class="rotulo-sumas">T O T A L E S</td>
+                    <td></td>
+                    <td></td>
+                    <td class="num">{{ number_format((float) $factura->descuento_legal + (float) $factura->descuento_comercial, 2) }}</td>
+                    <td class="num">{{ number_format((float) $factura->bruto, 2) }}</td>
+                </tr>
+            </tfoot>
         </table>
 
         {{-- ── Comentarios, firmas y totales ────────────────────────── --}}
@@ -299,40 +365,35 @@
                     --}}
                     <table class="totales">
                         <tr>
-                            <td class="rot">TOTAL</td>
-                            <td class="num">{{ number_format((float) $factura->descuento_legal + (float) $factura->descuento_comercial, 2) }}</td>
-                            <td class="num">{{ number_format((float) $factura->bruto, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td colspan="2" class="rot">IMPORTE EXONERADO L.</td>
+                            <td class="rot">IMPORTE EXONERADO L.</td>
                             <td class="num">{{ number_format((float) $factura->exonerado, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">IMPORTE EXENTO L.</td>
+                            <td class="rot">IMPORTE EXENTO L.</td>
                             <td class="num">{{ number_format((float) $factura->exento, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">DESCUENTO L.</td>
+                            <td class="rot">DESCUENTO L.</td>
                             <td class="num">{{ number_format((float) $factura->descuento_legal + (float) $factura->descuento_comercial, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">IMPORTE GRAVADO 15% L.</td>
+                            <td class="rot">IMPORTE GRAVADO 15% L.</td>
                             <td class="num">{{ number_format((float) $factura->gravado_15, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">IMPORTE GRAVADO 18% L.</td>
+                            <td class="rot">IMPORTE GRAVADO 18% L.</td>
                             <td class="num">{{ number_format((float) $factura->gravado_18, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">ISV 15% L.</td>
+                            <td class="rot">ISV 15% L.</td>
                             <td class="num">{{ number_format((float) $factura->isv_15, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot">ISV 18% L.</td>
+                            <td class="rot">ISV 18% L.</td>
                             <td class="num">{{ number_format((float) $factura->isv_18, 2) }}</td>
                         </tr>
                         <tr>
-                            <td colspan="2" class="rot dato">T O T A L &nbsp; A &nbsp; P A G A R &nbsp; L.</td>
+                            <td class="rot dato">T O T A L &nbsp; A &nbsp; P A G A R &nbsp; L.</td>
                             <td class="num dato">{{ number_format((float) $factura->total, 2) }}</td>
                         </tr>
                     </table>

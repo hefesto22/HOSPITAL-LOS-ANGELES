@@ -30,7 +30,16 @@
     --}}
     <button type="button" class="sihla-desglose-titulo" wire:click="alternarPaquete">
         <span>{{ $this->paqueteAbierto ? '▾' : '▸' }}</span>
-        QUÉ INCLUYE · {{ $desglose->count() }} renglones
+
+        {{--
+            🔴 CERRADO DICE LO QUE HACE EL BOTÓN; ABIERTO, LO QUE SE ESTÁ
+            VIENDO.
+
+            «Qué incluye» describía la lista, no el clic: quien nunca
+            había abierto uno no sabía que ahí adentro estaba el detalle
+            de la cirugía con sus precios.
+        --}}
+        {{ $this->paqueteAbierto ? 'DESGLOSE' : 'DESGLOSAR' }} · {{ $desglose->count() }} renglones
         @php($deFarmacia = $desglose->where('estado', '!=', 'incluido'))
         @php($entregados = $deFarmacia->where('estado', 'completo')->count())
 
@@ -96,6 +105,28 @@
                             {{ $pedida }}{{ $unidad ? ' '.$unidad : '' }}
                         @endif
                     </td>
+
+                    {{--
+                        🔴 CUÁNTO CUESTA CADA RENGLÓN, NO SOLO CUÁNTOS.
+
+                        La familia pregunta «¿y por qué son catorce mil?»
+                        y hasta acá la única respuesta era una lista de
+                        nombres. El precio de la línea es el que quedó
+                        CONGELADO en el presupuesto (ADR-0008): es lo que
+                        se cotizó, no lo que costaría hoy.
+
+                        Va el `total` de la línea —ya con su descuento de
+                        ley y su ISV— porque es el único número que suma
+                        exactamente lo que dice el renglón de la cuenta.
+                        El unitario va en el `title`, para quien lo
+                        pregunte.
+                    --}}
+                    @php($unitario = number_format((float) $linea->precio_unitario, 2))
+
+                    <td
+                        class="sihla-num sihla-desglose-precio"
+                        title="{{ $pedida }}{{ $unidad ? ' '.$unidad : '' }} × L {{ $unitario }} c/u"
+                    >L {{ number_format((float) $linea->total, 2) }}</td>
 
                     {{--
                         🔴 EL BOTÓN SOLO EN LO QUE SALE DE FARMACIA.
@@ -172,6 +203,29 @@
                 </tr>
             @endforeach
         </tbody>
+
+        {{--
+            🔴 LA SUMA VA IMPRESA, Y TIENE QUE CUADRAR.
+
+            Es el mismo número que el renglón de la cuenta —el paquete se
+            asienta por el total del presupuesto, `sincronizar()`—, así
+            que quien sume la columna a mano llega ahí. Si algún día no
+            cuadra, es que el presupuesto cambió después de asentarse y
+            eso hay que verlo, no esconderlo.
+
+            El descuento de farmacia NO se resta acá: no es del
+            presupuesto, se rebaja del renglón de la cirugía y se explica
+            debajo.
+        --}}
+        <tfoot>
+            <tr class="sihla-desglose-suma">
+                <td></td>
+                <td>Suma del paquete</td>
+                <td></td>
+                <td class="sihla-num sihla-desglose-precio">L {{ number_format((float) $presupuesto->total, 2) }}</td>
+                <td></td>
+            </tr>
+        </tfoot>
     </table>
 
     {{--
