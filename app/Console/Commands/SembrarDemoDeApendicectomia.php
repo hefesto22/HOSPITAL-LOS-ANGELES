@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\Genero;
 use App\Domain\Enums\SexoBiologico;
 use App\Domain\Enums\TipoEncuentro;
@@ -15,6 +16,7 @@ use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Persona;
 use App\Models\PlantillaPresupuesto;
+use App\Models\Presupuesto;
 use App\Models\Sede;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
@@ -126,6 +128,37 @@ class SembrarDemoDeApendicectomia extends Command
 
         if (! $cuenta instanceof Cuenta) {
             return self::FAILURE;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 UN SOLO PAQUETE POR INGRESO, Y LO IMPIDE LA BASE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `presupuestos_uno_agregado_por_encuentro` deja UN presupuesto
+         * en estado «agregado» por encuentro, y con razón: dos paquetes
+         * sobre la misma cuenta serían dos precios acordados para la
+         * misma cirugía y nadie sabría cuál cobrar.
+         *
+         * Correr el comando dos veces tiene que ser inofensivo, así que
+         * si Fausto ya tiene el suyo se reporta y se sale. Cotizar otro
+         * moría con una violación de unicidad DESPUÉS de haber anulado
+         * los cargos —dejando la cuenta peor que antes de empezar.
+         */
+        $yaAgregado = Presupuesto::query()
+            ->where('encuentro_id', $cuenta->encuentro_id)
+            ->where('estado', EstadoPresupuesto::Agregado->value)
+            ->first();
+
+        if ($yaAgregado instanceof Presupuesto) {
+            $this->info('Cuenta '.$cuenta->numero.' — '.$cuenta->encuentro->persona->nombreCompleto());
+            $this->line(
+                'Ya tiene el paquete '.$yaAgregado->numero.' agregado, con '
+                .$yaAgregado->detalle()->count().' renglones adentro. No se toca nada.'
+            );
+            $this->line('Para rehacerlo, quitá el presupuesto de la cuenta desde su pantalla y volvé a correr esto.');
+
+            return self::SUCCESS;
         }
 
         $this->limpiarLoQueSeCargoSuelto($cuenta, $anulador);
