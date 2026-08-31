@@ -96,7 +96,8 @@ class Especialidad extends Model
     }
 
     /**
-     * @param  Builder<Especialidad>  $query
+     * @param Builder<Especialidad> $query
+     *
      * @return Builder<Especialidad>
      */
     public function scopeVigentes(Builder $query, ?CarbonInterface $momento = null): Builder

@@ -1040,7 +1040,16 @@ class CuentasAbiertas extends Page
                             ->createOptionForm(fn (): ?array => Gate::allows('create', Medico::class)
                                 ? self::altaRapidaDeMedico()
                                 : null)
-                            ->createOptionUsing(function (array $data): ?int {
+                            /*
+                             * ⚠️ El `abort_unless` se queda aunque el
+                             * botón no se pinte: esconder un control en
+                             * Livewire no cierra la puerta, la acción se
+                             * sigue pudiendo llamar desde el navegador.
+                             * Y como corta el flujo, el retorno es `int`
+                             * y no `?int` — nunca hay un camino que
+                             * devuelva nulo.
+                             */
+                            ->createOptionUsing(function (array $data): int {
                                 abort_unless(Gate::allows('create', Medico::class), 403);
 
                                 return (int) Medico::create([

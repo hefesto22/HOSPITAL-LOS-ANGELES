@@ -95,7 +95,8 @@ class HonorarioMedico extends Model
     }
 
     /**
-     * @param  Builder<HonorarioMedico>  $query
+     * @param Builder<HonorarioMedico> $query
+     *
      * @return Builder<HonorarioMedico>
      */
     public function scopeVigentes(Builder $query, ?CarbonInterface $momento = null): Builder

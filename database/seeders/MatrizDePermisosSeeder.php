@@ -286,9 +286,9 @@ class MatrizDePermisosSeeder extends Seeder
              */
             'Medico'       => ['ViewAny', 'View'],
             'Especialidad' => ['ViewAny', 'View'],
-            'Encuentro'     => ['ViewAny', 'View', 'Update'],
-            'Cuenta'        => ['ViewAny', 'View', 'Create', 'Update'],
-            'Cargo'         => ['ViewAny', 'View', 'Create'],
+            'Encuentro'    => ['ViewAny', 'View', 'Update'],
+            'Cuenta'       => ['ViewAny', 'View', 'Create', 'Update'],
+            'Cargo'        => ['ViewAny', 'View', 'Create'],
 
             /*
              * ─────────────────────────────────────────────────────────

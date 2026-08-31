@@ -114,7 +114,8 @@ class Medico extends Model
     }
 
     /**
-     * @param  Builder<Medico>  $query
+     * @param Builder<Medico> $query
+     *
      * @return Builder<Medico>
      */
     public function scopeVigentes(Builder $query, ?CarbonInterface $momento = null): Builder
