@@ -172,7 +172,6 @@ class PresentacionesRelationManager extends RelationManager
                     ->required()
                     ->maxLength(255)
                     ->columnSpanFull()
-                    ->default(fn (): ?string => $this->nombrePropuesto())
                     ->dehydrateStateUsing(fn (mixed $state): string => is_string($state) ? trim($state) : '')
                     ->placeholder($this->ejemploDeNombre())
                     ->helperText($this->ayudaDelNombre()),
@@ -852,22 +851,6 @@ class PresentacionesRelationManager extends RelationManager
         $duenio = $this->getOwnerRecord();
 
         return $duenio instanceof Item && $duenio->mueveInventario();
-    }
-
-    /**
-     * El nombre con el que abre el campo: el del producto, pelado.
-     *
-     * Lo que va después de la pleca todavía no se sabe —depende del
-     * envase y del contenido, que están más abajo y vacíos— y se agrega
-     * solo al contestarlos.
-     */
-    /**
-     * Al crear no hay nada que proponer todavía: el envase y el contenido
-     * están vacíos, y el nombre se completa solo al contestarlos.
-     */
-    private function nombrePropuesto(): ?string
-    {
-        return null;
     }
 
     /**

@@ -899,7 +899,7 @@ final class RecepcionForm
 
         foreach ($items as $item) {
             foreach ($item->presentaciones->sortBy('nombre') as $presentacion) {
-                $opciones[$item->id.':'.$presentacion->id] = $item->etiqueta().' · '.$presentacion->nombre;
+                $opciones[$item->id.':'.$presentacion->id] = $item->etiqueta().' · '.$presentacion->envase();
             }
 
             $opciones[$item->id.':0'] = $item->etiqueta()

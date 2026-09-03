@@ -39,6 +39,11 @@ use App\Models\Unidad;
  * de QUÉ frascos físicos sale un jarabe, mirando cuáles ya están
  * destapados y cuáles vencen antes. Eso decide inventario. Esto decide
  * cómo se escribe un número.
+ *
+ * ⚠️ `envase()` y no `etiqueta()`. La lectura va SIEMPRE al lado del
+ * producto —debajo del campo de cantidad, con el nombre arriba— así que
+ * repetirlo daría «1 ACETAMINOFEN 500 MG TABLETA BLISTER X 10 + 5 TAB»,
+ * un renglón que hay que leer dos veces para encontrar el número.
  */
 final class LecturaEnEnvases
 {
@@ -74,7 +79,7 @@ final class LecturaEnEnvases
                 continue;
             }
 
-            $partes[] = $cuantos.' '.$envase->etiqueta();
+            $partes[] = $cuantos.' '.$envase->envase();
             $resto = $resto->restar($porEnvase->por((string) $cuantos));
         }
 

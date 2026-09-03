@@ -81,9 +81,10 @@ it('avisa lo que falta y no lo que se presto', function (): void {
         'estado'           => EstadoPrestamo::Parcial,
     ]);
 
-    expect(app(AvisoDeLoQueSeDebe::class)->delItem($producto->getKey()))
-        ->toContain('12')
-        ->not->toContain('30');
+    $frase = (string) app(AvisoDeLoQueSeDebe::class)->delItem($producto->getKey());
+
+    expect($frase)->toContain('12');
+    expect($frase)->not->toContain('30');
 })->note('La pregunta del que está recibiendo es «cuánto falta», no «cuánto fue». Decirle 30 cuando faltan 12 es que devuelva de más.');
 
 it('junta en un solo aviso todo lo que se debe de la recepcion', function (): void {
