@@ -490,7 +490,7 @@ final class RecepcionForm
 
             Notification::make()
                 ->success()
-                ->title($presentacion->nombre)
+                ->title($presentacion->etiqueta())
                 ->body('Agregado. Poné la cantidad, el costo y el lote.')
                 ->send();
 
@@ -828,7 +828,7 @@ final class RecepcionForm
         }
 
         return $item->etiqueta().' · '.($presentacion instanceof ItemPresentacion
-            ? $presentacion->nombre
+            ? $presentacion->envase()
             : 'suelto, por '.($item->unidadDispensacion->simbolo ?? 'unidad'));
     }
 

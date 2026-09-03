@@ -25,7 +25,6 @@ use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Str;
 
 /**
  * Listado del catálogo.
@@ -445,7 +444,7 @@ final class ItemsTable
     {
         return $item->presentaciones
             ->sortByDesc('es_predeterminada')
-            ->map(fn (ItemPresentacion $presentacion): string => Str::after($presentacion->nombre, ' / '))
+            ->map(fn (ItemPresentacion $presentacion): string => $presentacion->envase())
             ->values()
             ->all();
     }

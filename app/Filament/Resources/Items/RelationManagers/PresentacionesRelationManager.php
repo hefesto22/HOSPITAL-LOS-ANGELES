@@ -140,8 +140,35 @@ class PresentacionesRelationManager extends RelationManager
                  * repetirle adelante el del honorario la haría más larga
                  * y menos legible.
                  */
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL NOMBRE BASE NO SE TOCA DESDE ACÁ
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Regla de Mauricio (3-sep-2026): el nombre de la ficha
+                 * es la base y no se cambia; la presentación es lo que se
+                 * le agrega al final.
+                 *
+                 * Antes el campo guardaba «PRODUCTO / ENVASE» y se podía
+                 * editar entero, así que el nombre del producto quedaba
+                 * escrito DOS veces —en la ficha y en cada presentación— y
+                 * las dos copias se separaban al primer cambio de nombre.
+                 * El seeder, además, guardaba solo el envase: dos
+                 * convenciones para la misma columna.
+                 *
+                 * Ahora la presentación guarda SOLO el envase y la base se
+                 * lee del producto al mostrarla. Una sola copia, imposible
+                 * de desincronizar.
+                 */
+                Placeholder::make('nombre_base')
+                    ->label('Producto')
+                    ->columnSpanFull()
+                    ->visible(fn (): bool => $this->seAlmacena())
+                    ->content(fn (): string => $this->nombreBase() ?? '—')
+                    ->helperText('Sale de la ficha y no se edita acá. La presentación de abajo se le agrega al final.'),
+
                 TextInput::make('nombre')
-                    ->label('Nombre')
+                    ->label(fn (): string => $this->seAlmacena() ? 'Presentación' : 'Nombre')
                     ->required()
                     ->maxLength(255)
                     ->columnSpanFull()
@@ -334,10 +361,35 @@ class PresentacionesRelationManager extends RelationManager
         return $table
             ->recordTitleAttribute('nombre')
             ->columns([
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 SE MUESTRA EL NOMBRE ENTERO, NO EL ENVASE PELADO
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * La columna GUARDA solo «CAJA X 100 TABLETAS» —una sola
+                 * copia del nombre del producto, en el producto— pero
+                 * mostrar eso solo sería cambiar un problema por otro:
+                 * cinco filas que dicen «CAJA X 100», «CAJA X 50»,
+                 * «BLISTER X 10» no se leen como presentaciones de un
+                 * medicamento, se leen como cajas sueltas.
+                 *
+                 * Regla de Mauricio (3-sep-2026): «el nombre en
+                 * identificación es solo para que aparezca como
+                 * complemento principal de las presentaciones —
+                 * ACETAMINOFEN 500 MG TABLETA CAJA X 100 TABLETAS».
+                 *
+                 * Guardado en dos pedazos, mostrado entero: es el nombre
+                 * que después va a salir SOLO —en el desplegable de la
+                 * compra, en la línea del lote, en la etiqueta impresa— y
+                 * es el que tiene que poder leerse sin nada al lado.
+                 */
                 TextColumn::make('nombre')
                     ->label('Presentación')
                     ->weight('medium')
                     ->wrap()
+                    ->state(fn (ItemPresentacion $record): string => $this->seAlmacena()
+                        ? $record->nombreCompleto()
+                        : $record->nombre)
                     ->description(fn (ItemPresentacion $record): ?string => $record->codigo_barras),
 
                 TextColumn::make('unidad.codigo')
@@ -809,13 +861,20 @@ class PresentacionesRelationManager extends RelationManager
      * envase y del contenido, que están más abajo y vacíos— y se agrega
      * solo al contestarlos.
      */
+    /**
+     * Al crear no hay nada que proponer todavía: el envase y el contenido
+     * están vacíos, y el nombre se completa solo al contestarlos.
+     */
     private function nombrePropuesto(): ?string
     {
-        return $this->seAlmacena() ? $this->nombreBase() : null;
+        return null;
     }
 
     /**
-     * Reescribe el nombre con la forma «PRODUCTO / ENVASE X n UNIDAD».
+     * Reescribe la presentación con la forma «ENVASE X n UNIDAD».
+     *
+     * Sin el nombre del producto adelante: ese vive en la ficha y se le
+     * pega al mostrar, no se copia acá.
      *
      * ─────────────────────────────────────────────────────────────────
      * PISA LO QUE ESCRIBIÓ EL SISTEMA, NUNCA LO QUE ESCRIBIÓ UNA PERSONA
@@ -839,24 +898,23 @@ class PresentacionesRelationManager extends RelationManager
         }
 
         $base = $this->nombreBase();
-
-        if ($base === null) {
-            return;
-        }
-
         $actual = is_string($get('nombre')) ? trim($get('nombre')) : '';
 
+        /*
+         * Lo que escribió el sistema y se puede pisar: lo vacío, lo que
+         * quedó de la convención vieja con pleca, y cualquier cosa con la
+         * forma «ENVASE X n …», que es la que propone este método.
+         * Cualquier otra cosa la tecleó alguien con una razón.
+         */
         $esDelSistema = $actual === ''
-            || $actual === $base
-            || str_starts_with($actual, $base.' / ');
+            || ($base !== null && ($actual === $base || str_starts_with($actual, $base.' / ')))
+            || preg_match('/^\p{Lu}+ X \d/u', $actual) === 1;
 
         if (! $esDelSistema) {
             return;
         }
 
-        $sufijo = $this->sufijoDelEnvase($get);
-
-        $set('nombre', $sufijo === null ? $base : $base.' / '.$sufijo);
+        $set('nombre', $this->sufijoDelEnvase($get) ?? '');
     }
 
     /**
@@ -917,9 +975,9 @@ class PresentacionesRelationManager extends RelationManager
     private function ayudaDelNombre(): string
     {
         return $this->seAlmacena()
-            ? 'Se arma solo: el nombre del producto, una pleca y cómo viene envasado —«/ CAJA X 100 '
-              .'TABLETA», «/ FRASCO X 120 ML»—. Se completa al contestar los dos campos de abajo. Si '
-              .'querés otro nombre, escribilo encima y no se vuelve a tocar.'
+            ? 'Solo el envase: «CAJA X 100 TABLETAS», «FRASCO X 120 ML». Se completa solo al '
+              .'contestar los dos campos de abajo, y se le agrega al nombre del producto de arriba. '
+              .'Si querés otro texto, escribilo encima y no se vuelve a tocar.'
             : 'Qué distingue a esta variante de las otras: el médico, la medida, la marca. '
               .'Se guarda en mayúsculas.';
     }

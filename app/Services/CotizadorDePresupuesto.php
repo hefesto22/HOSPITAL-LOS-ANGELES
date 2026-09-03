@@ -224,7 +224,7 @@ final class CotizadorDePresupuesto
             item: $item,
             origen: OrigenLineaPresupuesto::Catalogo,
             texto: $presentacion instanceof ItemPresentacion
-                ? $item->nombre.' — '.$presentacion->nombre
+                ? $item->nombre.' — '.$presentacion->envase()
                 : $item->nombre,
             cantidad: $cantidad,
             precioUnitario: $precio->precio->cantidad()->paraBase(4),

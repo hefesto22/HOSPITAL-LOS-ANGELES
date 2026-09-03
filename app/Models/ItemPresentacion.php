@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 /**
@@ -389,8 +390,78 @@ class ItemPresentacion extends Model
         return $limpio === '' ? '0' : $limpio;
     }
 
+    /**
+     * Solo el envase, sin el producto adelante: «CAJA X 100 TABLETAS».
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LA COLUMNA GUARDA EL ENVASE Y NADA MÁS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Regla de Mauricio (3-sep-2026): el nombre de la ficha es la base y
+     * la presentación es lo que se le agrega al final. Una sola copia del
+     * nombre del producto, en el producto.
+     *
+     * Hasta esa fecha convivían DOS convenciones en la misma columna: el
+     * formulario guardaba «PRODUCTO / ENVASE» y el seeder guardaba
+     * «ENVASE» pelado. Cada pantalla que la mostraba tenía su propio
+     * recorte con `Str::after(' / ')` —tres, y ninguna igual a la otra—.
+     * La migración de esa fecha dejó una sola convención en la base.
+     *
+     * El recorte se queda acá, una vez, por lo que entra por otra puerta:
+     * un import del catálogo viejo, un comando, una fila que la migración
+     * no alcanzó porque el producto ya se había renombrado. No es deuda:
+     * es el único lugar donde puede estar sin volver a partirse en tres.
+     */
+    public function envase(): string
+    {
+        $guardado = trim($this->nombre);
+
+        if (! str_contains($guardado, ' / ')) {
+            return $guardado;
+        }
+
+        $envase = trim(Str::afterLast($guardado, ' / '));
+
+        return $envase === '' ? $guardado : $envase;
+    }
+
+    /**
+     * Cómo se llama esto entero: «ACETAMINOFEN 500 MG TABLETA CAJA X 100
+     * TABLETAS».
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * EL PRODUCTO SOLO NO SE MUESTRA, Y EL ENVASE SOLO TAMPOCO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «ACETAMINOFEN 500 MG TABLETA» no es nada que se pueda agarrar con
+     * la mano: lo que existe en el estante es la caja de 100. Y «CAJA X
+     * 100 TABLETAS» sola, en el desplegable de la compra o en la línea
+     * del lote, no dice de qué producto es — y ahí es donde alguien
+     * recibe cien tabletas del medicamento equivocado.
+     *
+     * Las dos mitades juntas son la única forma que se lee sin
+     * adivinanza, y por eso esto es la `etiqueta()` del modelo: el nombre
+     * que se muestra cuando la presentación aparece sola.
+     *
+     * ⚠️ Se compone al LEER y no se guarda compuesto. Guardarlo sería
+     * escribir el nombre del producto dos veces, y las dos copias se
+     * separan el día que alguien corrige un acento en la ficha.
+     */
+    public function nombreCompleto(): string
+    {
+        $item = $this->item;
+        $base = $item instanceof Item ? trim($item->nombre) : '';
+        $envase = $this->envase();
+
+        if ($base === '') {
+            return $envase;
+        }
+
+        return $envase === '' ? $base : $base.' '.$envase;
+    }
+
     public function etiqueta(): string
     {
-        return $this->nombre;
+        return $this->nombreCompleto();
     }
 }

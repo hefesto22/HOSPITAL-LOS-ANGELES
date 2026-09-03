@@ -351,9 +351,7 @@ final class RegistradorDeCargo
              * algo que se entregó en frasco, y eso el CHECK de la base no
              * lo puede ver.
              */
-            'item_presentacion_id' => $this->envaseDelCargo($item, $linea) === null
-                ? null
-                : $linea->presentacion?->id,
+            'item_presentacion_id'  => $this->presentacionDelCargo($item, $linea)?->id,
             'cantidad_presentacion' => $this->envaseDelCargo($item, $linea)?->redondeado(4),
             'ocurrido_en'           => $ocurridoEn,
             'registrado_en'         => now(),
@@ -621,11 +619,33 @@ final class RegistradorDeCargo
      * CHECK de la base no puede ver: las dos columnas estarían llenas y
      * la fila sería válida.
      */
-    private function envaseDelCargo(Item $item, LineaDeCargo $linea): ?Decimal
+    /**
+     * De qué envase salió, valga o no como unidad de cobro.
+     *
+     * 🔴 Esto es el ORIGEN y se guarda SIEMPRE que la presentación sea de
+     * este ítem, con o sin `cantidad_presentacion`. Antes las dos columnas
+     * iban juntas o ninguna, y eso perdía el dato justo en el caso más
+     * común: cinco tabletas sacadas de la caja de 100. La cantidad va en
+     * tabletas —de una caja abierta no se cobra «media caja»— pero de cuál
+     * salieron es lo que contesta «de qué envase se está vendiendo» y lo
+     * que le da a quién aplicarse al precio por presentación.
+     *
+     * ⚠️ Se valida que la presentación sea DE ESTE ítem. Una de otro
+     * producto convertiría el renglón en «CAJA X 100» de algo que se
+     * entregó en frasco, y eso el CHECK de la base no lo puede ver.
+     */
+    private function presentacionDelCargo(Item $item, LineaDeCargo $linea): ?ItemPresentacion
     {
         $presentacion = $linea->presentacion;
 
-        if (! $presentacion instanceof ItemPresentacion || $presentacion->item_id !== $item->id) {
+        return $presentacion instanceof ItemPresentacion && $presentacion->item_id === $item->id
+            ? $presentacion
+            : null;
+    }
+
+    private function envaseDelCargo(Item $item, LineaDeCargo $linea): ?Decimal
+    {
+        if (! $this->presentacionDelCargo($item, $linea) instanceof ItemPresentacion) {
             return null;
         }
 

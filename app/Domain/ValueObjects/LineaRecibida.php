@@ -126,7 +126,7 @@ final readonly class LineaRecibida
             && $this->presentacion->item_id !== $this->item->id) {
             throw RecepcionException::laPresentacionEsDeOtroItem(
                 $this->item->etiqueta(),
-                $this->presentacion->nombre,
+                $this->presentacion->etiqueta(),
             );
         }
     }

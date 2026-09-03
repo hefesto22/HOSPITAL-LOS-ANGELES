@@ -39,7 +39,6 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Str;
 
 /**
  * Qué hay, dónde está, y el botón para moverlo.
@@ -816,10 +815,9 @@ class Existencias extends Page implements HasTable
     /**
      * La segunda línea del producto: «MED-705 · FRASCO X 120 ML».
      *
-     * ⚠️ `Str::after($nombre, ' / ')` porque el nombre guardado de una
-     * presentación es «PRODUCTO / FRASCO X 120 ML»: repetir el producto
-     * debajo del producto ocupa el ancho sin agregar nada, y justamente
-     * lo que hace falta distinguir es la mitad de atrás.
+     * ⚠️ Solo el ENVASE, no el nombre completo de la presentación:
+     * repetir el producto debajo del producto ocupa el ancho sin agregar
+     * nada, y lo que hace falta distinguir es justamente el envase.
      */
     private static function comoSeEnvasa(Existencia $existencia): string
     {
@@ -1043,7 +1041,7 @@ class Existencias extends Page implements HasTable
             return null;
         }
 
-        $envase = trim(Str::after((string) $presentacion->nombre, ' / '));
+        $envase = $presentacion->envase();
 
         /*
          * ⚠️ El casteo no es adorno. Estos lectores se llaman desde

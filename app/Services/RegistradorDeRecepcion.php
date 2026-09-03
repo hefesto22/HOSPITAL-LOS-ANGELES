@@ -278,7 +278,7 @@ final class RegistradorDeRecepcion
              * de presentación largo no vuelva a tumbar una compra.
              */
             $porQue = 'Calculado en el primer ingreso a bodega'
-                .($presentacion instanceof ItemPresentacion ? ' de '.$presentacion->nombre : '')
+                .($presentacion instanceof ItemPresentacion ? ' de '.$presentacion->envase() : '')
                 .': costo '.$sugerido->costo->formateado()
                 .', margen '.$sugerido->margenObjetivoComoPorcentaje()
                 .', dividido por el descuento de ley más alto de la categoría para que sea piso.';

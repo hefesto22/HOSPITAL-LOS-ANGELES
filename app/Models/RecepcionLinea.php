@@ -160,7 +160,7 @@ class RecepcionLinea extends Model
      */
     public function resumen(): string
     {
-        $presentacion = $this->presentacion->nombre ?? 'unidad de dispensación';
+        $presentacion = $this->presentacion?->envase() ?? 'unidad de dispensación';
 
         $cajas = self::sinCerosSobrantes($this->cantidad_presentacion);
         $unidades = self::sinCerosSobrantes($this->cantidad_dispensacion);

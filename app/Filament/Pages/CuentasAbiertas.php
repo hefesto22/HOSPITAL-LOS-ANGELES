@@ -7,9 +7,11 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\FormaDePago;
+use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\MagnitudDeMedida;
 use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\QuienPresta;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDiagnostico;
@@ -22,6 +24,7 @@ use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
 use App\Domain\Exceptions\PrecioNoDefinidoException;
+use App\Domain\Exceptions\PrestamoException;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
@@ -43,8 +46,10 @@ use App\Models\Expediente;
 use App\Models\Factura;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Models\Lote;
 use App\Models\Medico;
 use App\Models\Persona;
+use App\Models\Prestamo;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
@@ -55,11 +60,13 @@ use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
+use App\Services\LecturaEnEnvases;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeAutorizacion;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
+use App\Services\RegistradorDePrestamo;
 use App\Services\ResolutorDeHonorario;
 use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
@@ -68,7 +75,9 @@ use App\Support\NormalizadorDeTexto;
 use App\Support\NumeroDeFormulario;
 use App\Support\UsuarioAutenticado;
 use BackedEnum;
+use Carbon\CarbonInterface;
 use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
@@ -79,6 +88,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -959,6 +969,34 @@ class CuentasAbiertas extends Page
 
                         /*
                          * ─────────────────────────────────────────────
+                         * 🔴 «NO HAY» NO PUEDE SER UN CALLEJÓN SIN SALIDA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Cuando el estante está vacío y el paciente
+                         * está enfrente, lo que pasa de verdad en el
+                         * hospital es que se le pide prestado a la
+                         * farmacia de la esquina. Hasta ahora el sistema
+                         * decía «recibilo o trasladalo» y ahí terminaba:
+                         * o alguien inventaba una recepción sin factura,
+                         * o cobraba por fuera.
+                         *
+                         * Este botón registra el préstamo —sube la
+                         * existencia y deja la deuda con quien prestó— y
+                         * DEJA EL ESTANTE ELEGIDO, así que quien cobra
+                         * sigue en la misma línea sin volver a empezar.
+                         *
+                         * Solo aparece cuando de verdad no hay nada: con
+                         * existencia, ofrecerlo sería enseñar a pedir
+                         * prestado lo que ya está en el estante.
+                         */
+                        Actions::make([
+                            $this->accionDePedirPrestado(),
+                        ])
+                            ->columnSpan(3)
+                            ->visible(fn (Get $get): bool => $this->sePuedePedirPrestado($get)),
+
+                        /*
+                         * ─────────────────────────────────────────────
                          * 🔴 EL HONORARIO SÍ LLEVA PRECIO A LA VISTA
                          * ─────────────────────────────────────────────
                          *
@@ -1504,9 +1542,13 @@ class CuentasAbiertas extends Page
                      * la persona escribió mirando el frasco.
                      */
                     presentacion: $this->presentacionDeLaUnidad($item, $unidadDeCobro),
-                    envases: $this->presentacionDeLaUnidad($item, $unidadDeCobro) instanceof ItemPresentacion
-                        ? $tecleada
-                        : null,
+                    /*
+                     * Sin cantidad de envases: ya nunca se cobra POR
+                     * envase. La presentación viaja como origen y la
+                     * cantidad va en la unidad de dispensación, que es la
+                     * de venta.
+                     */
+                    envases: null,
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {
@@ -2041,6 +2083,238 @@ class CuentasAbiertas extends Page
      *
      * @return array<int, string>
      */
+    /**
+     * ¿Tiene sentido ofrecer «se pidió prestado» en esta línea?
+     *
+     * Las tres condiciones importan y ninguna sobra:
+     *
+     *   · el ítem mueve inventario —un honorario no se presta—;
+     *   · NO hay existencia en ningún estante, porque ofrecerlo con
+     *     producto en el estante enseña a pedir prestado lo que ya está;
+     *   · y quien cobra tiene permiso de registrar préstamos. Sin esto,
+     *     cualquiera que llegue a la pantalla de cobro puede meter una
+     *     entrada de inventario sin factura.
+     */
+    private function sePuedePedirPrestado(Get $get): bool
+    {
+        $item = $this->itemDe($get('item_id'));
+
+        return $item instanceof Item
+            && $item->mueveInventario()
+            && $this->estantesConLoQueHay($item, $this->formaEnUso($get)) === []
+            && Gate::allows('create', Prestamo::class);
+    }
+
+    /**
+     * Registrar el préstamo sin salir de la línea que se está cobrando.
+     *
+     * ⚠️ `fillForm` resuelve el ÍTEM REAL y no copia el valor del
+     * selector: acá arriba «705» y «705|presentacion:12» son el mismo
+     * producto, y el formulario del préstamo necesita el id del ítem, no
+     * la cadena compuesta.
+     *
+     * Al terminar deja `almacen_id` elegido en la línea de afuera. Sin
+     * eso, quien cobra registra el préstamo y vuelve a encontrarse el
+     * campo en blanco con el paciente esperando.
+     */
+    private function accionDePedirPrestado(): Action
+    {
+        return Action::make('pedirPrestado')
+            ->label('Se pidió prestado')
+            ->icon(Heroicon::OutlinedArrowDownTray)
+            ->color('warning')
+            ->modalHeading('¿Quién nos lo prestó?')
+            ->modalDescription(
+                'Sube la existencia en el acto y queda anotado a quién hay que devolvérselo. Lo que '
+                .'trae el médico o la familia del paciente se registra igual, pero no cuenta como deuda.'
+            )
+            ->modalSubmitActionLabel('Registrar y seguir cobrando')
+            ->modalWidth('xl')
+            ->fillForm(fn (Get $get): array => [
+                'item_id'        => $this->itemDe($get('item_id'))?->id,
+                'presta_tipo'    => QuienPresta::Farmacia->value,
+                'forma_de_saldo' => FormaDeSaldo::DevolverProducto->value,
+            ])
+            ->schema([
+                Hidden::make('item_id'),
+
+                Select::make('almacen_id')
+                    ->label('A qué estante entra')
+                    ->required()
+                    ->options(fn (): array => Almacen::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
+                    ->helperText('Donde queda físicamente, y de donde va a salir cuando se devuelva.'),
+
+                TextInput::make('cantidad')
+                    ->label('Cuánto prestaron')
+                    ->required()
+                    ->rule('regex:/^\d{1,10}(\.\d{1,4})?$/')
+                    ->validationMessages([
+                        'regex' => 'Escribí solo el número, con hasta cuatro decimales.',
+                    ])
+                    /*
+                     * NO se prellena con la cantidad de la línea, y es a
+                     * propósito: la línea puede estar en unidad de cobro
+                     * —una caja— y el kardex va en la mínima. Un número
+                     * heredado de otra unidad se acepta sin mirarlo.
+                     */
+                    ->helperText('En la unidad del kardex: si prestaron una caja de 100, van 100.'),
+
+                Select::make('lote_id')
+                    ->label('Lote')
+                    ->visible(fn (Get $get): bool => $this->exigeLoteElItem($get('item_id')))
+                    ->required(fn (Get $get): bool => $this->exigeLoteElItem($get('item_id')))
+                    ->searchable()
+                    ->options(fn (Get $get): array => Lote::query()
+                        ->where('item_id', $get('item_id'))
+                        ->orderByDesc('fecha_vencimiento')
+                        ->pluck('numero', 'id')
+                        ->all())
+                    ->helperText('El de la caja que prestaron. Si no está en la lista, cargalo acá mismo.')
+                    ->createOptionForm([
+                        TextInput::make('numero')->label('Número de lote')->required()->maxLength(60),
+                        DatePicker::make('fecha_vencimiento')->label('Vence')->native(false)->displayFormat('d/m/Y'),
+                    ])
+                    ->createOptionUsing(function (array $data, Get $get): ?int {
+                        $itemId = $get('item_id');
+
+                        if (! is_numeric($itemId)) {
+                            return null;
+                        }
+
+                        return Lote::query()->create([
+                            'item_id'           => (int) $itemId,
+                            'numero'            => $data['numero'],
+                            'fecha_vencimiento' => $data['fecha_vencimiento'] ?? null,
+                        ])->id;
+                    }),
+
+                Select::make('presta_tipo')
+                    ->label('Quién prestó')
+                    ->required()
+                    ->native(false)
+                    ->options(QuienPresta::opciones())
+                    ->live()
+                    ->helperText(fn (Get $get): string => is_string($get('presta_tipo'))
+                        && QuienPresta::tryFrom($get('presta_tipo')) instanceof QuienPresta
+                            ? QuienPresta::from($get('presta_tipo'))->ayuda()
+                            : 'De quién salió lo que no había.'),
+
+                TextInput::make('presta_nombre')
+                    ->label('Nombre')
+                    ->required()
+                    ->minLength(3)
+                    ->maxLength(160)
+                    ->placeholder('FARMACIA SAN JOSE')
+                    ->helperText('Sin esto no se le puede devolver a nadie.'),
+
+                TextInput::make('presta_telefono')
+                    ->label('Teléfono')
+                    ->tel()
+                    ->maxLength(40),
+
+                Select::make('forma_de_saldo')
+                    ->label('Cómo se le paga')
+                    ->required()
+                    ->native(false)
+                    ->options(FormaDeSaldo::opciones())
+                    ->live(),
+
+                TextInput::make('monto_acordado')
+                    ->label('Cuánto se le va a pagar')
+                    ->prefix('L')
+                    ->visible(fn (Get $get): bool => $get('forma_de_saldo') === FormaDeSaldo::Pagar->value)
+                    ->required(fn (Get $get): bool => $get('forma_de_saldo') === FormaDeSaldo::Pagar->value)
+                    ->rule('regex:/^\d{1,10}(\.\d{1,2})?$/')
+                    ->validationMessages([
+                        'regex' => 'Escribí solo el número, con hasta dos decimales.',
+                    ]),
+
+                Textarea::make('motivo')
+                    ->label('Por qué se pidió')
+                    ->rows(2)
+                    ->maxLength(255)
+                    ->placeholder('No había existencia y el paciente lo necesitaba en el momento.'),
+            ])
+            ->action(function (array $data, Set $set): void {
+                $idDelItem = $data['item_id'] ?? null;
+                $idDelAlmacen = $data['almacen_id'] ?? null;
+                $idDelLote = $data['lote_id'] ?? null;
+
+                $item = is_numeric($idDelItem) ? Item::query()->find((int) $idDelItem) : null;
+                $almacen = is_numeric($idDelAlmacen) ? Almacen::query()->find((int) $idDelAlmacen) : null;
+                $lote = is_numeric($idDelLote) ? Lote::query()->find((int) $idDelLote) : null;
+
+                $cantidad = NumeroDeFormulario::aDecimal($data['cantidad'] ?? null);
+
+                if (! $item instanceof Item || ! $almacen instanceof Almacen || ! $cantidad instanceof Decimal) {
+                    Notification::make()->danger()->title('Faltan datos del préstamo')->send();
+
+                    return;
+                }
+
+                $forma = FormaDeSaldo::from((string) $data['forma_de_saldo']);
+
+                try {
+                    $prestamo = app(RegistradorDePrestamo::class)->registrar(
+                        item: $item,
+                        almacen: $almacen,
+                        cantidad: $cantidad,
+                        quienPresta: QuienPresta::from((string) $data['presta_tipo']),
+                        nombreDeQuienPresta: (string) $data['presta_nombre'],
+                        forma: $forma,
+                        lote: $lote,
+                        montoAcordado: $forma === FormaDeSaldo::Pagar
+                            ? NumeroDeFormulario::aDecimal($data['monto_acordado'] ?? null)
+                            : null,
+                        telefono: self::textoONulo($data['presta_telefono'] ?? null),
+                        cuenta: $this->cuentaEnCurso(),
+                        motivo: self::textoONulo($data['motivo'] ?? null),
+                    );
+                } catch (PrestamoException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo registrar el préstamo')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                /*
+                 * El estante queda elegido: es el que acaba de recibir lo
+                 * prestado, y sin esto quien cobra vuelve a encontrarse el
+                 * campo en blanco con el paciente esperando.
+                 */
+                $set('almacen_id', (string) $almacen->id);
+
+                Notification::make()
+                    ->success()
+                    ->title('Préstamo registrado')
+                    ->body($prestamo->seDebe()
+                        ? "Ya podés cobrarlo. Se le deben {$prestamo->saldoPendiente()->redondeado(2)} a {$prestamo->presta_nombre}."
+                        : 'Ya podés cobrarlo. No genera deuda: lo trajo el paciente.')
+                    ->send();
+            });
+    }
+
+    /** ¿Este ítem exige lote? ARSA lo obliga en medicamentos. */
+    private function exigeLoteElItem(mixed $itemId): bool
+    {
+        if (! is_numeric($itemId)) {
+            return false;
+        }
+
+        $item = Item::query()->find((int) $itemId);
+
+        return $item instanceof Item && $item->requiere_lote;
+    }
+
+    private static function textoONulo(mixed $valor): ?string
+    {
+        return is_string($valor) && trim($valor) !== '' ? trim($valor) : null;
+    }
+
     private function estantesConLoQueHay(?Item $item, ?string $unidadDeCobro = null): array
     {
         if (! $item instanceof Item) {
@@ -4693,7 +4967,22 @@ class CuentasAbiertas extends Page
          * unidad de conteo —TABLETA, AMPOLLA— se entrega suelta por
          * naturaleza y nunca pierde esta opción.
          */
-        if ($this->seEntregaSuelta($item)) {
+        /*
+         * ⚠️ La opción suelta desaparece cuando el envase ya es solo el
+         * origen y el producto tiene presentaciones cargadas.
+         *
+         * Con la cantidad siempre en tabletas, «TABLETA (tab)» y «BLISTER
+         * X 10» significan exactamente lo mismo salvo por un dato: de
+         * cuál se sacó. Dejar las dos es ofrecer una opción que TIRA ese
+         * dato, y la que lo tira es la primera de la lista — o sea, la que
+         * se elige cuando hay prisa.
+         *
+         * Si todavía no hay presentaciones cargadas, se queda: es el
+         * respaldo de más abajo y sin él el producto no se podría cobrar.
+         */
+        $soloElOrigen = $this->presentacionesDe($item)->isNotEmpty();
+
+        if ($this->seEntregaSuelta($item) && ! $soloElOrigen) {
             $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
         }
 
@@ -4710,9 +4999,18 @@ class CuentasAbiertas extends Page
         $codigo = self::codigoDeLaUnidad($item) ?? $unidad ?? 'unidades';
 
         foreach ($this->presentacionesDe($item) as $presentacion) {
-            $opciones[self::POR_PRESENTACION.$presentacion->id] = self::envaseCorto($item, $presentacion)
-                .' — '.rtrim(rtrim((string) $presentacion->unidades_por_presentacion, '0'), '.')
-                .' '.$codigo;
+            $trae = rtrim(rtrim((string) $presentacion->unidades_por_presentacion, '0'), '.');
+
+            /*
+             * El texto distingue los dos mundos, porque el número dice
+             * cosas distintas: en el envase-unidad-de-cobro «100 TAB» es
+             * lo que se cobra al poner 1; en el envase-origen es lo que
+             * TRAE la caja, y lo que se cobra es lo que se teclee.
+             * Escribirlo igual en los dos es como se cobra una caja
+             * entera creyendo que se cobró una tableta.
+             */
+            $opciones[self::POR_PRESENTACION.$presentacion->id] = self::envaseCorto($presentacion)
+                .($soloElOrigen ? ' — trae '.$trae.' '.$codigo : ' — '.$trae.' '.$codigo);
         }
 
         /*
@@ -4735,46 +5033,31 @@ class CuentasAbiertas extends Page
      * «CAJA X 100 TABLETAS».
      *
      * ─────────────────────────────────────────────────────────────────
-     * 🔴 EL NOMBRE DEL PRODUCTO YA ESTÁ ARRIBA, TRES VECES
+     * EL PRODUCTO YA ESTÁ ADELANTE EN EL MISMO RENGLÓN
      * ─────────────────────────────────────────────────────────────────
      *
-     * El nombre guardado de una presentación es «PRODUCTO / envase», y en
-     * este catálogo la mitad de atrás vuelve a nombrar el producto:
-     * «ACETAMINOFEN JARABE / ACETAMINOFEN JARABE 60 ML».
+     * El renglón del selector es «PRODUCTO — forma», así que acá va solo
+     * la forma. Puesto entero salía «ACETAMINOFEN JARABE 60 ML — 60
+     * MILILITRO (ml)»: cuarenta y cinco caracteres en una columna de
+     * tres, partidos en tres líneas, con el dato que distingue —60 ML— al
+     * final. Cuatro campos así uno al lado del otro es la pantalla
+     * amontonada que nadie quiere leer con el paciente enfrente.
      *
-     * Puesto entero en el desplegable, el renglón salía
-     * «ACETAMINOFEN JARABE 60 ML — 60 MILILITRO (ml)»: cuarenta y cinco
-     * caracteres en una columna de tres, partidos en tres líneas, con el
-     * dato que distingue —60 ML— al final. Cuatro campos así uno al lado
-     * del otro es la pantalla amontonada que nadie quiere leer con el
-     * paciente enfrente.
+     * ⚠️ Esto era un recorte palabra por palabra de lo que el producto ya
+     * decía, porque la columna guardaba «PRODUCTO / envase». Desde el
+     * 3-sep-2026 guarda el envase pelado y el recorte vive una sola vez,
+     * en `ItemPresentacion::envase()`.
      *
-     * Se recorta palabra por palabra lo que el producto ya dice, y se
-     * antepone la unidad del envase solo si no está.
+     * Lo único que queda acá es anteponer la unidad cuando el nombre no
+     * la trae: una presentación cargada como «X 100 TABLETAS» con envase
+     * CAJA se lee «CAJA X 100 TABLETAS», que es lo que hay en el estante.
      */
-    private static function envaseCorto(Item $item, ItemPresentacion $presentacion): string
+    private static function envaseCorto(ItemPresentacion $presentacion): string
     {
-        $envase = trim(Str::after((string) $presentacion->nombre, ' / '));
-        $producto = trim((string) $item->nombre);
-
-        $delEnvase = preg_split('/\s+/', $envase) ?: [];
-        $delProducto = preg_split('/\s+/', $producto) ?: [];
-
-        $comunes = 0;
-
-        while (
-            isset($delEnvase[$comunes], $delProducto[$comunes])
-            && $delEnvase[$comunes] === $delProducto[$comunes]
-        ) {
-            $comunes++;
-        }
-
-        $resto = trim(implode(' ', array_slice($delEnvase, $comunes)));
-        $corto = $resto === '' ? $envase : $resto;
-
+        $envase = $presentacion->envase();
         $unidad = $presentacion->unidad->codigo;
 
-        return str_contains($corto, $unidad) ? $corto : trim($unidad.' '.$corto);
+        return str_contains($envase, $unidad) ? $envase : trim($unidad.' '.$envase);
     }
 
     /**
@@ -5045,7 +5328,27 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        return Decimal::de($presentacion->aUnidadesDeDispensacion($cantidad->redondeado(4)));
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL ENVASE NUNCA MULTIPLICA. ES SOLO EL ORIGEN.
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Regla de Mauricio (3-sep-2026): **se vende en lo que diga «se
+         * dispensa en»**. Si el hospital pone ML, se vende por ml; si
+         * pone FRASCO, por frasco; si pone TABLETA, por tableta. El
+         * hospital elige la unidad y con eso queda dicho todo.
+         *
+         * Por eso la presentación dejó de ser una unidad de cobro: dice
+         * de qué envase salió, y nada más. «5 de la caja de 100» son 5
+         * tabletas y quedan 95. Multiplicar acá era cobrar 500 y
+         * descontar 500 del estante con cinco tabletas en la mano.
+         *
+         * Y no hay excepción por magnitud ni por bandera: una sola regla,
+         * escrita en la ficha del producto, que se lee sin abrir el
+         * código. La versión anterior la deducía de la magnitud de la
+         * unidad — más lista y peor, porque había que ir a buscarla.
+         */
+        return $cantidad;
     }
 
     /**
@@ -5072,6 +5375,20 @@ class CuentasAbiertas extends Page
         }
 
         $etiqueta = $this->unidadesDeCobro($item)[$unidad] ?? '';
+
+        /*
+         * Con el envase como origen no hay conversión que mostrar: la
+         * cantidad ya está en la unidad del kardex. Lo útil es decir de
+         * dónde sale, que es lo que la persona tiene que ir a buscar.
+         */
+        if (str_starts_with($unidad, self::POR_PRESENTACION)) {
+            return sprintf(
+                '%s %s, del %s.',
+                rtrim(rtrim($tecleada->redondeado(4), '0'), '.'),
+                self::codigoDeLaUnidad($item) ?? $enLaUnidad ?? 'unidades',
+                mb_strstr($etiqueta, ' —', true) ?: $etiqueta,
+            );
+        }
 
         return sprintf(
             '%s %s = %s %s',
@@ -5709,12 +6026,118 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * La línea que va debajo de los cuatro campos: la equivalencia, el
-     * FEFO, y el aviso cuando no hay existencia en ningún estante.
+     * La cantidad de la línea, leída en envases: «1 BLISTER X 10 + 5 TAB».
      *
-     * Vive en un solo lugar para que lo que hay que leer antes de apretar
-     * Agregar esté junto, y para que los campos de arriba queden todos
-     * del mismo alto.
+     * La cantidad siempre está en la unidad de venta, así que esto se
+     * puede decir siempre: es la traducción de un número a lo que la
+     * persona tiene enfrente en el estante.
+     */
+    private function enEnvases(Item $item, mixed $cantidad): ?string
+    {
+        $pedida = NumeroDeFormulario::aDecimal($cantidad);
+
+        return $pedida instanceof Decimal
+            ? app(LecturaEnEnvases::class)->de($item, $pedida)
+            : null;
+    }
+
+    /**
+     * De qué lote sale, con su vencimiento. Null si no se puede saber.
+     *
+     * Recorre los lotes en el orden en que FEFO los va a consumir y se
+     * detiene cuando ya cubrió lo pedido, así que una cantidad que abarca
+     * dos lotes los nombra a los dos: es exactamente lo que la persona
+     * tiene que ir a buscar al estante.
+     */
+    private function deQueLoteSale(Item $item, Get $get, ?string $unidadDeCobro): ?string
+    {
+        $almacen = $this->almacenElegido($get, $item, $unidadDeCobro);
+
+        if (! $almacen instanceof Almacen) {
+            return null;
+        }
+
+        $pedida = $this->loPedido($get('cantidad'));
+
+        if (! $pedida instanceof Decimal) {
+            return null;
+        }
+
+        $nombres = [];
+        $restante = $pedida;
+
+        foreach (app(ConsultorDeExistencias::class)->enOrdenFefo($item, $almacen) as $saldo) {
+            if (! $restante->mayorQue('0')) {
+                break;
+            }
+
+            $lote = $saldo->lote;
+            $hay = $saldo->cantidadDecimal();
+            $sale = $hay->menorQue($restante) ? $hay : $restante;
+
+            $nombres[] = $lote instanceof Lote
+                ? 'lote '.$lote->numero.($lote->fecha_vencimiento instanceof CarbonInterface
+                    ? ' (vence '.$lote->fecha_vencimiento->format('d/m/Y').')'
+                    : '')
+                : 'sin lote';
+
+            $restante = $restante->restar($sale);
+        }
+
+        if ($nombres === []) {
+            return null;
+        }
+
+        return count($nombres) === 1
+            ? 'sacalo del '.$nombres[0]
+            : 'sale de '.implode(' y después ', $nombres);
+    }
+
+    /**
+     * El almacén de la línea: el elegido, o el que se preseleccionó.
+     */
+    private function almacenElegido(Get $get, Item $item, ?string $unidadDeCobro): ?Almacen
+    {
+        $elegido = $get('almacen_id');
+
+        if (is_numeric($elegido)) {
+            $almacen = Almacen::query()->find((int) $elegido);
+
+            return $almacen instanceof Almacen ? $almacen : null;
+        }
+
+        $estantes = $this->estantesConLoQueHay($item, $unidadDeCobro);
+
+        if ($estantes === []) {
+            return null;
+        }
+
+        $primero = array_key_first($estantes);
+        $almacen = is_numeric($primero) ? Almacen::query()->find((int) $primero) : null;
+
+        return $almacen instanceof Almacen ? $almacen : null;
+    }
+
+    /**
+     * Lo pedido, en la unidad del kardex.
+     *
+     * Es una lectura del campo y nada más: la cantidad ya viene en la
+     * unidad de venta —la que dice «se dispensa en»— y esa ES la del
+     * kardex. No hay conversión que hacer.
+     */
+    private function loPedido(mixed $cantidad): ?Decimal
+    {
+        $pedida = NumeroDeFormulario::aDecimal($cantidad);
+
+        return $pedida instanceof Decimal && $pedida->mayorQue('0') ? $pedida : null;
+    }
+
+    /**
+     * Lo que hay que leer antes de apretar Agregar: la equivalencia, la
+     * cantidad leída en envases, y de qué lote hay que sacarlo.
+     *
+     * Vive en un solo lugar para que esté todo junto y para que los
+     * campos de arriba queden del mismo alto.
      */
     private function comoQuedaLaLinea(Get $get): HtmlString
     {
@@ -5734,17 +6157,52 @@ class CuentasAbiertas extends Page
             $partes[] = '<strong>'.e(rtrim($equivalencia, '.')).'</strong>';
         }
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * LA CANTIDAD, LEÍDA EN ENVASES
+         * ─────────────────────────────────────────────────────────────
+         *
+         * «15 TAB» no le dice nada a quien está frente al estante;
+         * «1 BLISTER X 10 + 5 TAB» sí. Es una LECTURA y no un saldo: el
+         * kardex sigue en la unidad mínima y la existencia sigue sin
+         * partirse por presentación, porque un saldo por envase exige que
+         * alguien teclee de qué caja física sacó cada tableta — y con
+         * varias personas despachando eso no pasa nunca.
+         */
+        $enEnvases = $this->enEnvases($item, $get('cantidad'));
+
+        if (is_string($enEnvases)) {
+            $partes[] = e($enEnvases);
+        }
+
         if ($item->mueveInventario()) {
             if ($this->estantesConLoQueHay($item, $unidadCobro) === []) {
                 return new HtmlString(
                     '<span style="font-size:.8125rem;color:rgb(248 113 113)">'
                     .'No hay existencia de este producto en ningún almacén. '
-                    .'Hay que recibirlo o trasladarlo antes de cobrarlo.'
+                    .'Recibilo, trasladalo, o registrá abajo que se pidió prestado.'
                     .'</span>'
                 );
             }
 
-            $partes[] = 'sale por FEFO: primero el lote que vence antes';
+            /*
+             * ─────────────────────────────────────────────────────────
+             * DE QUÉ LOTE HAY QUE SACARLO, CON NOMBRE Y VENCIMIENTO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Antes decía «sale por FEFO: primero el lote que vence
+             * antes», que es la REGLA y no la RESPUESTA. Quien está por
+             * caminar al estante no necesita que le expliquen el criterio:
+             * necesita saber cuál caja agarrar.
+             *
+             * El sistema ya eligió —`enOrdenFefo()` lo resuelve antes de
+             * guardar—, así que decirlo no cuesta una consulta nueva de
+             * más y evita el error que sí cuesta: sacar del lote
+             * equivocado y dejar venciendo el que había que gastar.
+             */
+            $delLote = $this->deQueLoteSale($item, $get, $unidadCobro);
+
+            $partes[] = $delLote ?? 'sale por FEFO: primero el lote que vence antes';
         }
 
         if ($partes === []) {
