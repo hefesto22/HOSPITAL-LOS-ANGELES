@@ -7,15 +7,19 @@ namespace App\Filament\Resources\Recepciones\Pages;
 use App\Domain\Exceptions\RecepcionException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaRecibida;
+use App\Filament\Resources\Prestamos\PrestamoResource;
 use App\Filament\Resources\Recepciones\RecepcionResource;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Proveedor;
+use App\Models\Recepcion;
+use App\Services\AvisoDeLoQueSeDebe;
 use App\Services\RegistradorDeRecepcion;
 use App\Support\NumeroDeFormulario;
 use Carbon\Carbon;
 use Filament\Actions\Action;
+use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
@@ -217,15 +221,97 @@ class CreateRecepcion extends CreateRecord
             ? Almacen::query()->find((int) $this->data['almacen_id'])
             : null;
 
+        /*
+         * ⚠️ La deuda va PRIMERO y no de coletilla al final. Este
+         * recuadro se lee de arriba hacia abajo y se cierra apenas el
+         * total cuadra: lo que quede debajo del total no se lee.
+         */
+        $seDebe = app(AvisoDeLoQueSeDebe::class)->frase($this->itemsDelFormulario());
+
         return sprintf(
-            'Entran %s unidades de %d %s, por L %s.%s Esto mueve el kardex y recalcula el costo '
+            '%sEntran %s unidades de %d %s, por L %s.%s Esto mueve el kardex y recalcula el costo '
             .'promedio: para corregirlo después hace falta un ajuste con motivo.',
+            $seDebe === null ? '' : '⚠️ '.$seDebe.' ',
             $unidades->redondeado(2),
             $productos,
             $productos === 1 ? 'producto' : 'productos',
             $dinero->redondeado(2),
             $almacen instanceof Almacen ? ' Almacén: '.$almacen->nombre.'.' : '',
         );
+    }
+
+    /**
+     * Los productos que están en el formulario ahora mismo.
+     *
+     * Sale del estado en vivo y no del registro porque acá todavía no hay
+     * registro: la idea es justamente avisar ANTES de guardar.
+     *
+     * @return list<int>
+     */
+    private function itemsDelFormulario(): array
+    {
+        $lineas = is_array($this->data['lineas'] ?? null) ? $this->data['lineas'] : [];
+
+        $ids = [];
+
+        foreach ($lineas as $cruda) {
+            if (is_array($cruda) && is_numeric($cruda['item_id'] ?? null)) {
+                $ids[] = (int) $cruda['item_id'];
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL AVISO QUE CONVIERTE LA DEUDA EN UNA TAREA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Regla de Mauricio: «cuando a nosotros nos entre de ese medicamento
+     * a bodega o farmacia, que aparezca que hay que devolverle x cantidad
+     * a x empresa o persona».
+     *
+     * El renglón de la recepción ya lo avisa mientras se teclea y el
+     * resumen lo repite antes de confirmar, pero los dos se ven con la
+     * caja todavía sin abrir. Este es el que queda DESPUÉS, cuando el
+     * producto ya está en el estante y devolverlo es posible — y lleva el
+     * botón que abre la pantalla donde se salda, porque un aviso sin
+     * dónde apretar es un aviso que se cierra.
+     *
+     * ⚠️ `persistent()`: los otros avisos del sistema se van solos a los
+     * pocos segundos, y está bien —dicen que algo salió—. Este dice que
+     * queda algo por hacer, y quien recibe suele estar de espaldas a la
+     * pantalla acomodando cajas cuando aparece.
+     */
+    protected function afterCreate(): void
+    {
+        $aviso = app(AvisoDeLoQueSeDebe::class);
+        $registro = $this->getRecord();
+
+        $items = $registro instanceof Recepcion
+            ? $registro->lineas->pluck('item_id')->map(static fn (mixed $id): int => (int) $id)->all()
+            : $this->itemsDelFormulario();
+
+        $frase = $aviso->frase(array_values($items));
+
+        if ($frase === null) {
+            return;
+        }
+
+        Notification::make()
+            ->warning()
+            ->persistent()
+            ->title('Hay que devolver lo que se pidió prestado')
+            ->body($frase)
+            ->actions([
+                NotificationAction::make('ver_prestamos')
+                    ->label('Ver préstamos')
+                    ->button()
+                    ->url(PrestamoResource::getUrl('index'))
+                    ->markAsRead(),
+            ])
+            ->send();
     }
 
     protected function getRedirectUrl(): string

@@ -11,6 +11,7 @@ use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
 use App\Models\Proveedor;
+use App\Services\AvisoDeLoQueSeDebe;
 use Closure;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
@@ -26,6 +27,7 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
+use Illuminate\Support\HtmlString;
 use Illuminate\Support\Str;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 
@@ -67,6 +69,14 @@ use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
  */
 final class RecepcionForm
 {
+    /**
+     * Lo que se debe de cada producto, respondido una sola vez por
+     * request. Ver `loQueSeDebeDeLaLinea()`.
+     *
+     * @var array<int, string|null>
+     */
+    private static array $deudaPorItem = [];
+
     public static function configure(Schema $schema): Schema
     {
         /*
@@ -347,6 +357,46 @@ final class RecepcionForm
 
             Hidden::make('item_id'),
             Hidden::make('item_presentacion_id'),
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SI DE ESTO SE LE DEBE A ALGUIEN, SE DICE ACÁ
+             * ─────────────────────────────────────────────────────────
+             *
+             * Regla de Mauricio: «cuando a nosotros nos entre de ese
+             * medicamento a bodega o farmacia, que aparezca que hay que
+             * devolverle x cantidad a x empresa o persona».
+             *
+             * Un préstamo de medicamento se pide un martes a las once de
+             * la noche porque no había, y solo se puede devolver el día
+             * que llega la compra. Entre esos dos momentos no hay nada
+             * que hacer, así que la pantalla de «lo que se debe» sirve
+             * para consultar pero no es donde la deuda se salda: nadie la
+             * abre por las mañanas.
+             *
+             * Este renglón es el momento. La caja está entrando, el
+             * producto está en la mano, y el aviso convierte un
+             * recordatorio en un acto. Un mes después esas 20 tabletas ya
+             * se despacharon y la deuda se paga en efectivo, más caro.
+             *
+             * Va acá arriba, pegado a «¿Qué llegó?», y no al final de la
+             * línea: al final ya se tecleó la cantidad y el costo, y
+             * volver a subir a leer algo que apareció abajo es lo que no
+             * pasa cuando hay una fila de cajas esperando.
+             */
+            Placeholder::make('se_debe')
+                ->hiddenLabel()
+                ->columnSpanFull()
+                ->visible(fn (Get $get): bool => self::loQueSeDebeDeLaLinea($get) !== null)
+                ->content(fn (Get $get): HtmlString => new HtmlString(
+                    '<div style="border-left:3px solid rgb(217 119 6);padding:0.5rem 0.75rem;'
+                    .'background:rgb(254 243 199 / 0.45);border-radius:0.25rem;font-size:0.8125rem;'
+                    .'line-height:1.35;">'
+                    .'<strong>Prestado.</strong> '
+                    .e((string) self::loQueSeDebeDeLaLinea($get))
+                    .' Devolvelo desde Préstamos cuando esta recepción quede guardada.'
+                    .'</div>'
+                )),
 
             /* A qué acotó el escaneo. De pantalla: no se guarda. */
             Hidden::make('acotado_a')->dehydrated(false),
@@ -650,6 +700,47 @@ final class RecepcionForm
         ];
 
         $set('lineas', $lineas);
+    }
+
+    /**
+     * Lo que se le debe a alguien del producto de ESTA línea, o null.
+     *
+     * Se pregunta por el producto de la línea y no por la recepción
+     * entera porque el aviso vive dentro de la línea: lo que hace falta
+     * ahí es la deuda de la caja que se acaba de elegir.
+     *
+     * ⚠️ `item_id` y no `que_llego`: el selector guarda
+     * «item:presentacion» y el producto ya viene derivado en el `Hidden`
+     * de al lado. Partir la cadena otra vez acá sería una segunda copia
+     * de esa regla, y la segunda copia es la que se olvida de actualizar.
+     */
+    private static function loQueSeDebeDeLaLinea(Get $get): ?string
+    {
+        $itemId = $get('item_id');
+
+        if (! is_numeric($itemId)) {
+            return null;
+        }
+
+        $id = (int) $itemId;
+
+        /*
+         * ⚠️ Memorizado por producto. `visible()` y `content()` preguntan
+         * lo mismo, y el repetidor los llama a los dos por cada línea: una
+         * compra de veinte renglones son sesenta consultas idénticas
+         * mientras alguien teclea. El caché vive lo que vive el request
+         * de Livewire, así que saldar un préstamo se ve en el siguiente
+         * ida y vuelta.
+         *
+         * `array_key_exists` y no `??=`: la respuesta normal es null —no
+         * se debe nada— y con `??=` justamente ese caso volvería a
+         * consultar siempre.
+         */
+        if (! array_key_exists($id, self::$deudaPorItem)) {
+            self::$deudaPorItem[$id] = app(AvisoDeLoQueSeDebe::class)->delItem($id);
+        }
+
+        return self::$deudaPorItem[$id];
     }
 
     private static function laCuentaDeLaLinea(Get $get): string
