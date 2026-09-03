@@ -20,6 +20,13 @@ function elFijadorDeDescuentosConNombre(): FijadorDeDescuento
     return app(FijadorDeDescuento::class);
 }
 
+/**
+ * ⚠️ El nombre se le pasa como lo TECLEARÍA alguien —«Tercera edad»— y
+ * el sistema lo guarda canónico —«TERCERA EDAD»—. Las expectativas de
+ * abajo van en mayúsculas por eso, y no por gusto: `FijadorDeDescuento`
+ * busca el vigente POR NOMBRE, así que dos formas de escribirlo eran dos
+ * descuentos con el mismo significado, los dos saliendo en facturas.
+ */
 function unDescuentoLlamado(
     string $nombre,
     string $porciento,
@@ -61,7 +68,7 @@ it('se crea con nombre y porcentaje, y se marca en un item', function (): void {
     $resuelto = elResolutorDeDescuentos()->para($item, RangoEdad::Tercera, now());
 
     expect($resuelto->comoPorcentaje())->toBe('25 %')
-        ->and($resuelto->nombre)->toBe('Tercera edad')
+        ->and($resuelto->nombre)->toBe('TERCERA EDAD')
         ->and($resuelto->aplica())->toBeTrue();
 });
 
@@ -197,7 +204,7 @@ it('corregir el mismo dia reemplaza la fila en vez de agregar otra', function ()
     unDescuentoLlamado('Tercera edad', '20', desde: '2026-01-01');
     $corregido = unDescuentoLlamado('Tercera edad', '25', desde: '2026-01-01');
 
-    expect(Descuento::query()->where('nombre', 'Tercera edad')->count())->toBe(1)
+    expect(Descuento::query()->where('nombre', 'TERCERA EDAD')->count())->toBe(1)
         ->and($corregido->comoPorcentaje())->toBe('25 %');
 });
 
@@ -206,7 +213,7 @@ it('una fecha posterior cierra la anterior el dia antes', function (): void {
     unDescuentoLlamado('Tercera edad', '30', desde: '2026-07-01');
 
     $viejo = Descuento::query()
-        ->where('nombre', 'Tercera edad')
+        ->where('nombre', 'TERCERA EDAD')
         ->orderBy('vigencia_desde')
         ->firstOrFail();
 
@@ -343,7 +350,7 @@ it('dos con el mismo nombre no pueden estar vigentes el mismo dia', function ():
 it('la etiqueta del selector dice el nombre y el porcentaje', function (): void {
     $descuento = unDescuentoLlamado('Tercera edad', '25');
 
-    expect($descuento->etiquetaCompleta())->toBe('Tercera edad — 25 %');
+    expect($descuento->etiquetaCompleta())->toBe('TERCERA EDAD — 25 %');
 });
 
 it('cuenta los items por nombre y no por fila', function (): void {

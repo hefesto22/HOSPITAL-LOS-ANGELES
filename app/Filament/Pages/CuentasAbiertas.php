@@ -5025,6 +5025,29 @@ class CuentasAbiertas extends Page
             $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
         }
 
+        /*
+         * ⚠️ Y se DICE que el hueco existe. Un producto de farmacia que
+         * solo ofrece su unidad mínima es, casi siempre, un producto al
+         * que nadie le cargó las presentaciones — no un producto que se
+         * venda por mililitro.
+         *
+         * Sin este rótulo, el renglón se ve igual de normal que
+         * cualquier otro y el hueco se descubre recién cuando alguien
+         * pregunta por qué no aparece el frasco. Con él, quien está
+         * cobrando sabe qué falta y dónde: en la ficha del producto,
+         * pestaña «Presentaciones de compra».
+         *
+         * ⚠️ Con «·» y no con «—». `soloLaForma()` recorta el renglón del
+         * selector en el primer « —», así que con una raya el aviso se
+         * perdía justo en la pantalla donde tiene que leerse.
+         */
+        if ($item->mueveInventario()
+            && $this->presentacionesDe($item)->isEmpty()
+            && array_keys($opciones) === [self::POR_UNIDAD]
+        ) {
+            $opciones[self::POR_UNIDAD] .= ' · sin envases cargados';
+        }
+
         return $opciones;
     }
 
@@ -5115,7 +5138,34 @@ class CuentasAbiertas extends Page
     {
         $formas = $this->unidadesDeCobro($item);
 
-        if (count($formas) <= 1) {
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 UN PRODUCTO CON UNA SOLA FORMA IGUAL SE ABRE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El renglón se colapsaba cuando había una sola forma, y eso
+         * estaba pensado para lo que NO tiene envase: «CONSULTA GENERAL
+         * — Unidad» es ruido en el único renglón que iba a haber.
+         *
+         * Pero se colapsaba también en un MEDICAMENTO con una sola
+         * presentación cargada, y ahí se comía las dos cosas que hacen
+         * falta:
+         *
+         *   · en pantalla, cuál envase se está cobrando — que era
+         *     justamente lo que Mauricio no encontraba: «solo me muestra
+         *     ACETAMINOFEN JARABE cuando debería mostrarme las
+         *     presentaciones en las que se vende»;
+         *   · y en el VALOR, la presentación. Colapsado, el valor es el
+         *     id pelado, así que el cargo entra sin
+         *     `item_presentacion_id` y después nadie sabe de qué envase
+         *     salió. Eso no se ve en la pantalla: se ve meses más tarde,
+         *     cuando hay que auditar de cuál frasco se sirvió.
+         *
+         * Así que ahora la condición mira lo que de verdad importa: si
+         * el producto MUEVE INVENTARIO, la forma siempre se dice, aunque
+         * sea una sola.
+         */
+        if (! self::seAbrePorForma($item, $formas)) {
             return [$item->id => $item->etiqueta()];
         }
 
@@ -5126,6 +5176,28 @@ class CuentasAbiertas extends Page
         }
 
         return $filas;
+    }
+
+    /**
+     * ¿Este producto se abre en un renglón por forma de entrega?
+     *
+     * Lo que NO mueve inventario y tiene una sola forma, no: «CONSULTA
+     * GENERAL — Unidad» es ruido en el único renglón que iba a haber.
+     *
+     * Lo que SÍ mueve inventario, siempre — aunque tenga una sola
+     * presentación cargada. Ver el comentario de `formasDeEntrega()`: el
+     * renglón colapsado no dice qué envase es, y su valor viaja sin la
+     * presentación, así que el cargo entra sin saber de cuál salió.
+     *
+     * @param array<int|string, string> $formas
+     */
+    private static function seAbrePorForma(Item $item, array $formas): bool
+    {
+        if ($formas === []) {
+            return false;
+        }
+
+        return count($formas) > 1 || $item->mueveInventario();
     }
 
     /**
@@ -5180,7 +5252,14 @@ class CuentasAbiertas extends Page
 
         $formas = $this->unidadesDeCobro($item);
 
-        if (count($formas) <= 1) {
+        /*
+         * ⚠️ El MISMO criterio que `formasDeEntrega()`, y por eso vive en
+         * un método y no repetido acá. Si los dos no deciden igual, el
+         * escaneo deja puesto un valor que no está entre las opciones: el
+         * selector se ve vacío con el producto ya elegido, y no hay error
+         * en ningún lado.
+         */
+        if (! self::seAbrePorForma($item, $formas)) {
             return $item->id;
         }
 
