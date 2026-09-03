@@ -73,14 +73,26 @@ final class RegistrarPrestamoAction
                     ->live()
                     ->columnSpan(2),
 
+                /*
+                 * 🔴 Solo bodega o farmacia — el mismo criterio que el
+                 * modal del mostrador, y por eso vive en el enum y no
+                 * repetido en las dos pantallas.
+                 *
+                 * Los estantes de consumo interno no reciben préstamos:
+                 * lo que entra ahí se CONSUME, y una deuda parada en el
+                 * carro de paro no se puede devolver sin trasladarla
+                 * primero. El día que llegue la compra, el aviso pediría
+                 * devolver algo que ya se usó.
+                 */
                 Select::make('almacen_id')
                     ->label('A qué almacén entra')
                     ->required()
-                    ->options(fn (): array => Almacen::query()
-                        ->orderBy('nombre')
-                        ->pluck('nombre', 'id')
-                        ->all())
-                    ->helperText('Donde va a quedar físicamente, y de donde va a salir cuando se devuelva.'),
+                    ->native(false)
+                    ->options(fn (): array => self::estantesQueRecibenPrestamo())
+                    ->helperText(
+                        'Bodega o farmacia: donde va a quedar físicamente, y de donde va a salir '
+                        .'cuando se devuelva.'
+                    ),
 
                 TextInput::make('cantidad')
                     ->label('Cuánto')
@@ -256,6 +268,38 @@ final class RegistrarPrestamoAction
                         : 'La existencia ya subió. No genera deuda: lo trajo el paciente.')
                     ->send();
             });
+    }
+
+    /**
+     * Los estantes donde puede quedar algo prestado.
+     *
+     * ⚠️ NUNCA VACÍO: si ningún almacén está cargado con un tipo que
+     * reciba préstamos, vuelven todos. Anotar el préstamo en el estante
+     * equivocado es peor que la regla, pero es infinitamente mejor que no
+     * poder anotarlo.
+     *
+     * @see \App\Domain\Enums\TipoAlmacen::recibePrestamo()
+     *
+     * @return array<int, string>
+     */
+    private static function estantesQueRecibenPrestamo(): array
+    {
+        /** @var array<int, string> $estantes */
+        $estantes = Almacen::query()
+            ->vigentes()
+            ->queRecibenPrestamo()
+            ->orderBy('nombre')
+            ->pluck('nombre', 'id')
+            ->all();
+
+        if ($estantes !== []) {
+            return $estantes;
+        }
+
+        /** @var array<int, string> $todos */
+        $todos = Almacen::query()->vigentes()->orderBy('nombre')->pluck('nombre', 'id')->all();
+
+        return $todos;
     }
 
     private static function exigeLote(mixed $itemId): bool

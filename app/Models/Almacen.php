@@ -127,6 +127,36 @@ class Almacen extends Model
     }
 
     /**
+     * Los estantes donde puede quedar algo que se pidió prestado.
+     *
+     * 🔴 NUNCA DEVUELVE VACÍO. Si un hospital no tiene ninguno de los
+     * tipos que reciben préstamo —todo cargado como farmacia interna, por
+     * ejemplo— el desplegable saldría en blanco y la persona con el
+     * paciente enfrente no podría registrar nada. Ahí vuelven todos:
+     * anotar el préstamo en el estante equivocado es peor que la regla,
+     * pero es infinitamente mejor que no poder anotarlo. El hueco se
+     * arregla cargando bien los tipos de almacén.
+     *
+     * @see TipoAlmacen::recibePrestamo() para cuáles y por qué
+     *
+     * @param Builder<Almacen> $consulta
+     *
+     * @return Builder<Almacen>
+     */
+    public function scopeQueRecibenPrestamo(Builder $consulta): Builder
+    {
+        $tipos = array_values(array_map(
+            static fn (TipoAlmacen $tipo): string => $tipo->value,
+            array_filter(
+                TipoAlmacen::cases(),
+                static fn (TipoAlmacen $tipo): bool => $tipo->recibePrestamo(),
+            ),
+        ));
+
+        return $consulta->whereIn($consulta->qualifyColumn('tipo'), $tipos);
+    }
+
+    /**
      * Solo los estantes que hoy se pueden usar.
      *
      * @param Builder<Almacen> $consulta

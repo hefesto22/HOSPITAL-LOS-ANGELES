@@ -2117,6 +2117,56 @@ class CuentasAbiertas extends Page
      * eso, quien cobra registra el préstamo y vuelve a encontrarse el
      * campo en blanco con el paciente esperando.
      */
+    /**
+     * Los estantes donde puede quedar algo prestado, listos para el
+     * desplegable.
+     *
+     * @see \App\Models\Almacen::scopeQueRecibenPrestamo() para el «nunca vacío»
+     *
+     * @return array<int, string>
+     */
+    private static function estantesQueRecibenPrestamo(): array
+    {
+        /** @var array<int, string> $estantes */
+        $estantes = Almacen::query()
+            ->vigentes()
+            ->queRecibenPrestamo()
+            ->orderBy('nombre')
+            ->pluck('nombre', 'id')
+            ->all();
+
+        if ($estantes !== []) {
+            return $estantes;
+        }
+
+        /** @var array<int, string> $todos */
+        $todos = Almacen::query()->vigentes()->orderBy('nombre')->pluck('nombre', 'id')->all();
+
+        return $todos;
+    }
+
+    /**
+     * Cuál viene puesto: el mismo desde el que se está despachando.
+     *
+     * Es el acierto casi siempre —lo prestado entra y sale en el mismo
+     * minuto, del mismo estante— y cuando no lo es, la lista está ahí.
+     *
+     * ⚠️ Solo si ESE estante puede recibir préstamos. Proponer uno que la
+     * lista no ofrece deja el desplegable en blanco con un valor puesto
+     * por detrás, que es la forma más silenciosa de guardar el dato
+     * equivocado.
+     */
+    private static function estantePropuestoParaElPrestamo(mixed $delDespacho): ?int
+    {
+        $estantes = self::estantesQueRecibenPrestamo();
+
+        if (is_numeric($delDespacho) && isset($estantes[(int) $delDespacho])) {
+            return (int) $delDespacho;
+        }
+
+        return count($estantes) === 1 ? (int) array_key_first($estantes) : null;
+    }
+
     private function accionDePedirPrestado(): Action
     {
         return Action::make('pedirPrestado')
@@ -2132,17 +2182,47 @@ class CuentasAbiertas extends Page
             ->modalWidth('xl')
             ->fillForm(fn (Get $get): array => [
                 'item_id'        => $this->itemDe($get('item_id'))?->id,
+                'almacen_id'     => self::estantePropuestoParaElPrestamo($get('almacen_id')),
                 'presta_tipo'    => QuienPresta::Farmacia->value,
                 'forma_de_saldo' => FormaDeSaldo::DevolverProducto->value,
             ])
             ->schema([
                 Hidden::make('item_id'),
 
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 SOLO BODEGA O FARMACIA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Regla de Mauricio (3-sep-2026): «debe ser solo facturar
+                 * o bodega; en caso de que pidan 2, que una se guarde en
+                 * bodega como prestado y otra se facture — así tenemos una
+                 * en stock disponible y se sabe a quién se le pidió
+                 * prestada».
+                 *
+                 * El desplegable ofrecía TODOS los estantes, incluidos los
+                 * de consumo interno —el carro de paro, el dispensario—.
+                 * Un préstamo parado ahí es una deuda que no se puede
+                 * devolver sin trasladarla primero: el día que llegue la
+                 * compra, el aviso va a decir que hay que devolver veinte
+                 * tabletas que ya se usaron.
+                 *
+                 * Y viene puesto el mismo estante desde el que se está
+                 * despachando, que es de donde va a salir el cargo en el
+                 * mismo minuto. Sobre lo que no se cobre, el kardex se
+                 * queda: si prestan 2 y se cobra 1, queda 1 disponible y
+                 * el préstamo dice a quién se le debe.
+                 */
                 Select::make('almacen_id')
                     ->label('A qué estante entra')
                     ->required()
-                    ->options(fn (): array => Almacen::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
-                    ->helperText('Donde queda físicamente, y de donde va a salir cuando se devuelva.'),
+                    ->native(false)
+                    ->options(fn (): array => self::estantesQueRecibenPrestamo())
+                    ->helperText(
+                        'Bodega o farmacia: donde queda físicamente, y de donde va a salir cuando se '
+                        .'devuelva. Lo que no se cobre en esta cuenta queda ahí en stock, anotado a '
+                        .'nombre de quien lo prestó.'
+                    ),
 
                 TextInput::make('cantidad')
                     ->label('Cuánto prestaron')

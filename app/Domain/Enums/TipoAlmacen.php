@@ -81,6 +81,40 @@ enum TipoAlmacen: string
     }
 
     /**
+     * ¿Puede entrar acá algo que se pidió prestado?
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * SOLO DONDE SE GUARDA Y DE DONDE SE PUEDE SACAR DE VUELTA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Regla de Mauricio (3-sep-2026): «debe ser solo facturar o bodega;
+     * en caso de que pidan 2, que una se guarde en bodega como prestado y
+     * otra se facture — así tenemos una en stock disponible y se sabe a
+     * quién se le pidió prestada».
+     *
+     * Un préstamo es una deuda con alguien de AFUERA, y para pagarla hay
+     * que poder sacar el producto de donde quedó. Por eso entra a la
+     * bodega, a la farmacia de venta, o al almacén único: los tres se
+     * cuentan y de los tres se puede sacar.
+     *
+     * 🔴 La farmacia interna y el stock del servicio NO. Ahí lo que entra
+     * se CONSUME —es el carro de paro, el dispensario— y un préstamo
+     * parado ahí es una deuda que no se puede devolver sin trasladarla
+     * primero. El día que llegue la compra, el aviso va a decir que hay
+     * que devolver veinte tabletas que ya se usaron.
+     *
+     * Y no se compara contra el string del enum en la pantalla: el
+     * concepto vive acá, como `dispensaAPaciente()` y `esConsumoInterno()`.
+     */
+    public function recibePrestamo(): bool
+    {
+        return match ($this) {
+            self::AlmacenUnico, self::BodegaCentral, self::FarmaciaVenta => true,
+            self::FarmaciaInterna, self::StockDeServicio                 => false,
+        };
+    }
+
+    /**
      * ¿Es el almacén del hospital que no divide?
      *
      * Existe para que el resto del código pregunte por el CONCEPTO y no
