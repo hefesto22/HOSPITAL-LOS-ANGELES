@@ -32,6 +32,20 @@ enum TipoMovimiento: string
     case EntradaPorTraslado = 'entrada_por_traslado';
 
     /** El conteo físico encontró más de lo que decía el sistema. */
+    /**
+     * Lo que el hospital NO tenía y alguien le prestó.
+     *
+     * Entra al kardex de verdad —sube la existencia— porque la caja de
+     * tabletas está físicamente en el estante y se va a dispensar. No
+     * registrarla dejaría el conteo físico con una diferencia que nadie
+     * puede explicar y un cobro sobre existencia que el sistema cree que
+     * no existe.
+     *
+     * Lo que se debe por eso NO vive acá: vive en `prestamos`. El kardex
+     * dice qué hay; el préstamo dice a quién hay que devolvérselo.
+     */
+    case EntradaPorPrestamo = 'entrada_por_prestamo';
+
     case AjustePositivo = 'ajuste_positivo';
 
     // ── Salidas ───────────────────────────────────────────────────────
@@ -49,6 +63,9 @@ enum TipoMovimiento: string
     case SalidaPorVencimiento = 'salida_por_vencimiento';
 
     /** El conteo físico encontró menos de lo que decía el sistema. */
+    /** Se le devolvió al que había prestado. */
+    case SalidaPorDevolucionDePrestamo = 'salida_por_devolucion_de_prestamo';
+
     case AjusteNegativo = 'ajuste_negativo';
 
     public function esEntrada(): bool
@@ -57,6 +74,7 @@ enum TipoMovimiento: string
             self::EntradaPorCompra,
             self::EntradaPorDevolucion,
             self::EntradaPorTraslado,
+            self::EntradaPorPrestamo,
             self::AjustePositivo => true,
             default              => false,
         };
@@ -91,12 +109,15 @@ enum TipoMovimiento: string
             self::EntradaPorCompra      => 'Entrada por compra',
             self::EntradaPorDevolucion  => 'Devolución',
             self::EntradaPorTraslado    => 'Traslado recibido',
+            self::EntradaPorPrestamo    => 'Entrada por préstamo',
             self::AjustePositivo        => 'Ajuste positivo',
             self::SalidaPorDispensacion => 'Dispensación',
             self::SalidaPorMerma        => 'Merma',
             self::SalidaPorTraslado     => 'Traslado enviado',
-            self::SalidaPorVencimiento  => 'Baja por vencimiento',
-            self::AjusteNegativo        => 'Ajuste negativo',
+
+            self::SalidaPorDevolucionDePrestamo => 'Devolución de préstamo',
+            self::SalidaPorVencimiento          => 'Baja por vencimiento',
+            self::AjusteNegativo                => 'Ajuste negativo',
         };
     }
 
@@ -107,8 +128,16 @@ enum TipoMovimiento: string
             $this === self::SalidaPorVencimiento => 'danger',
             $this === self::AjustePositivo,
             $this === self::AjusteNegativo => 'warning',
-            $this->esEntrada()             => 'success',
-            default                        => 'gray',
+
+            /*
+             * El préstamo se pinta distinto de una compra a propósito: en
+             * la pantalla de kardex, «entrada» en verde se lee como
+             * mercadería del hospital, y esta no lo es todavía.
+             */
+            $this === self::EntradaPorPrestamo,
+            $this === self::SalidaPorDevolucionDePrestamo => 'info',
+            $this->esEntrada()                            => 'success',
+            default                                       => 'gray',
         };
     }
 
