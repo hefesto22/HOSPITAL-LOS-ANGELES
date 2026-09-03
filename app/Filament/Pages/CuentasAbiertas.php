@@ -2121,7 +2121,7 @@ class CuentasAbiertas extends Page
      * Los estantes donde puede quedar algo prestado, listos para el
      * desplegable.
      *
-     * @see \App\Models\Almacen::scopeQueRecibenPrestamo() para el «nunca vacío»
+     * @see Almacen::scopeQueRecibenPrestamo() para el «nunca vacío»
      *
      * @return array<int, string>
      */

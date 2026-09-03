@@ -11,6 +11,7 @@ use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
 use App\Models\Proveedor;
+use App\Models\Unidad;
 use App\Services\AvisoDeLoQueSeDebe;
 use Closure;
 use Filament\Forms\Components\DatePicker;
@@ -317,12 +318,16 @@ final class RecepcionForm
              * «ACETAMINOFEN JARABE · Frasco 120 ml» y el producto se
              * deriva.
              *
-             * 🔴 «Suelto» TAMBIÉN está en la lista, y no es un adorno.
-             * Al cargar el inventario que ya existe, de una caja de 100
-             * tabletas quedan 20 porque las otras se vendieron antes de
-             * que hubiera sistema. «1 caja» sería mentira y «0.2 cajas»
-             * peor: se registran 20 tabletas sueltas. Sin esta opción
-             * ese saldo no se puede cargar.
+             * 🔴 «SIN ENVASE» TAMBIÉN está en la lista, y no es un
+             * adorno. Al cargar el inventario que ya existe, de una caja
+             * de 100 tabletas quedan 20 porque las otras se vendieron
+             * antes de que hubiera sistema. «1 caja» sería mentira y
+             * «0.2 cajas» peor: se registran 20 tabletas sueltas. Sin
+             * esta opción ese saldo no se puede cargar.
+             *
+             * ⚠️ Se llama así y no «suelto, por fco» por lo que vio
+             * Mauricio: puesto donde va el nombre del envase, ese texto
+             * se leía como un envase más. Ver `asiLlegaSuelto()`.
              *
              * El valor es `item:presentacion` —con 0 para lo suelto—
              * porque un Select guarda un escalar, y las dos columnas que
@@ -902,11 +907,58 @@ final class RecepcionForm
                 $opciones[$item->id.':'.$presentacion->id] = $item->etiqueta().' · '.$presentacion->envase();
             }
 
-            $opciones[$item->id.':0'] = $item->etiqueta()
-                .' · suelto, por '.($item->unidadDispensacion->simbolo ?? 'unidad');
+            $opciones[$item->id.':0'] = $item->etiqueta().' · '.self::asiLlegaSuelto($item);
         }
 
         return $opciones;
+    }
+
+    /**
+     * «SIN ENVASE (por FRASCO)» — la fila de lo que no llega en su caja.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 NO PARECE UNA PRESENTACIÓN, PORQUE NO LO ES
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Observación de Mauricio (3-sep-2026): «aparece la presentación de
+     * 100 ml, pero el otro no es una presentación y aparece ahí».
+     *
+     * Tenía razón, y el problema era del texto y no de la opción. La fila
+     * decía «· suelto, por fco», que ocupa exactamente el mismo lugar del
+     * renglón donde va el nombre del envase:
+     *
+     *   ACETAMINOFEN JARABE · FRASCO 100 ML     ← una presentación
+     *   ACETAMINOFEN JARABE · suelto, por fco   ← se lee como otra
+     *
+     * Así se leía como un envase llamado «suelto, por fco». Ahora ese
+     * lugar dice «SIN ENVASE», que no se puede confundir con el nombre de
+     * una caja, y entre paréntesis va en qué se cuenta.
+     *
+     * ⚠️ La opción se queda —Mauricio: «deja eso»—. Es la única forma de
+     * cargar un saldo que no es un envase entero: de una caja de 100
+     * quedan 20 porque las otras se vendieron antes de que hubiera
+     * sistema, y «1 caja» sería mentira y «0.2 cajas» peor.
+     *
+     * ⚠️ El CÓDIGO de la unidad y no el símbolo: «FRASCO» y no «fco». Es
+     * el mismo que se ve en la etiqueta del estante y en el kardex, y en
+     * un renglón que ya está en mayúsculas un símbolo en minúscula se lee
+     * como otra cosa.
+     *
+     * ⚠️ Público a propósito, y es lo único público de esta clase además
+     * de `configure()`. Lo que hay que poder verificar es el TEXTO —es lo
+     * que se lee con el paciente esperando— y la alternativa era una
+     * prueba que llega por reflexión a un método privado: eso deja el
+     * diseño rehén de la prueba y encima se rompe al renombrarlo.
+     */
+    public static function asiLlegaSuelto(Item $item): string
+    {
+        $unidad = $item->unidadDispensacion;
+
+        $como = $unidad instanceof Unidad
+            ? ($unidad->codigo !== '' ? $unidad->codigo : $unidad->nombre)
+            : 'UNIDAD';
+
+        return 'SIN ENVASE (por '.$como.')';
     }
 
     /** Cómo se lee `item:presentacion` en la pantalla. */
@@ -920,7 +972,7 @@ final class RecepcionForm
 
         return $item->etiqueta().' · '.($presentacion instanceof ItemPresentacion
             ? $presentacion->envase()
-            : 'suelto, por '.($item->unidadDispensacion->simbolo ?? 'unidad'));
+            : self::asiLlegaSuelto($item));
     }
 
     /**

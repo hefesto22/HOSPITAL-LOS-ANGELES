@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Prestamos\Actions;
 
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\QuienPresta;
+use App\Domain\Enums\TipoAlmacen;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
@@ -278,7 +279,7 @@ final class RegistrarPrestamoAction
      * equivocado es peor que la regla, pero es infinitamente mejor que no
      * poder anotarlo.
      *
-     * @see \App\Domain\Enums\TipoAlmacen::recibePrestamo()
+     * @see TipoAlmacen::recibePrestamo()
      *
      * @return array<int, string>
      */
