@@ -14,6 +14,7 @@ use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\Tarifario;
 use App\Models\Unidad;
+use Database\Seeders\Support\ListaPendiente;
 use Illuminate\Database\Seeder;
 use RuntimeException;
 
@@ -36,33 +37,30 @@ use RuntimeException;
  * Es idempotente: se puede volver a correr sin duplicar nada.
  *
  * ─────────────────────────────────────────────────────────────────────
- * LOS DOS PRECIOS, Y DE DÓNDE SALE CADA UNO
+ * LO QUE ESTE DOCUMENTO SÍ DICE, Y LO QUE NO
  * ─────────────────────────────────────────────────────────────────────
  *
- * La fuente es el tarifario firmado con PALIG. De ahí salen las DOS
- * filas de cada ítem:
+ * La fuente es el tarifario firmado con PALIG, y dice UNA sola cosa: lo
+ * que PALIG paga por cada ítem. Esa es la fila de `tarifarios` con
+ * `convenio_id` = PALIG, el número del papel tal cual.
  *
- *   · **Precio de PALIG** — el número del papel, tal cual. Fila de
- *     `tarifarios` con `convenio_id` = PALIG.
- *   · **Precio de lista del hospital** — ese número **+ 20 %**. Fila con
- *     `convenio_id` NULL, que es la que responde para el paciente que
- *     paga de su bolsillo y para cualquier pagador sin tarifario propio.
+ * **No dice cuánto le cobra el hospital al paciente particular.** Ese es
+ * el precio de lista —la fila con `convenio_id` NULL— y no hay ningún
+ * documento cargado que lo traiga.
  *
- * Los 20 % están acá y no en una columna del ítem a propósito: es la
- * decisión que se tomó UNA vez para armar la lista inicial, no una regla
- * viva. El día que el hospital suba un precio suelto, lo sube en el
- * tarifario y este seeder no tiene nada que decir al respecto.
+ * 🔴 Durante un tiempo este seeder lo INVENTÓ: PALIG + 20 %. Después
+ * `CatalogoMilitarSeeder` lo volvió a inventar sobre su propio papel.
+ * Los dos números se veían razonables, que es justo el problema: nadie
+ * audita un dato que ya parece decidido, y en tres meses el invento es
+ * el precio real del hospital porque quedó ahí.
  *
- * ⚠️ LA LISTA QUE ARMA ESTE SEEDER YA NO ES LA VIGENTE.
+ * Así que la lista quedó en el centinela de `ListaPendiente`: L 10 con
+ * el motivo marcado, imposible de confundir con una decisión y
+ * consultable en bloque. El hospital pone los precios reales encima; el
+ * de rayos X ya está cargado en `CatalogoRayosXSeeder`.
  *
- * `CatalogoMilitarSeeder` la recalcula sobre un documento posterior —la
- * propuesta al Hospital Militar, que trae precios más altos en varios
- * renglones— y corre después. Acá quedó porque el día que se escribió
- * era el único documento que existía, y porque el precio de PALIG —lo
- * único que este archivo manda de verdad— se sigue leyendo de acá.
- *
- * Si mañana se corre este seeder solo, la lista vuelve a la de agosto:
- * hay que correr el del Militar detrás.
+ * ⚠️ Mientras un ítem esté en L 10 no se le puede facturar a un paciente
+ * de contado.
  *
  * ⚠️ El precio se guarda SIN ISV. Estos servicios son exentos por el
  * Art. 15 inciso d de la Ley del ISV, así que hoy da igual — pero el día
@@ -80,13 +78,6 @@ use RuntimeException;
  */
 class CatalogoPaligSeeder extends Seeder
 {
-    /**
-     * Cuánto más caro es el precio de lista respecto del de PALIG.
-     *
-     * Texto y no float: entra directo a bcmath (§8.6.2-1).
-     */
-    private const FACTOR_LISTA = '1.20';
-
     /**
      * Desde cuándo rigen estos precios.
      *
@@ -283,8 +274,9 @@ class CatalogoPaligSeeder extends Seeder
             $sembrados++;
         }
 
-        $this->command?->info("✓ {$sembrados} servicios del catálogo sembrados, cada uno con su precio de lista y el de PALIG.");
-        $this->command?->comment('  El precio de lista es el de PALIG más 20 %. El de PALIG es el del tarifario firmado, tal cual.');
+        $this->command?->info("✓ {$sembrados} servicios del catálogo sembrados con el precio de PALIG del tarifario firmado, tal cual.");
+        $this->command?->comment('  El precio de lista quedó en el centinela de L 10: el tarifario no lo trae y no se inventa.');
+        $this->command?->warn('  ⚠️ Mientras esté en L 10 no se le puede facturar a un paciente de contado. Faltan '.ListaPendiente::cuantosFaltan().' ítems por precio de lista.');
         $this->command?->warn('  ⚠️ Revisá los ítems marcados VERIFICAR en el seeder antes de facturarle a nadie.');
         $this->command?->warn('  ⚠️ El convenio PALIG quedó con cobertura 0 %: cargá el porcentaje real en Convenios.');
     }
@@ -364,26 +356,14 @@ class CatalogoPaligSeeder extends Seeder
     }
 
     /**
-     * Las dos filas de tarifario del ítem: la de lista y la de PALIG.
+     * Las dos filas de tarifario del ítem: la de PALIG, que el documento
+     * sí trae, y la de lista, que no — ver el encabezado.
      *
      * @param numeric-string $precioPalig
      */
     private function precios(Item $item, Convenio $palig, string $precioPalig): void
     {
-        $lista = bcmul($precioPalig, self::FACTOR_LISTA, 4);
-
-        Tarifario::query()->updateOrCreate(
-            [
-                'item_id'        => $item->id,
-                'convenio_id'    => null,
-                'sede_id'        => null,
-                'vigencia_desde' => self::VIGENCIA_DESDE,
-            ],
-            [
-                'precio' => $lista,
-                'motivo' => 'Precio de lista del hospital: el tarifario PALIG de agosto de 2026 más 20 %.',
-            ],
-        );
+        ListaPendiente::poner($item, self::VIGENCIA_DESDE);
 
         Tarifario::query()->updateOrCreate(
             [

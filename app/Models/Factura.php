@@ -65,6 +65,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property numeric-string $isv_18
  * @property numeric-string $total
  * @property int $lineas
+ * @property bool $paquetes_desglosados
  * @property string|null $nota
  * @property string|null $comentarios
  * @property CarbonInterface|null $anulada_en
@@ -90,7 +91,7 @@ class Factura extends Model
         'emitida_en', 'fecha_operacion', 'vence_el', 'terminos', 'facturador',
         'bruto', 'descuento_legal', 'descuento_comercial',
         'exonerado', 'exento', 'gravado', 'gravado_15', 'gravado_18', 'isv', 'isv_15', 'isv_18', 'total',
-        'lineas', 'nota', 'comentarios', 'anulada_en', 'anulada_por', 'motivo_anulacion',
+        'lineas', 'paquetes_desglosados', 'nota', 'comentarios', 'anulada_en', 'anulada_por', 'motivo_anulacion',
     ];
 
     /**
@@ -109,6 +110,7 @@ class Factura extends Model
             'anulada_en'             => 'datetime',
             'correlativo'            => 'integer',
             'lineas'                 => 'integer',
+            'paquetes_desglosados'   => 'boolean',
             'anulada_por'            => 'integer',
         ];
     }

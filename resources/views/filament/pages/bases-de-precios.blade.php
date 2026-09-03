@@ -122,8 +122,25 @@
 
         /* ── El selector de base ──────────────────────────────────────── */
 
+        /*
+         * ⚠️ La pista NO se estira a todo el ancho del panel.
+         *
+         * Con `display: flex` a secas ocupaba la tarjeta entera y las tres
+         * bases quedaban apiladas contra el borde izquierdo, con medio
+         * metro de gris vacío a la derecha. Centrar el CONTENIDO no
+         * alcanza: dejaría dos huecos grises en vez de uno.
+         *
+         * `width: fit-content` hace que la pista abrace a sus opciones
+         * —que es como se ve un control segmentado— y `margin-inline: auto`
+         * la centra. `max-width` + `justify-content` son para cuando hay
+         * tantos pagadores que tiene que envolver: las filas de abajo
+         * quedan centradas y la pista nunca desborda a 360 px.
+         */
         .sihla-toggle {
             display: flex; flex-wrap: wrap; gap: .25rem;
+            justify-content: center;
+            width: fit-content; max-width: 100%;
+            margin-inline: auto;
             padding: .3rem;
             border-radius: .75rem;
             background: rgb(244 244 245);

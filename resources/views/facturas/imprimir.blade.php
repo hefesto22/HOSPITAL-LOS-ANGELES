@@ -52,6 +52,31 @@
             body { background: #fff; }
             .hoja { width: auto; margin: 0; padding: 0; }
             .no-imprime { display: none !important; }
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * LA SEGUNDA HOJA CONTINÚA, SIN REPETIR NADA
+             * ─────────────────────────────────────────────────────────
+             *
+             * Una cirugía desglosada son veinte renglones y pasa de una
+             * hoja. Por omisión el navegador REPITE el `<thead>` de la
+             * tabla en cada página: la segunda salía encabezada como si
+             * fuera otro documento, y un papel fiscal que parece empezar
+             * de nuevo se lee como una factura distinta.
+             *
+             * `table-row-group` lo baja a una fila común y deja de
+             * repetirse. Decisión de Mauricio (2-sep-2026): continúa
+             * sin encabezado.
+             */
+            .detalle thead { display: table-row-group; }
+
+            /*
+             * Y lo que no se puede partir a la mitad: un renglón cortado
+             * entre dos hojas deja media cifra arriba y media abajo, y
+             * los totales separados de su detalle obligan a dar vuelta
+             * la hoja para saber de qué son.
+             */
+            .detalle tr, .detalle tfoot, .totales, .firmas { break-inside: avoid; }
         }
 
         .barra { max-width: 216mm; margin: 8px auto; display: flex; gap: 8px; justify-content: flex-end; }
@@ -121,6 +146,15 @@
             border: 1px solid #000; padding: 4px; font-size: 9px; text-align: center; font-weight: 700;
         }
         .detalle tbody td { border-left: 1px solid #000; border-right: 1px solid #000; padding: 2px 5px; }
+
+        /*
+         * El renglón que nombra una cirugía desglosada. Va en negrita y
+         * SIN columnas numéricas: los renglones que cobran son los de
+         * abajo, y un «0.00» al lado del nombre del procedimiento se lee
+         * como una línea que falló. Lo garantiza el CHECK
+         * `factura_lineas_encabezado_no_cobra`, no esta hoja de estilo.
+         */
+        .detalle tbody tr.titulo td { font-weight: 700; }
         .detalle tbody tr:last-child td { border-bottom: 1px solid #000; }
 
         .detalle tfoot td {
@@ -289,14 +323,21 @@
             </thead>
             <tbody>
                 @foreach ($lineas as $linea)
-                    <tr>
-                        <td>{{ $linea->codigo }}</td>
-                        <td>{{ $linea->descripcion }}</td>
-                        <td class="num">{{ number_format((float) $linea->cantidad, 2) }}</td>
-                        <td class="num">{{ number_format((float) $linea->precio_unitario, 2) }}</td>
-                        <td class="num">{{ number_format((float) $linea->descuento()->redondeado(2), 2) }}</td>
-                        <td class="num">{{ number_format((float) $linea->total, 2) }}</td>
-                    </tr>
+                    @if ($linea->encabezado)
+                        <tr class="titulo">
+                            <td>{{ $linea->codigo }}</td>
+                            <td colspan="5">{{ $linea->descripcion }}</td>
+                        </tr>
+                    @else
+                        <tr>
+                            <td>{{ $linea->codigo }}</td>
+                            <td>{{ $linea->descripcion }}</td>
+                            <td class="num">{{ number_format((float) $linea->cantidad, 2) }}</td>
+                            <td class="num">{{ number_format((float) $linea->precio_unitario, 2) }}</td>
+                            <td class="num">{{ number_format((float) $linea->descuento()->redondeado(2), 2) }}</td>
+                            <td class="num">{{ number_format((float) $linea->total, 2) }}</td>
+                        </tr>
+                    @endif
                 @endforeach
 
                 {{--

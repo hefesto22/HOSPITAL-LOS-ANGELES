@@ -6,6 +6,7 @@ namespace App\Filament\Resources\DescuentosLegales\Tables;
 
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\RangoEdad;
+use App\Filament\Resources\DescuentosLegales\Actions\CargarDescuentoAction;
 use App\Models\DescuentoLegal;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -131,7 +132,14 @@ final class DescuentosLegalesTable
                         self::soloVigentes($query);
                     }),
             ])
-            ->recordActions([])
+            /*
+             * Un renglón sin salida es un renglón que hay que corregir
+             * desde otra pantalla adivinando la fecha. Ver el encabezado
+             * de `CargarDescuentoAction::paraCorregir()`.
+             */
+            ->recordActions([
+                CargarDescuentoAction::paraCorregir(),
+            ])
             ->toolbarActions([])
             ->emptyStateHeading('Sin porcentajes cargados')
             ->emptyStateDescription(

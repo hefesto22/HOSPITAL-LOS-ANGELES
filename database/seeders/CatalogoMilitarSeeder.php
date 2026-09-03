@@ -17,6 +17,7 @@ use App\Models\Item;
 use App\Models\Medico;
 use App\Models\Tarifario;
 use App\Models\Unidad;
+use Database\Seeders\Support\ListaPendiente;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -42,18 +43,25 @@ use RuntimeException;
  * QUÉ TRAE EL DOCUMENTO Y QUÉ SE HIZO CON CADA COSA
  * ─────────────────────────────────────────────────────────────────────
  *
- * ⚠️ LOS PRECIOS DEL DOCUMENTO SON EL PRECIO FINAL PARA EL MILITAR, y
- * la lista del hospital es ese número MÁS 20 %. Si el papel dice 500, el
- * Militar paga 500 y el particular 600. De ahí salen las dos filas de
- * `tarifarios` de cada ítem, y por eso este seeder SÍ recalcula la
- * lista: ver `precioDeLista()`.
+ * ⚠️ LOS PRECIOS DEL DOCUMENTO SON EL PRECIO FINAL PARA EL MILITAR. El
+ * papel no dice nada sobre cuánto le cobra el hospital al paciente
+ * particular, así que este seeder tampoco: cada ítem queda con su fila
+ * del Militar y con el centinela de `ListaPendiente` en la de lista.
+ *
+ * 🔴 Una versión anterior calculaba la lista como Militar + 20 %. Era un
+ * número inventado con cara de decisión —ver el encabezado de
+ * `ListaPendiente` para por qué eso es peor que no tener precio—. Los
+ * precios de lista reales entran por pantalla o por su propio seeder,
+ * como hizo `CatalogoRayosXSeeder`.
  *
  *   · Hospitalización, equipo médico, rayos X y laboratorio — precios
  *     de ítems que ya están en el catálogo. Se les pone la fila del
- *     Militar y se les recalcula la de lista.
+ *     Militar; la de lista queda en el centinela.
  *   · «Otros laboratorios» — 86 estudios que no estaban en el catálogo.
- *     Se crean con sus dos filas. Sin la de lista, al paciente que paga
- *     de su bolsillo no se le podría cobrar el examen.
+ *     Se crean con su fila del Militar y su centinela de lista: sin
+ *     NINGUNA fila de lista, al paciente que paga de su bolsillo no se le
+ *     podría ni cargar el examen. Con L 10 se le puede cargar y se ve que
+ *     falta el precio.
  *   · Consulta externa — el papel lista MÉDICOS con su identidad, su
  *     especialidad y cuánto cobra cada uno. Los ítems son por
  *     ESPECIALIDAD y el precio de cada doctor va en `honorarios_medicos`
@@ -95,9 +103,6 @@ class CatalogoMilitarSeeder extends Seeder
      * vigencia nueva que choque con el EXCLUDE de traslape.
      */
     private const VIGENCIA_DESDE = '2026-08-01';
-
-    /** Cuánto más caro es el precio de lista respecto del del Militar. */
-    private const FACTOR_LISTA = '1.20';
 
     /** Cuántos dígitos usar cuando la familia todavía no tiene ninguno. */
     private const ANCHO_POR_DEFECTO = 4;
@@ -144,7 +149,7 @@ class CatalogoMilitarSeeder extends Seeder
         ['HOS-025', '750.00'],  // HONORARIOS ENFERMERIA RECUPERACION
         ['HOS-026', '1050.00'],  // HONORARIOS CIRCULANTE 2 HORAS
         ['HOS-027', '1050.00'],  // HONORARIOS TECNICO INSTRUMENTISTA 2H
-        
+
         // ── Equipo médico ─────────────────────────────────────────────
         ['EQP-001', '120.00'],  // BACINETE X DIA
         ['EQP-002', '170.00'],  // BOMBAS DE INFUSION X DIA
@@ -161,7 +166,7 @@ class CatalogoMilitarSeeder extends Seeder
         ['EQP-013', '800.00'],  // MONITOR FETAL X USO
         ['EQP-014', '110.00'],  // NEBULIZADORES POR DIA
         ['EQP-015', '4000.00'],  // TORRE DE VIDEO LAPARASCOPICA MAS INSTRUMENTAL
-        
+
         // ── Rayos X ───────────────────────────────────────────────────
         ['RX-001', '500.00'],  // PROYECCION DE RAYOS X CON LECTURA
         ['RX-002', '700.00'],  // PROYECCION DE RAYOS X CON LECTURA RECARGO HORA INHABIL
@@ -169,7 +174,7 @@ class CatalogoMilitarSeeder extends Seeder
         ['RX-004', '800.00'],  // PROYECCION DE RAYOS X PORTATIL RECARGO HORA INHABIL
         ['RX-005', '2500.00'],  // COLANGIOGRAFIA
         ['RX-006', '3500.00'],  // COLANGIOGRAFIA RECARGO HORA INHABIL
-        
+
         // ── Laboratorio ───────────────────────────────────────────────
         ['LAB-001', '160.00'],  // ACIDO URICO
         ['LAB-002', '150.00'],  // ALBUMINA
@@ -219,7 +224,7 @@ class CatalogoMilitarSeeder extends Seeder
         ['LAB-046', '475.00'],  // TSH TOTAL
         ['LAB-047', '60.00'],  // VES
         ['LAB-048', '100.00'],  // WRIGHT
-        
+
         // ── Consulta externa ───────────────────────────────────────────
         // El documento no le pone precio al item: se lo pone a cada
         // medico. Va el MENOR de los suyos, que es lo conservador —
@@ -395,14 +400,14 @@ class CatalogoMilitarSeeder extends Seeder
 
         foreach (self::PRECIOS as [$codigo, $precio]) {
             $item = $this->itemExistente($codigo);
-            $this->precioDeLista($item, $precio);
+            ListaPendiente::poner($item, self::VIGENCIA_DESDE);
             $this->precioDelMilitar($item, $militar, $precio);
             $puestos++;
         }
 
         foreach (self::NUEVOS as [$prefijo, $nombre, $tipo, $categoria, $unidad, $precio]) {
             $item = $this->itemDeLaPropuesta($prefijo, $nombre, $tipo, $categoria, $unidad);
-            $this->precioDeLista($item, $precio);
+            ListaPendiente::poner($item, self::VIGENCIA_DESDE);
             $this->precioDelMilitar($item, $militar, $precio);
             $puestos++;
         }
@@ -416,7 +421,7 @@ class CatalogoMilitarSeeder extends Seeder
                 'UND',
             );
 
-            $this->precioDeLista($item, $precio);
+            ListaPendiente::poner($item, self::VIGENCIA_DESDE);
             $this->precioDelMilitar($item, $militar, $precio);
             $puestos++;
         }
@@ -429,7 +434,8 @@ class CatalogoMilitarSeeder extends Seeder
         $this->command?->info("✓ {$puestos} precios del Hospital Militar cargados.");
         $this->command?->info('✓ '.count(self::MEDICOS).' médicos de consulta externa con su honorario para el Militar.');
         $this->command?->comment("  {$this->creados} ítems se crearon; el resto del documento ya estaba en el catálogo.");
-        $this->command?->comment('  El precio de lista de TODOS ellos quedó en el del Militar más 20 %: si el papel dice 500, el Militar paga 500 y el particular 600.');
+        $this->command?->comment('  El precio de lista de TODOS ellos quedó en el centinela de L 10: el documento no lo trae y no se inventa.');
+        $this->command?->warn('  ⚠️ Mientras esté en L 10 no se le puede facturar a un paciente de contado. Faltan '.ListaPendiente::cuantosFaltan().' ítems por precio de lista.');
         $this->command?->warn('  ⚠️ Ambulancia no se cargó: las tres filas vienen en cero y el documento dice que no hay servicio.');
         $this->command?->warn('  ⚠️ El convenio quedó con cobertura 0 %: el Militar aprueba un MONTO por caso, y ese monto se registra en la cuenta al facturar.');
         $this->command?->warn('  ⚠️ Falta el R.T.N. del Hospital Militar: cargalo en Seguros y convenios antes de emitirle una factura.');
@@ -450,9 +456,11 @@ class CatalogoMilitarSeeder extends Seeder
             [
                 'nombre'               => 'HOSPITAL MILITAR',
                 'tipo'                 => TipoConvenio::Institucional,
-                'base_descuento_legal' => BaseDelDescuentoLegal::SobreElTotalFacturado,
-                'fundamento_descuento' => 'Mismo criterio con el que se cargó PALIG. Confirmar contra el '
-                    .'convenio firmado con el Hospital Militar antes de la primera factura.',
+                'base_descuento_legal' => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
+                'fundamento_descuento' => 'El descuento del Art. 30 se aplica sobre lo que desembolsa el '
+                    .'paciente, no sobre el total: de una cuenta de L 1,000 con el 50 % autorizado, el '
+                    .'descuento cae sobre los L 500 que paga él. Criterio de dirección, 2-sep-2026, el '
+                    .'mismo con el que quedó cargado PALIG.',
                 'requiere_autorizacion' => true,
                 'dias_credito'          => 30,
                 'vigencia_desde'        => self::VIGENCIA_DESDE,
@@ -652,46 +660,6 @@ class CatalogoMilitarSeeder extends Seeder
             [
                 'precio' => bcmul($precio, '1', 4),
                 'motivo' => 'Propuesta de precios presentada al Hospital Militar.',
-            ],
-        );
-    }
-
-    /**
-     * El precio para quien paga de su bolsillo: el del Militar más 20 %.
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * 🔴 SE PISA EL QUE HABÍA, Y ESO ES LO CORRECTO
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * La lista la había armado `CatalogoPaligSeeder` como PALIG + 20 %,
-     * porque ese era el único documento que existía. Este es más nuevo
-     * —se llama «Propuesta Actualizada»— y trae precios que en varios
-     * renglones son más altos que aquellos: alimentación por día iba a
-     * L 360 de lista y el Militar paga L 500.
-     *
-     * Con la lista vieja, el particular pagaba MENOS que la aseguradora.
-     * Es al revés de como tiene que ser, y no es un detalle contable: es
-     * el hospital vendiéndole más barato al que no tiene seguro que al
-     * que sí, sobre el mismo servicio y el mismo día.
-     *
-     * Así que la lista se recalcula sobre el documento nuevo. El precio
-     * de PALIG NO se toca: ese es lo que PALIG negoció y sigue siendo lo
-     * que PALIG paga.
-     *
-     * @param numeric-string $precio
-     */
-    private function precioDeLista(Item $item, string $precio): void
-    {
-        Tarifario::query()->updateOrCreate(
-            [
-                'item_id'        => $item->id,
-                'convenio_id'    => null,
-                'sede_id'        => null,
-                'vigencia_desde' => self::VIGENCIA_DESDE,
-            ],
-            [
-                'precio' => bcmul($precio, self::FACTOR_LISTA, 4),
-                'motivo' => 'Precio de lista del hospital: el de la propuesta al Militar más 20 %.',
             ],
         );
     }

@@ -168,6 +168,39 @@ final class MedicoForm
                          */
                         Repeater::make('honorarios')
                             ->hiddenLabel()
+
+                            /*
+                             * ─────────────────────────────────────────
+                             * 🔴 SIN ESTO EL REPEATER NI LEE NI GUARDA
+                             * ─────────────────────────────────────────
+                             *
+                             * `honorarios` es una relación `HasMany`, no
+                             * una columna. Sin `->relationship()`,
+                             * Filament la trata como un campo del
+                             * formulario y pasan las dos cosas a la vez:
+                             *
+                             *   · Al ABRIR, el estado sale de
+                             *     `attributesToArray()` del médico, que
+                             *     no incluye relaciones — la tabla
+                             *     mostraba «1» y esta pantalla salía
+                             *     vacía, sobre el mismo registro.
+                             *   · Al GUARDAR, `honorarios` no está en el
+                             *     `$fillable` de `Medico`, así que
+                             *     Eloquent lo **descarta en silencio**:
+                             *     sin excepción, sin log, y con el
+                             *     cartel de «guardado» en pantalla.
+                             *
+                             * Lo segundo es lo grave: cargar honorarios
+                             * acá no guardaba nada y nadie se enteraba.
+                             * Es el mismo silencio del `update()` con
+                             * campos no fillable que ya mordió en
+                             * `EmisorDeFactura` con `cerrada_en`.
+                             *
+                             * Con `->relationship()` Filament carga la
+                             * relación al abrir y la sincroniza al
+                             * guardar —crea, actualiza y da de baja—.
+                             */
+                            ->relationship()
                             ->table([
                                 TableColumn::make('Honorario')->width('34%')->markAsRequired(),
                                 TableColumn::make('Pagador')->width('24%'),

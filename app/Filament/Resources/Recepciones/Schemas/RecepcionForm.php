@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Recepciones\Schemas;
 
+use App\Domain\Enums\TipoAlmacen;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Models\PrincipioActivo;
 use App\Models\Proveedor;
+use Closure;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
@@ -20,6 +24,8 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\Str;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 
@@ -108,7 +114,37 @@ final class RecepcionForm
                 Select::make('almacen_id')
                     ->label('¿A qué almacén entra?')
                     ->columnSpan(2)
-                    ->relationship('almacen', 'nombre')
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * AL CARRITO NO LE LLEGA EL PROVEEDOR
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Un stock de servicio se surte por TRASLADO desde
+                     * bodega, nunca del camión — es lo que dice el texto
+                     * de ayuda de abajo y hasta hoy no lo aplicaba nadie.
+                     * Ofrecerlo acá es ofrecer el error.
+                     *
+                     * Se filtra por TIPO y no por una lista de nombres:
+                     * así el día que abran una farmacia interna o
+                     * activen el almacén único, aparecen solas (§1.1).
+                     */
+                    /*
+                     * ⚠️ El parámetro se llama `$query` y NO es cosmético.
+                     *
+                     * Filament inyecta este closure POR NOMBRE:
+                     * `evaluate($modifyRelationshipQueryUsing, ['query' => …])`.
+                     * Con `$consulta` no lo encuentra, cae a resolver por
+                     * TIPO, y el contenedor construye un `Eloquent\Builder`
+                     * VACÍO —sin modelo—. El `where` se aplica sobre ese
+                     * builder huérfano y la página revienta al montar con
+                     * «Call to a member function hydrate() on null».
+                     */
+                    ->relationship(
+                        'almacen',
+                        'nombre',
+                        fn (Builder $query): Builder => $query
+                            ->where('tipo', '!=', TipoAlmacen::StockDeServicio->value),
+                    )
                     ->getOptionLabelFromRecordUsing(
                         fn (Almacen $record): string => $record->nombre.' · '.$record->tipo->etiqueta()
                     )
@@ -208,6 +244,33 @@ final class RecepcionForm
                 Repeater::make('lineas')
                     ->label('')
                     ->addActionLabel('Agregar a mano')
+
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 LO QUE DISTINGUE DOS LÍNEAS ES EL LOTE
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Antes el selector de presentación escondía las que
+                     * ya estaban en otra línea, para atajar el doble
+                     * escaneo. Atajaba eso y de paso hacía **imposible**
+                     * lo normal: el proveedor manda dos cajas del mismo
+                     * frasco de producciones distintas, con dos lotes y
+                     * dos vencimientos, y eso son dos líneas —es
+                     * exactamente lo que FEFO necesita para sugerir el
+                     * que vence primero—.
+                     *
+                     * Así que la lista ya no esconde nada y el duplicado
+                     * se revisa acá, sobre lo que de verdad lo define:
+                     * misma presentación Y mismo lote. Dos líneas sin
+                     * lote también son duplicado: sin número no hay con
+                     * qué distinguirlas.
+                     *
+                     * ⚠️ Al guardar y no mientras se teclea: el lote se
+                     * escribe DESPUÉS de elegir la caja, así que avisar
+                     * en el momento pintaría de rojo cada línea a medio
+                     * llenar.
+                     */
+                    ->rule(static fn (): Closure => self::sinLineasRepetidas())
                     ->reorderable(false)
                     ->defaultItems(0)
                     ->columnSpanFull()
@@ -228,145 +291,65 @@ final class RecepcionForm
     }
 
     /**
-     * La presentación que le toca a una línea nueva: la habitual si
-     * todavía está libre, y si no la primera que nadie eligió.
-     *
-     * 🔴 Poner SIEMPRE la habitual es lo que creaba el duplicado. Agregar
-     * dos líneas del mismo producto dejaba el mismo frasco de 60 ML en
-     * las dos, y la segunda pasaba desapercibida porque el campo ya venía
-     * lleno — hasta que la existencia decía 1200 ML donde había 600.
-     */
-    private static function primeraPresentacionLibre(?Item $item, Get $get): ?ItemPresentacion
-    {
-        if (! $item instanceof Item) {
-            return null;
-        }
-
-        $usadas = collect(is_array($get('../../lineas')) ? $get('../../lineas') : [])
-            ->filter(fn (mixed $linea): bool => is_array($linea))
-            ->pluck('item_presentacion_id')
-            ->filter(fn (mixed $id): bool => is_numeric($id))
-            ->map(fn (mixed $id): int => (int) $id)
-            ->all();
-
-        $habitual = $item->presentacionPredeterminada();
-
-        if ($habitual instanceof ItemPresentacion && ! in_array($habitual->id, $usadas, true)) {
-            return $habitual;
-        }
-
-        $libre = ItemPresentacion::query()
-            ->where('item_id', $item->id)
-            ->whereNotIn('id', $usadas)
-            ->orderBy('nombre')
-            ->first();
-
-        return $libre instanceof ItemPresentacion ? $libre : null;
-    }
-
-    /**
      * @return array<int, mixed>
      */
     private static function camposDeLaLinea(): array
     {
         return [
-            Select::make('item_id')
-                ->label('Producto')
-                ->options(fn (): array => Item::query()
-                    ->orderBy('nombre')
-                    ->limit(50)
-                    ->get()
-                    ->mapWithKeys(fn (Item $item): array => [$item->id => $item->etiqueta()])
-                    ->all())
-                /*
-                 * Solo lo vigente: no se compra más de algo que se dejó
-                 * de ofrecer. Lo retirado con existencia sí se sigue
-                 * pudiendo contar y ajustar — esas pantallas no filtran.
-                 */
-                ->getSearchResultsUsing(fn (string $search): array => Item::buscar($search, soloVigentes: true)
-                    ->mapWithKeys(fn (Item $item): array => [$item->id => $item->etiqueta()])
-                    ->all())
-                ->getOptionLabelUsing(fn (mixed $value): ?string => self::itemDe($value)?->etiqueta())
-                ->searchable()
+            /*
+             * ─────────────────────────────────────────────────────────
+             * UN SOLO CAMPO: LA CAJA QUE SE TIENE EN LA MANO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Antes eran dos selectores encadenados —producto y después
+             * presentación—. Quien recibe no piensa en un producto
+             * abstracto: mira la caja. Así que se elige directo
+             * «ACETAMINOFEN JARABE · Frasco 120 ml» y el producto se
+             * deriva.
+             *
+             * 🔴 «Suelto» TAMBIÉN está en la lista, y no es un adorno.
+             * Al cargar el inventario que ya existe, de una caja de 100
+             * tabletas quedan 20 porque las otras se vendieron antes de
+             * que hubiera sistema. «1 caja» sería mentira y «0.2 cajas»
+             * peor: se registran 20 tabletas sueltas. Sin esta opción
+             * ese saldo no se puede cargar.
+             *
+             * El valor es `item:presentacion` —con 0 para lo suelto—
+             * porque un Select guarda un escalar, y las dos columnas que
+             * de verdad se guardan viajan en los `Hidden` de abajo.
+             */
+            Select::make('que_llego')
+                ->label('¿Qué llegó?')
+                ->columnSpan(4)
                 ->required()
+                ->searchable()
                 ->native(false)
                 ->live()
-                ->columnSpan(2)
-                ->afterStateUpdated(function (mixed $state, Get $get, Set $set): void {
-                    $presentacion = self::primeraPresentacionLibre(self::itemDe($state), $get);
+                /* Es un campo de pantalla: lo que se guarda son los dos Hidden. */
+                ->dehydrated(false)
+                /*
+                 * La lista de arriba puede venir ACOTADA por lo que se
+                 * escaneó —la gaveta, o un producto con varias cajas—.
+                 * La BÚSQUEDA nunca se acota: escribir sigue viendo el
+                 * catálogo entero, así que acotar no deja a nadie
+                 * encerrado en una lista corta.
+                 */
+                ->options(fn (Get $get): array => self::opcionesDeLaLinea($get))
+                ->getSearchResultsUsing(fn (string $search): array => self::loQuePuedeLlegar($search))
+                ->getOptionLabelUsing(fn (mixed $value): ?string => self::comoSeLlama($value))
+                ->afterStateUpdated(function (mixed $state, Set $set): void {
+                    [$item, $presentacion] = self::partirLoQueLlego($state);
 
+                    $set('item_id', $item?->id);
                     $set('item_presentacion_id', $presentacion?->id);
                     $set('unidades_por_presentacion', $presentacion->unidades_por_presentacion ?? '1');
                 }),
 
-            Select::make('item_presentacion_id')
-                ->label('Presentación')
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 UNA PRESENTACIÓN NO SE OFRECE DOS VECES
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Dos líneas del mismo frasco de 60 ML terminan en el
-                 * mismo lote y se suman: la existencia queda en 1200 ML
-                 * «20 envases» sin que nadie haya recibido veinte. No es
-                 * un error del kardex —sumar es lo correcto cuando llegan
-                 * dos cajas del mismo lote— es que la pantalla dejó
-                 * elegir dos veces lo mismo por descuido.
-                 *
-                 * `../../lineas` sube los dos niveles del repetidor y lee
-                 * el arreglo entero. La opción propia se conserva: si se
-                 * excluyera, el campo aparecería vacío al reabrir la fila.
-                 */
-                ->options(function (Get $get): array {
-                    /*
-                     * ⚠️ Se CUENTA cuántas veces aparece cada una, no se
-                     * compara contra «la mía».
-                     *
-                     * Dos filas con la misma presentación son
-                     * indistinguibles por valor: al excluir «las que no
-                     * son la mía», la que estaba repetida se salvaba a sí
-                     * misma y seguía apareciendo en la lista. Contando,
-                     * una presentación que aparece dos veces sobra en las
-                     * dos filas y desaparece de las dos listas.
-                     */
-                    $veces = collect(is_array($get('../../lineas')) ? $get('../../lineas') : [])
-                        ->filter(fn (mixed $linea): bool => is_array($linea))
-                        ->pluck('item_presentacion_id')
-                        ->filter(fn (mixed $id): bool => is_numeric($id))
-                        ->map(fn (mixed $id): int => (int) $id)
-                        ->countBy()
-                        ->all();
+            Hidden::make('item_id'),
+            Hidden::make('item_presentacion_id'),
 
-                    $mia = is_numeric($get('item_presentacion_id'))
-                        ? (int) $get('item_presentacion_id')
-                        : null;
-
-                    $ocupadas = [];
-
-                    foreach ($veces as $id => $cuantas) {
-                        if ((int) $id !== $mia || $cuantas > 1) {
-                            $ocupadas[] = (int) $id;
-                        }
-                    }
-
-                    return ItemPresentacion::query()
-                        ->where('item_id', $get('item_id'))
-                        ->whereNotIn('id', $ocupadas)
-                        ->orderBy('nombre')
-                        ->get()
-                        ->mapWithKeys(fn (ItemPresentacion $p): array => [$p->id => $p->nombre])
-                        ->all();
-                })
-                ->native(false)
-                ->live()
-                ->columnSpan(2)
-                ->helperText('Vacío = llegó en unidad de dispensación.')
-                ->afterStateUpdated(function (mixed $state, Set $set): void {
-                    $set(
-                        'unidades_por_presentacion',
-                        self::presentacionDe($state)->unidades_por_presentacion ?? '1',
-                    );
-                }),
+            /* A qué acotó el escaneo. De pantalla: no se guarda. */
+            Hidden::make('acotado_a')->dehydrated(false),
 
             TextInput::make('cantidad_presentacion')
                 ->label('¿Cuántas?')
@@ -459,6 +442,31 @@ final class RecepcionForm
      * el siguiente escaneo entre sin borrar a mano. Con la pistola eso es
      * la diferencia entre recibir un camión en dos minutos o en veinte.
      */
+    /**
+     * Lo que pasa por el lector, y las TRES cosas que puede ser.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL ESCANEO PROPONE; ELEGIR POR ALGUIEN ES OTRA COSA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     *   1. **El EAN del fabricante**, impreso en la caja. Identifica una
+     *      presentación exacta: no hay nada que decidir, se pone.
+     *   2. **La etiqueta de la gaveta** (`PA-0001`). Identifica un
+     *      PRINCIPIO ACTIVO, no un envase: acota la lista a lo que lo
+     *      lleva y deja elegir.
+     *   3. **La etiqueta del hospital** (`MED-101`). Identifica el
+     *      PRODUCTO, no el envase: acota a sus presentaciones.
+     *
+     * Antes, el caso 3 elegía la presentación predeterminada. Con un
+     * producto que viene en caja de 100 y en caja de 50 eso es adivinar
+     * —y el campo quedaba lleno, así que nadie lo revisaba—: la
+     * existencia entraba en el envase equivocado sin que se notara.
+     *
+     * ⚠️ La excepción, tomada del mismo criterio que usa la pantalla de
+     * cargos: **uno solo no es una elección.** Si de lo escaneado sale
+     * una única presentación posible, se pone, porque abrir un
+     * desplegable de un renglón es un clic que no decide nada.
+     */
     private static function agregarLoEscaneado(mixed $state, Get $get, Set $set): void
     {
         $codigo = trim(is_string($state) ? $state : '');
@@ -469,74 +477,93 @@ final class RecepcionForm
 
         $set('escaneo', null);
 
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 DOS CÓDIGOS DISTINTOS LLEGAN A LA MISMA LÍNEA
-         * ─────────────────────────────────────────────────────────────
-         *
-         * Lo que pasa por el lector puede ser una de dos cosas, y las dos
-         * son válidas:
-         *
-         *   1. El **EAN del fabricante**, impreso en la caja que trae el
-         *      proveedor. Identifica una presentación exacta.
-         *   2. La **etiqueta del hospital**, que lleva el código del
-         *      PRODUCTO (`MED-101`) porque acá se reenvasa. Identifica el
-         *      producto, no el envase.
-         *
-         * El primer intento buscaba solo lo primero, y por eso escanear la
-         * etiqueta propia —la única que existe para casi todo el
-         * inventario— contestaba «ese código no está en el catálogo»
-         * teniendo el producto delante.
-         *
-         * Cuando entra por el código del producto se usa su presentación
-         * habitual: es la que dice cuántas unidades trae el envase, y sin
-         * ese número no hay forma de convertir a kardex.
-         */
-        $presentacion = ItemPresentacion::query()
-            ->where('codigo_barras', $codigo)
-            ->first();
+        if (str_starts_with(mb_strtoupper($codigo), PrincipioActivo::PREFIJO)) {
+            self::escaneoDeGaveta($codigo, $get, $set);
 
-        if (! $presentacion instanceof ItemPresentacion) {
-            $presentacion = self::presentacionDelProducto($codigo);
-        }
-
-        if (! $presentacion instanceof ItemPresentacion) {
             return;
         }
 
-        /** @var array<string, mixed> $lineas */
-        $lineas = is_array($get('lineas')) ? $get('lineas') : [];
+        $presentacion = ItemPresentacion::query()->where('codigo_barras', $codigo)->first();
 
-        $lineas[(string) Str::uuid()] = [
-            'item_id'                   => $presentacion->item_id,
-            'item_presentacion_id'      => $presentacion->id,
-            'cantidad_presentacion'     => '1',
-            'unidades_por_presentacion' => $presentacion->unidades_por_presentacion,
-            'costo_por_presentacion'    => '0',
-            'numero_lote'               => null,
-            'fecha_vencimiento'         => null,
-        ];
+        if ($presentacion instanceof ItemPresentacion) {
+            self::abrirLinea($get, $set, presentacion: $presentacion);
 
-        $set('lineas', $lineas);
+            Notification::make()
+                ->success()
+                ->title($presentacion->nombre)
+                ->body('Agregado. Poné la cantidad, el costo y el lote.')
+                ->send();
+
+            return;
+        }
+
+        self::escaneoDeProducto($codigo, $get, $set);
+    }
+
+    /**
+     * La etiqueta de la gaveta: acota a lo que lleva ese principio.
+     *
+     * Los dos avisos son distintos a propósito, igual que en la pantalla
+     * de cargos: una gaveta vieja se arregla reimprimiendo la etiqueta;
+     * un principio sin productos vigentes se arregla en la ficha del
+     * producto. Un solo mensaje mandaría a la mitad al lugar equivocado.
+     */
+    private static function escaneoDeGaveta(string $codigo, Get $get, Set $set): void
+    {
+        $principio = PrincipioActivo::query()
+            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
+            ->first();
+
+        if (! $principio instanceof PrincipioActivo) {
+            Notification::make()
+                ->warning()
+                ->title('Esa etiqueta no está en el catálogo')
+                ->body(
+                    'El código arranca con «'.PrincipioActivo::PREFIJO.'», así que es una etiqueta '
+                    .'de gaveta, pero ningún principio activo la tiene. Puede ser de una gaveta '
+                    .'vieja: reimprimí la etiqueta desde Farmacia → Principios activos.'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $items = $principio->productosVigentes()
+            ->filter(fn (Item $item): bool => (bool) $item->se_almacena);
+
+        if ($items->isEmpty()) {
+            Notification::make()
+                ->warning()
+                ->title('Nada que recibir con '.$principio->nombre)
+                ->body(
+                    'La gaveta está etiquetada pero hoy ningún producto vigente del catálogo lo '
+                    .'lleva. Se vincula desde la ficha del producto, en «Principios activos».'
+                )
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        self::abrirLinea($get, $set, acotadoA: 'pa:'.$principio->getKey(), candidatos: $items);
 
         Notification::make()
             ->success()
-            ->title($presentacion->nombre)
-            ->body('Agregado. Poné la cantidad, el costo y el lote.')
+            ->title($principio->nombre)
+            ->body('Elegí en «¿Qué llegó?» cuál de sus presentaciones entró.')
             ->send();
     }
 
     /**
-     * El producto por su código propio —el de la etiqueta del hospital—
-     * con la presentación en la que se compra.
+     * La etiqueta del hospital: el PRODUCTO, sin decir en qué envase.
      *
-     * Devuelve null y avisa en dos casos distintos, con dos mensajes
-     * distintos: cuando el código no existe en ningún lado, y cuando el
-     * producto existe pero todavía no tiene en qué envase viene. El
-     * segundo es el que se soluciona en veinte segundos y no hay que
-     * confundirlo con el primero.
+     * Los dos avisos vuelven a ser distintos: el código que no existe en
+     * ningún lado, y el producto que existe pero todavía no tiene en qué
+     * envase viene. El segundo se soluciona en veinte segundos y no hay
+     * que confundirlo con el primero.
      */
-    private static function presentacionDelProducto(string $codigo): ?ItemPresentacion
+    private static function escaneoDeProducto(string $codigo, Get $get, Set $set): void
     {
         $item = Item::query()->where('codigo', $codigo)->first();
 
@@ -545,42 +572,86 @@ final class RecepcionForm
                 ->warning()
                 ->title('Ese código no está en el catálogo')
                 ->body(
-                    "Ningún producto tiene el código {$codigo}, ni ninguna caja registrada con "
-                    .'ese código de barras. Revisá que el producto esté dado de alta, o agregá '
-                    .'la línea a mano.'
+                    'Ni como código de barras de un envase ni como código de producto. Revisá que '
+                    .'sea el correcto, o dalo de alta en Farmacia → Productos.'
                 )
                 ->persistent()
                 ->send();
 
-            return null;
+            return;
         }
 
-        $presentacion = $item->presentacionPredeterminada()
-            ?? $item->presentaciones()->orderBy('id')->first();
-
-        if (! $presentacion instanceof ItemPresentacion) {
+        if (! $item->se_almacena) {
             Notification::make()
                 ->warning()
-                ->title('Falta decir en qué viene')
+                ->title($item->nombre.' no se almacena')
                 ->body(
-                    "{$item->nombre} está en el catálogo, pero no tiene ninguna presentación de "
-                    .'compra. Agregale la caja o el frasco en que llega —con cuántas unidades '
-                    .'trae— y volvé a escanear.'
+                    'No lleva existencia ni kardex, así que no se recibe: no hay nada que guardar '
+                    .'en un estante.'
                 )
                 ->persistent()
                 ->send();
 
-            return null;
+            return;
         }
 
-        return $presentacion;
+        self::abrirLinea($get, $set, acotadoA: 'item:'.$item->getKey(), candidatos: new ColeccionDeModelos([$item]));
+
+        Notification::make()
+            ->success()
+            ->title($item->nombre)
+            ->body('Elegí en «¿Qué llegó?» en qué envase vino.')
+            ->send();
     }
 
-    // ── Las cuentas a la vista ────────────────────────────────────────
-
     /**
-     * «10.000 unidades · L 10,00 c/u» — con bcmath, no con float.
+     * Agrega la línea: con la presentación puesta cuando no había nada
+     * que decidir, y si no acotada y esperando que elijan.
+     *
+     * @param ColeccionDeModelos<int, Item>|null $candidatos
      */
+    private static function abrirLinea(
+        Get $get,
+        Set $set,
+        ?ItemPresentacion $presentacion = null,
+        ?string $acotadoA = null,
+        ?ColeccionDeModelos $candidatos = null,
+    ): void {
+        /* «Uno solo no es una elección». Ver el encabezado del escaneo. */
+        if (! $presentacion instanceof ItemPresentacion && $candidatos instanceof ColeccionDeModelos) {
+            $posibles = self::opcionesDeItems($candidatos);
+
+            if (count($posibles) === 1) {
+                [, $presentacion] = self::partirLoQueLlego((string) array_key_first($posibles));
+                $acotadoA = null;
+            }
+        }
+
+        $item = $presentacion?->item_id;
+
+        /** @var array<string, mixed> $lineas */
+        $lineas = is_array($get('lineas')) ? $get('lineas') : [];
+
+        $lineas[(string) Str::uuid()] = [
+            /*
+             * ⚠️ `que_llego` también, aunque no se guarde: es el campo
+             * que se VE. Sin él la línea escaneada aparecía con el
+             * selector vacío y parecía que el escaneo no había servido.
+             */
+            'que_llego'                 => $item === null ? null : $item.':'.$presentacion?->id,
+            'acotado_a'                 => $acotadoA,
+            'item_id'                   => $item,
+            'item_presentacion_id'      => $presentacion?->id,
+            'cantidad_presentacion'     => '1',
+            'unidades_por_presentacion' => $presentacion->unidades_por_presentacion ?? '1',
+            'costo_por_presentacion'    => '0',
+            'numero_lote'               => null,
+            'fecha_vencimiento'         => null,
+        ];
+
+        $set('lineas', $lineas);
+    }
+
     private static function laCuentaDeLaLinea(Get $get): string
     {
         $cajas = self::comoNumero($get('cantidad_presentacion'));
@@ -657,6 +728,177 @@ final class RecepcionForm
         }
 
         return self::itemDe($estado['item_id'] ?? null)?->etiqueta();
+    }
+
+    /**
+     * Todo lo que puede entrar por la puerta: cada presentación del
+     * catálogo, y la unidad suelta de cada producto.
+     *
+     * ⚠️ Solo lo que SE ALMACENA. Antes listaba `Item::query()` entero,
+     * así que se podía «recibir» una consulta externa o una hora de
+     * quirófano — cosas que no tienen estante ni kardex.
+     *
+     * @return array<string, string>
+     */
+    private static function loQuePuedeLlegar(?string $termino = null): array
+    {
+        $items = $termino === null || trim($termino) === ''
+            ? Item::query()->where('se_almacena', true)->orderBy('nombre')->limit(25)->get()
+            : Item::buscar($termino, soloVigentes: true)->where('se_almacena', true);
+
+        return self::opcionesDeItems($items);
+    }
+
+    /**
+     * Las opciones que le tocan a ESTA línea.
+     *
+     * Acotada por lo que se escaneó, si se escaneó algo que no alcanzaba
+     * para decidir: la gaveta acota al principio activo, la etiqueta del
+     * hospital al producto.
+     *
+     * @return array<string, string>
+     */
+    private static function opcionesDeLaLinea(Get $get): array
+    {
+        $acotado = $get('acotado_a');
+
+        if (! is_string($acotado) || ! str_contains($acotado, ':')) {
+            return self::loQuePuedeLlegar();
+        }
+
+        [$que, $cual] = explode(':', $acotado, 2);
+
+        if ($que === 'item') {
+            $item = self::itemDe($cual);
+
+            return $item instanceof Item
+                ? self::opcionesDeItems(new ColeccionDeModelos([$item]))
+                : self::loQuePuedeLlegar();
+        }
+
+        $principio = PrincipioActivo::query()->find($cual);
+
+        if (! $principio instanceof PrincipioActivo) {
+            return self::loQuePuedeLlegar();
+        }
+
+        return self::opcionesDeItems(
+            $principio->productosVigentes()->filter(fn (Item $item): bool => (bool) $item->se_almacena)
+        );
+    }
+
+    /**
+     * Cada presentación de esos productos, más su unidad suelta.
+     *
+     * ⚠️ Pide una colección de ELOQUENT y no una cualquiera: `load()`
+     * —el que evita las cincuenta consultas de abajo— no existe en una
+     * `Support\Collection`. Un `collect([$item])` acá reventaba en el
+     * primer escaneo de un producto.
+     *
+     * @param ColeccionDeModelos<int, Item> $items
+     *
+     * @return array<string, string>
+     */
+    private static function opcionesDeItems(ColeccionDeModelos $items): array
+    {
+        /* Sin esto, veinticinco productos son cincuenta consultas. */
+        $items->load(['presentaciones', 'unidadDispensacion']);
+
+        $opciones = [];
+
+        foreach ($items as $item) {
+            foreach ($item->presentaciones->sortBy('nombre') as $presentacion) {
+                $opciones[$item->id.':'.$presentacion->id] = $item->etiqueta().' · '.$presentacion->nombre;
+            }
+
+            $opciones[$item->id.':0'] = $item->etiqueta()
+                .' · suelto, por '.($item->unidadDispensacion->simbolo ?? 'unidad');
+        }
+
+        return $opciones;
+    }
+
+    /** Cómo se lee `item:presentacion` en la pantalla. */
+    private static function comoSeLlama(mixed $valor): ?string
+    {
+        [$item, $presentacion] = self::partirLoQueLlego($valor);
+
+        if (! $item instanceof Item) {
+            return null;
+        }
+
+        return $item->etiqueta().' · '.($presentacion instanceof ItemPresentacion
+            ? $presentacion->nombre
+            : 'suelto, por '.($item->unidadDispensacion->simbolo ?? 'unidad'));
+    }
+
+    /**
+     * Parte `item:presentacion` en sus dos mitades. Presentación 0 —o
+     * ausente— es lo suelto.
+     *
+     * @return array{0: Item|null, 1: ItemPresentacion|null}
+     */
+    private static function partirLoQueLlego(mixed $valor): array
+    {
+        if (! is_string($valor) || ! str_contains($valor, ':')) {
+            return [null, null];
+        }
+
+        [$item, $presentacion] = explode(':', $valor, 2);
+
+        return [self::itemDe($item), self::presentacionDe($presentacion)];
+    }
+
+    /**
+     * 🔴 Dos líneas con la misma caja Y el mismo lote son la misma cosa
+     * contada dos veces.
+     *
+     * Si de verdad llegaron dos cajas de ese lote, van sumadas en una
+     * línea: para el kardex son la misma existencia. Con lotes distintos
+     * no se toca nada, que es todo el punto de este cambio.
+     */
+    private static function sinLineasRepetidas(): Closure
+    {
+        return static function (string $atributo, mixed $valor, Closure $fallar): void {
+            if (! is_array($valor)) {
+                return;
+            }
+
+            $vistas = [];
+
+            foreach ($valor as $linea) {
+                if (! is_array($linea)) {
+                    continue;
+                }
+
+                $item = is_numeric($linea['item_id'] ?? null) ? (int) $linea['item_id'] : 0;
+                $presentacion = is_numeric($linea['item_presentacion_id'] ?? null)
+                    ? (int) $linea['item_presentacion_id']
+                    : 0;
+
+                $lote = mb_strtoupper(trim(is_string($linea['numero_lote'] ?? null)
+                    ? $linea['numero_lote']
+                    : ''));
+
+                $clave = $item.':'.$presentacion.':'.$lote;
+
+                if (! isset($vistas[$clave])) {
+                    $vistas[$clave] = true;
+
+                    continue;
+                }
+
+                $que = self::comoSeLlama($item.':'.$presentacion) ?? 'Un renglón';
+
+                $fallar($lote === ''
+                    ? "«{$que}» está dos veces y ninguna tiene número de lote: sin lote no hay "
+                        .'cómo distinguirlas. Sumalas en una sola línea, o poné el lote de cada una.'
+                    : "«{$que}» está dos veces con el lote {$lote}. Si llegaron dos cajas de ese "
+                        .'mismo lote, sumalas en una línea; si son lotes distintos, corregí el número.');
+
+                return;
+            }
+        };
     }
 
     private static function itemDe(mixed $valor): ?Item

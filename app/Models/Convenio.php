@@ -33,6 +33,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $telefono
  * @property string|null $correo
  * @property bool $requiere_autorizacion
+ * @property bool $desglosa_paquetes
  * @property int|null $dias_credito
  * @property string|null $notas
  * @property CarbonInterface $vigencia_desde
@@ -74,6 +75,7 @@ class Convenio extends Model
         'cobertura_fraccion',
         'tope_por_evento',
         'cubre_por_defecto',
+        'desglosa_paquetes',
         'dias_credito',
         'notas',
         'vigencia_desde',
@@ -89,6 +91,7 @@ class Convenio extends Model
             'tipo'                  => TipoConvenio::class,
             'base_descuento_legal'  => BaseDelDescuentoLegal::class,
             'requiere_autorizacion' => 'boolean',
+            'desglosa_paquetes'     => 'boolean',
             'dias_credito'          => 'integer',
             'vigencia_desde'        => 'date',
             'vigencia_hasta'        => 'date',

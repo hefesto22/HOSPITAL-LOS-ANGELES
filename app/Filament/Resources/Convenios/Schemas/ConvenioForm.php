@@ -325,6 +325,31 @@ final class ConvenioForm
                     ->label('Correo')
                     ->email()
                     ->maxLength(120),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * CÓMO QUIERE EL PAPEL ESTE PAGADOR
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Una aseguradora que adjudica renglón por renglón
+                 * necesita ver los renglones; al paciente de contado le
+                 * sirve más el papel corto. Es preferencia del pagador,
+                 * así que vive acá y no en el código: el convenio que se
+                 * firme el mes que viene llega con la suya sin tocar
+                 * nada (§1.1).
+                 *
+                 * Es solo el valor por defecto. Quien factura la ve ya
+                 * marcada en el modal y puede cambiarla para esa factura
+                 * — y lo que decida ahí queda congelado en el papel.
+                 */
+                Toggle::make('desglosa_paquetes')
+                    ->label('Detallar las cirugías presupuestadas en la factura')
+                    ->columnSpanFull()
+                    ->helperText(
+                        'Apagado: la cirugía sale como un solo renglón con su precio de paquete. '
+                        .'Encendido: sale en los renglones que se prestaron —sala, habitación, '
+                        .'medicamentos— con el monto repartido entre ellos. El total es el mismo.'
+                    ),
             ]);
     }
 

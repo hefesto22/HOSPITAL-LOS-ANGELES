@@ -2899,6 +2899,34 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * ¿Hay una cirugía presupuestada por facturar en esta cuenta?
+     *
+     * Es lo que decide si la casilla de desglose aparece. Sin paquete no
+     * hay nada que abrir, y una casilla que no cambia nada en la mayoría
+     * de las facturas es ruido en la pantalla donde menos conviene
+     * distraer.
+     *
+     * `presupuesto_id` sin `presupuesto_linea_id` es el renglón del
+     * paquete (ADR-0009); con los dos es un consumo previsto, que no se
+     * factura aparte.
+     */
+    private function laCuentaFacturandoTienePaquete(): bool
+    {
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return false;
+        }
+
+        return $cuenta->cargos()
+            ->where('estado', EstadoCargo::Pendiente->value)
+            ->where('politica_cargo', PoliticaCargo::Cobrable->value)
+            ->whereNotNull('presupuesto_id')
+            ->whereNull('presupuesto_linea_id')
+            ->exists();
+    }
+
+    /**
      * El porcentaje que viene propuesto en el campo, en enteros.
      *
      * Manda lo que ya se autorizó para ESTA cuenta; si nadie anotó nada,
@@ -3287,6 +3315,42 @@ class CuentasAbiertas extends Page
                  * fue abonando durante la estadía no hay nada que
                  * cobrarle acá.
                  */
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * SOLO APARECE SI HAY UNA CIRUGÍA QUE ABRIR
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * En la factura de una consulta no hay nada que
+                 * desglosar, y una casilla que no cambia nada distrae en
+                 * la pantalla donde menos conviene.
+                 */
+                Section::make('Cómo sale el papel')
+                    ->visible(fn (): bool => $this->laCuentaFacturandoTienePaquete())
+                    ->schema([
+                        Toggle::make('desglosar_paquetes')
+                            ->label('Detallar la cirugía renglón por renglón')
+                            /*
+                             * Viene marcada según el pagador y se puede
+                             * cambiar para ESTA factura. Lo que se
+                             * decida acá queda congelado en el papel:
+                             * volver a imprimirlo da exactamente lo
+                             * mismo, porque el mismo número de CAI no
+                             * puede producir dos documentos distintos.
+                             */
+                            /*
+                             * ⚠️ `->` y no `?->`: adentro de un `??` el
+                             * nullsafe sobra y PHPStan lo rechaza con
+                             * `nullsafe.neverNull`. Sin cuenta o sin
+                             * convenio, el `?? false` responde igual.
+                             */
+                            ->default(fn (): bool => (bool) ($this->cuentaFacturando()->convenio->desglosa_paquetes ?? false))
+                            ->helperText(
+                                'La cirugía sale en sus renglones —sala, habitación, medicamentos— con el '
+                                .'monto del paquete repartido entre ellos. El total no cambia. Se lista lo '
+                                .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
+                            ),
+                    ]),
+
                 Section::make('Cobrar ahora')
                     ->description(
                         'Lo que le falta AL PACIENTE, en el mismo acto: se recibe el abono y se '
@@ -3426,6 +3490,17 @@ class CuentasAbiertas extends Page
                         ),
                         quien: UsuarioAutenticado::id(),
                         nota: is_string($data['nota'] ?? null) ? $data['nota'] : null,
+
+                        /*
+                         * Sin la casilla en pantalla —no había paquete—
+                         * va `null` y manda la preferencia del convenio.
+                         * Un `false` acá le estaría diciendo al emisor
+                         * «el usuario NO quiere desglose», que no es lo
+                         * que pasó.
+                         */
+                        desglosar: array_key_exists('desglosar_paquetes', $data)
+                            ? (bool) $data['desglosar_paquetes']
+                            : null,
                     );
                 } catch (SihlaException $e) {
                     Notification::make()

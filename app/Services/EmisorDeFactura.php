@@ -61,13 +61,16 @@ use Illuminate\Support\Facades\DB;
  */
 final class EmisorDeFactura
 {
+    public function __construct(private readonly DesglosadorDePaquete $desglosador) {}
+
     public function emitir(
         Cuenta $cuenta,
         ClienteDeFactura $cliente,
         ?int $quien = null,
         ?string $nota = null,
+        ?bool $desglosar = null,
     ): Factura {
-        return DB::transaction(function () use ($cuenta, $cliente, $quien, $nota): Factura {
+        return DB::transaction(function () use ($cuenta, $cliente, $quien, $nota, $desglosar): Factura {
             /** @var Cuenta $bloqueada */
             $bloqueada = Cuenta::query()->whereKey($cuenta->id)->lockForUpdate()->firstOrFail();
 
@@ -108,6 +111,29 @@ final class EmisorDeFactura
             }
 
             $totales = $this->sumar($cargos);
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 LOS RENGLONES DEL PAPEL SE ARMAN ANTES DEL CORRELATIVO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Desglosar un paquete puede fallar —uno que mezcle
+             * regímenes de ISV— y acá eso no cuesta nada: todavía no se
+             * serializó a las cajas de la sede ni se consumió un número
+             * del SAR. Un centímetro más abajo, el mismo error dejaría
+             * un hueco en la secuencia que el SAR audita.
+             *
+             * Sin nada dicho manda la preferencia del pagador.
+             *
+             * ⚠️ `->` y no `?->`: adentro de un `??` el nullsafe sobra
+             * —el `??` ya tolera el nulo en la cadena— y PHPStan lo
+             * rechaza con `nullsafe.neverNull`. El `?? false` es el que
+             * cubre la cuenta sin convenio: si nadie declaró que quiere
+             * el papel largo, sale el corto.
+             */
+            $desglosar ??= (bool) ($bloqueada->convenio->desglosa_paquetes ?? false);
+
+            $renglones = $this->renglonesDelPapel($cargos, $desglosar);
 
             $this->exigirDocumentoSiCorresponde($cliente, $totales['total']);
 
@@ -173,59 +199,22 @@ final class EmisorDeFactura
                 'vence_el'   => $this->venceEl($bloqueada->convenio, $ahora)->toDateString(),
                 'facturador' => $this->nombreDelFacturador($quien),
 
-                'lineas'      => $cargos->count(),
+                /*
+                 * Los renglones que COBRAN. El título de una cirugía
+                 * desglosada no cuenta: quien lee «19 renglones» está
+                 * contando cosas que se le hicieron al paciente.
+                 */
+                'lineas'               => $renglones['cobrables'],
+                'paquetes_desglosados' => $renglones['hubo'],
+
                 'nota'        => $nota === null || trim($nota) === '' ? null : trim($nota),
                 'comentarios' => $nota === null || trim($nota) === '' ? null : trim($nota),
             ], $cliente->paraGuardar()));
 
             $orden = 1;
 
-            foreach ($cargos as $cargo) {
-                $factura->detalle()->create([
-                    'orden'    => $orden++,
-                    'cargo_id' => $cargo->id,
-
-                    /* La primera columna del papel. */
-                    'codigo' => $cargo->item?->codigo,
-
-                    /*
-                     * El texto congelado del cargo, no el nombre actual
-                     * del ítem: el papel dice lo que decía ese día.
-                     */
-                    'descripcion' => $cargo->texto,
-
-                    /*
-                     * ─────────────────────────────────────────────────
-                     * 🔴 EL PAPEL DICE LO QUE SE VENDIÓ, NO LO QUE SALIÓ
-                     * DEL ESTANTE
-                     * ─────────────────────────────────────────────────
-                     *
-                     * Un frasco de 60 ml salía impreso como «60 × L
-                     * 61.11»: los números correctos leídos mal. Nadie
-                     * entregó sesenta de nada, y L 61.11 no es un precio
-                     * de este hospital —es el frasco dividido entre sus
-                     * mililitros—. El paciente recibe una factura donde
-                     * no reconoce ni la cantidad ni el precio.
-                     *
-                     * El kardex sigue en 60 ML: eso vive en el cargo y no
-                     * se toca. Acá se imprime «1 × L 3,666.67», que es lo
-                     * que se le cobró.
-                     */
-                    'cantidad'        => $this->cuantoSeVendio($cargo),
-                    'precio_unitario' => $this->aCuantoSeVendio($cargo),
-
-                    'bruto'               => $cargo->bruto,
-                    'descuento_legal'     => $cargo->descuento_legal,
-                    'descuento_comercial' => $cargo->descuento_comercial,
-
-                    'regimen_isv' => $cargo->regimen_isv->value,
-                    'tasa_isv'    => $cargo->regimen_isv->tasaComoTexto(),
-
-                    'exento'  => $cargo->base_exenta,
-                    'gravado' => $cargo->base_gravada,
-                    'isv'     => $cargo->isv,
-                    'total'   => $cargo->total,
-                ]);
+            foreach ($renglones['lineas'] as $renglon) {
+                $factura->detalle()->create(['orden' => $orden++] + $renglon);
             }
 
             $rango->update(['siguiente' => $correlativo + 1]);
@@ -525,6 +514,173 @@ final class EmisorDeFactura
         }
 
         return Decimal::de($cargo->bruto)->entre($comoSeCobro['envases'])->redondeado(4);
+    }
+
+    /**
+     * Los renglones que van al papel, ya decidido si el paquete se abre.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * LO QUE ESTE MÉTODO **NO** HACE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * No toca los totales. Los de la factura salen de `sumar($cargos)`,
+     * que no sabe ni le importa si el papel salió corto o largo — y esa
+     * es toda la garantía: **la misma cuenta da el mismo total con o sin
+     * desglose**. Si algún día alguien hace que la cabecera sume las
+     * líneas, esa garantía se pierde y con ella la razón de que esto sea
+     * seguro.
+     *
+     * ⚠️ Un desglose imposible NO traba la factura: `desglosar()`
+     * devuelve `null` —cirugía sin presupuesto, o sin nada entregado
+     * todavía— y el cargo sale como el renglón de siempre. Con la
+     * familia esperando el papel, la presentación no puede ser un
+     * motivo para no emitir.
+     *
+     * @param ColeccionDeModelos<int, Cargo> $cargos
+     *
+     * @return array{lineas: list<array<string, mixed>>, cobrables: int, hubo: bool}
+     */
+    private function renglonesDelPapel(ColeccionDeModelos $cargos, bool $desglosar): array
+    {
+        $lineas = [];
+        $cobrables = 0;
+        $hubo = false;
+
+        foreach ($cargos as $cargo) {
+            $desglose = $desglosar ? $this->desglosador->desglosar($cargo) : null;
+
+            if ($desglose === null) {
+                $lineas[] = $this->renglonDelCargo($cargo);
+                $cobrables++;
+
+                continue;
+            }
+
+            $hubo = true;
+
+            $lineas[] = $this->encabezadoDelPaquete($cargo);
+
+            foreach ($desglose as $renglon) {
+                /*
+                 * Las tres líneas apuntan al MISMO cargo, que es el que
+                 * pasa a `facturado` y el que anular devuelve a
+                 * `pendiente`. Los consumos del paquete no se facturan:
+                 * ya están adentro de este renglón.
+                 */
+                $lineas[] = $renglon + ['cargo_id' => $cargo->id, 'encabezado' => false];
+                $cobrables++;
+            }
+        }
+
+        return ['lineas' => $lineas, 'cobrables' => $cobrables, 'hubo' => $hubo];
+    }
+
+    /**
+     * El título de la cirugía: la nombra y no cobra nada.
+     *
+     * Desglosada, la factura pierde la palabra «APENDICECTOMIA» y quedan
+     * diecinueve renglones sueltos de los que ni el paciente ni el
+     * ajustador saben de qué procedimiento son. Este renglón la devuelve,
+     * con su número de presupuesto al lado para poder cruzarla con el
+     * papel que la familia firmó.
+     *
+     * @return array<string, mixed>
+     */
+    private function encabezadoDelPaquete(Cargo $cargo): array
+    {
+        $numero = $cargo->presupuesto?->numero;
+
+        return [
+            'encabezado' => true,
+            'cargo_id'   => $cargo->id,
+            'codigo'     => $cargo->item?->codigo,
+
+            'descripcion' => mb_substr(
+                $numero === null ? $cargo->texto : $cargo->texto.' · '.$numero,
+                0,
+                200,
+            ),
+
+            /*
+             * ⚠️ Uno y no cero: `factura_lineas_cantidad_no_cero` rechaza
+             * el cero. El papel igual no lo imprime — la bandera
+             * `encabezado` hace que la fila salga como título, sin sus
+             * columnas numéricas.
+             */
+            'cantidad'        => '1.0000',
+            'precio_unitario' => '0.0000',
+
+            'bruto'               => '0.00',
+            'descuento_legal'     => '0.00',
+            'descuento_comercial' => '0.00',
+
+            /*
+             * El régimen del cargo y no uno fijo: con `exento` en un
+             * paquete gravado, `factura_lineas_gravado_sin_exento`
+             * rechazaría la fila. Con todo en cero, cualquier régimen
+             * pasa los CHECK.
+             */
+            'regimen_isv' => $cargo->regimen_isv->value,
+            'tasa_isv'    => $cargo->regimen_isv->tasaComoTexto(),
+
+            'exento'  => '0.00',
+            'gravado' => '0.00',
+            'isv'     => '0.00',
+            'total'   => '0.00',
+        ];
+    }
+
+    /**
+     * El renglón de siempre: un cargo, una línea.
+     *
+     * @return array<string, mixed>
+     */
+    private function renglonDelCargo(Cargo $cargo): array
+    {
+        return [
+            'encabezado' => false,
+            'cargo_id'   => $cargo->id,
+
+            /* La primera columna del papel. */
+            'codigo' => $cargo->item?->codigo,
+
+            /*
+             * El texto congelado del cargo, no el nombre actual del
+             * ítem: el papel dice lo que decía ese día.
+             */
+            'descripcion' => $cargo->texto,
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL PAPEL DICE LO QUE SE VENDIÓ, NO LO QUE SALIÓ DEL
+             * ESTANTE
+             * ─────────────────────────────────────────────────────────
+             *
+             * Un frasco de 60 ml salía impreso como «60 × L 61.11»: los
+             * números correctos leídos mal. Nadie entregó sesenta de
+             * nada, y L 61.11 no es un precio de este hospital —es el
+             * frasco dividido entre sus mililitros—. El paciente recibe
+             * una factura donde no reconoce ni la cantidad ni el precio.
+             *
+             * El kardex sigue en 60 ML: eso vive en el cargo y no se
+             * toca. Acá se imprime «1 × L 3,666.67», que es lo que se le
+             * cobró.
+             */
+            'cantidad'        => $this->cuantoSeVendio($cargo),
+            'precio_unitario' => $this->aCuantoSeVendio($cargo),
+
+            'bruto'               => $cargo->bruto,
+            'descuento_legal'     => $cargo->descuento_legal,
+            'descuento_comercial' => $cargo->descuento_comercial,
+
+            'regimen_isv' => $cargo->regimen_isv->value,
+            'tasa_isv'    => $cargo->regimen_isv->tasaComoTexto(),
+
+            'exento'  => $cargo->base_exenta,
+            'gravado' => $cargo->base_gravada,
+            'isv'     => $cargo->isv,
+            'total'   => $cargo->total,
+        ];
     }
 
     /**

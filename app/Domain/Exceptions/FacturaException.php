@@ -26,6 +26,23 @@ final class FacturaException extends SihlaException
     }
 
     /**
+     * 🔴 Un paquete no puede llevar dos regímenes de ISV.
+     *
+     * Hoy no puede pasar: lo gravado nunca entra a un paquete. Si algún
+     * día pasa, el prorrateo repartiría el impuesto entre renglones que
+     * no lo causan y la factura saldría con el ISV mal atribuido — un
+     * hallazgo que nadie vería hasta la auditoría del SAR. Antes de
+     * emitir eso, no se emite.
+     */
+    public static function elPaqueteMezclaRegimenes(string $cirugia, string $renglon): self
+    {
+        return new self(
+            "No se puede desglosar «{$cirugia}»: el renglón «{$renglon}» tiene otro régimen de ISV "
+            .'que el paquete. Emitila sin desglose, o corregí el régimen del renglón en el presupuesto.'
+        );
+    }
+
+    /**
      * 🔴 La regla del hospital: primero se salda, después se factura.
      */
     public static function laCuentaTieneSaldo(string $numero, string $saldo): self
