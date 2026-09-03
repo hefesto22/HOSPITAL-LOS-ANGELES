@@ -88,7 +88,7 @@ final class ItemForm
                 ->columnSpanFull()
                 ->tabs(array_values(array_filter([
                     self::identificacion($ambito),
-                    self::dineroYLey(),
+                    self::dineroYLey($ambito),
 
                     /*
                      * En farmacia la pestaña «Unidades» no existe. Tenía
@@ -469,7 +469,7 @@ final class ItemForm
             ->columns(2);
     }
 
-    private static function dineroYLey(): Tab
+    private static function dineroYLey(AmbitoCatalogo $ambito): Tab
     {
         return Tab::make('ISV y descuentos')
             ->icon('heroicon-o-scale')
@@ -516,7 +516,26 @@ final class ItemForm
                  * gratis», que pasa de verdad en algunos convenios y no
                  * es lo mismo.
                  */
+                /*
+                 * ⚠️ EN FARMACIA ESTA SECCIÓN NO EXISTE, y no es cosmético.
+                 *
+                 * `costo_referencia` significa «esto lo hace alguien de
+                 * afuera y me cobra tanto». Un medicamento no se presta:
+                 * SE COMPRA, y lo que cuesta sale del kardex como costo
+                 * promedio móvil, con su lote, su proveedor y su factura.
+                 *
+                 * Ofrecer los dos caminos para el mismo número es cómo se
+                 * termina con productos que tienen un costo escrito a mano
+                 * que nadie actualiza y otro real en el inventario, y con
+                 * un reporte de margen que suma los dos.
+                 *
+                 * Acá se queda —catálogo de servicios— porque ahí sí hay
+                 * cosas que el hospital nunca hace: la biopsia que se
+                 * manda al laboratorio de afuera no entra a ningún estante
+                 * y no tiene kardex del que sacar un costo.
+                 */
                 Section::make('Servicio prestado por un tercero')
+                    ->visible($ambito !== AmbitoCatalogo::Productos)
                     ->icon('heroicon-o-building-storefront')
                     ->description(
                         'Solo para lo que el hospital NO hace y manda afuera: laboratorio externo, '
