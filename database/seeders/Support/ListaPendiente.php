@@ -49,8 +49,32 @@ use App\Models\Tarifario;
  * O desde la aplicación: `ListaPendiente::cuantosFaltan()`.
  *
  * Reemplazar el centinela es cargar el precio real por pantalla o por
- * seeder sobre la MISMA fila: mismo ítem, `convenio_id` nulo y la misma
- * `vigencia_desde`. No hay que borrar nada.
+ * seeder sobre la MISMA fila: mismo ítem, `convenio_id` nulo. No hay que
+ * borrar nada. Desde el código, `precioReal()`.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * LA REGLA QUE ESTA CLASE HACE CUMPLIR
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * **Un ítem tiene como máximo UN precio de lista abierto, y el precio de
+ * verdad siempre le gana al centinela.**
+ *
+ * No es una preferencia de estilo: `tarifarios_sin_traslape` —el EXCLUDE
+ * USING gist— rechaza dos precios de lista vigentes del mismo ítem, y
+ * rechazarlo es lo correcto (dos precios abiertos es no tener precio).
+ *
+ * ⚠️ La versión anterior daba por sentado que todos los seeders del
+ * catálogo usaban la MISMA `vigencia_desde`, y no era cierto: los de
+ * seguros arrancan el 2026-08-01 y la lista de rayos X el 2026-09-01. Un
+ * ítem que sale en las dos —hay 39— terminaba con el precio real desde
+ * septiembre y el `updateOrCreate` del centinela intentando abrir otra
+ * fila desde agosto. La base lo frenó con un 23P01 en medio del seed.
+ *
+ * El arreglo no es unificar la fecha —eso solo esconde el problema hasta
+ * que alguien agregue el tercer documento—: es que **estos dos métodos
+ * miren si el ítem ya tiene un precio de lista abierto** y escriban
+ * sobre esa fila en vez de abrir una nueva. Así el resultado es el mismo
+ * corran en el orden que corran.
  */
 final class ListaPendiente
 {
@@ -74,27 +98,100 @@ final class ListaPendiente
         .'Reemplazar antes de facturar.';
 
     /**
-     * Deja el ítem con precio de lista centinela.
+     * Deja el ítem con precio de lista centinela — si no tiene uno de verdad.
      *
-     * `updateOrCreate` sobre la misma vigencia y no una fila nueva: el
-     * EXCLUDE de traslape de `tarifarios` rechaza dos precios de lista
-     * vigentes del mismo ítem, y volver a correr el seeder tiene que
-     * poder pasar.
+     * Devuelve `false` cuando NO lo puso porque el ítem ya tenía precio
+     * real. Ese caso no es un error ni una omisión: es la regla. Un ítem
+     * que sale en la lista de rayos X con su precio y también en la
+     * propuesta de un seguro tiene precio de lista, y pisarlo con L 10
+     * sería perder el único dato firme que hay.
      */
-    public static function poner(Item $item, string $vigenciaDesde): void
+    public static function poner(Item $item, string $vigenciaDesde): bool
     {
-        Tarifario::query()->updateOrCreate(
-            [
-                'item_id'        => $item->id,
-                'convenio_id'    => null,
-                'sede_id'        => null,
-                'vigencia_desde' => $vigenciaDesde,
-            ],
-            [
+        $abierta = self::precioDeListaAbierto($item);
+
+        if ($abierta instanceof Tarifario) {
+            if (! self::esCentinela($abierta)) {
+                return false;
+            }
+
+            /*
+             * Ya estaba puesto. Se refresca el texto sobre LA MISMA fila
+             * —no se abre otra vigencia— para que volver a correr el
+             * seeder sea inofensivo.
+             */
+            $abierta->update([
                 'precio' => self::PRECIO,
                 'motivo' => self::MOTIVO,
-            ],
-        );
+            ]);
+
+            return true;
+        }
+
+        Tarifario::query()->create([
+            'item_id'        => $item->id,
+            'convenio_id'    => null,
+            'sede_id'        => null,
+            'vigencia_desde' => $vigenciaDesde,
+            'precio'         => self::PRECIO,
+            'motivo'         => self::MOTIVO,
+        ]);
+
+        return true;
+    }
+
+    /**
+     * El precio de lista DE VERDAD. Reemplaza al centinela en su misma
+     * fila, con lo cual la vigencia que ya tenía el ítem no se mueve y no
+     * hay dos precios abiertos ni por un instante.
+     *
+     * @param numeric-string $precio
+     */
+    public static function precioReal(Item $item, string $precio, string $motivo, string $vigenciaDesde): void
+    {
+        $abierta = self::precioDeListaAbierto($item);
+
+        if ($abierta instanceof Tarifario) {
+            $abierta->update([
+                'precio' => $precio,
+                'motivo' => $motivo,
+            ]);
+
+            return;
+        }
+
+        Tarifario::query()->create([
+            'item_id'        => $item->id,
+            'convenio_id'    => null,
+            'sede_id'        => null,
+            'vigencia_desde' => $vigenciaDesde,
+            'precio'         => $precio,
+            'motivo'         => $motivo,
+        ]);
+    }
+
+    /**
+     * El precio de lista abierto del ítem, si tiene.
+     *
+     * Lista = `convenio_id` nulo. Y del ÍTEM, no de una presentación:
+     * `item_presentacion_id` también nulo, porque una presentación tiene
+     * su propia fila y su propio traslape.
+     */
+    private static function precioDeListaAbierto(Item $item): ?Tarifario
+    {
+        return Tarifario::query()
+            ->where('item_id', $item->id)
+            ->whereNull('convenio_id')
+            ->whereNull('sede_id')
+            ->whereNull('item_presentacion_id')
+            ->whereNull('vigencia_hasta')
+            ->orderByDesc('vigencia_desde')
+            ->first();
+    }
+
+    private static function esCentinela(Tarifario $fila): bool
+    {
+        return str_starts_with((string) $fila->motivo, self::MARCA);
     }
 
     /** Cuántos ítems siguen esperando su precio de lista de verdad. */

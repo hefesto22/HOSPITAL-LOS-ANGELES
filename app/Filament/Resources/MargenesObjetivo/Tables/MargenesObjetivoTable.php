@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\MargenesObjetivo\Tables;
 
-use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\MargenObjetivo;
 use Filament\Tables\Columns\TextColumn;
@@ -23,15 +22,25 @@ final class MargenesObjetivoTable
     {
         return $table
             ->columns([
+                /*
+                 * ⚠️ `->state()` y NO `formatStateUsing()`.
+                 *
+                 * Con `tipo_item` nulo —la fila del default— Filament
+                 * corta antes de formatear y pinta la celda vacía. En
+                 * pantalla se veía una fila de margen que no decía para
+                 * qué era, y la descripción tampoco salía. El cierre
+                 * estaba bien escrito y nunca se ejecutaba.
+                 *
+                 * `->state()` reemplaza el estado resuelto y devuelve
+                 * SIEMPRE una cadena, así que no queda nulo que cortar.
+                 */
                 TextColumn::make('tipo_item')
                     ->label('Se aplica a')
+                    ->state(fn (MargenObjetivo $record): string => $record->tipo_item?->etiqueta() ?? 'Todo lo demás')
                     ->badge()
-                    ->color(fn (?TipoItem $state): string => $state instanceof TipoItem ? 'primary' : 'gray')
-                    ->formatStateUsing(fn (?TipoItem $state): string => $state instanceof TipoItem
-                        ? $state->etiqueta()
-                        : 'Todo lo demás')
+                    ->color(fn (MargenObjetivo $record): string => $record->esElDefault() ? 'gray' : 'primary')
                     ->description(fn (MargenObjetivo $record): ?string => $record->esElDefault()
-                        ? 'Default de la instalación'
+                        ? 'Cualquier tipo que no tenga margen propio'
                         : null),
 
                 TextColumn::make('porcentaje')

@@ -46,14 +46,28 @@ final class FijarMargenAction
             ->modalSubmitActionLabel('Fijar')
             ->modalWidth('lg')
             ->schema([
+                /*
+                 * El desplegable ofrece SOLO medicamentos e insumos, y no
+                 * es un recorte de la pantalla: son los dos únicos tipos
+                 * que la calculadora acepta. Lo demás lleva su precio de
+                 * lista escrito a mano en el tarifario y ningún margen lo
+                 * toca.
+                 *
+                 * ⚠️ El texto de ayuda decía «tiene que existir siempre
+                 * uno así» del default, y era falso: con esos dos tipos
+                 * cubiertos, una fila sin tipo no la alcanza nadie —
+                 * solo tarifaría EN SILENCIO un tipo futuro, que es el
+                 * default silencioso que el §9 prohíbe.
+                 */
                 Select::make('tipo_item')
                     ->label('Se aplica a')
                     ->options(self::tiposQueSeCompran())
-                    ->placeholder('Todo lo demás (default de la instalación)')
+                    ->placeholder('Todo lo demás (no hace falta)')
                     ->native(false)
                     ->helperText(
-                        'Si lo dejás vacío, es el margen que se usa para todo tipo que no tenga el '
-                        .'suyo propio. Tiene que existir siempre uno así.'
+                        'Medicamentos e insumos son los únicos tipos que se compran, y ya tienen el '
+                        .'suyo. Dejarlo vacío solo serviría para tarifar un tipo futuro sin que nadie '
+                        .'lo decida: mejor que la calculadora falle y se fije el número a propósito.'
                     ),
 
                 TextInput::make('porcentaje')

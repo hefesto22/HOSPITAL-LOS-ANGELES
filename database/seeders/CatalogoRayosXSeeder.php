@@ -9,8 +9,8 @@ use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
 use App\Models\Item;
-use App\Models\Tarifario;
 use App\Models\Unidad;
+use Database\Seeders\Support\ListaPendiente;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -237,22 +237,28 @@ class CatalogoRayosXSeeder extends Seeder
     /**
      * El precio de lista de verdad: `convenio_id` nulo.
      *
+     * Va por `ListaPendiente` y no por el modelo del tarifario directo, y
+     * la razón es el orden: 39 de estas radiografías salen también en las
+     * propuestas de los seguros, que arrancan el 2026-08-01 mientras esta
+     * lista arranca el 2026-09-01. Escribiendo la fila a mano, correr los
+     * seeders en un orden abría un precio real y en el otro un centinela,
+     * y el segundo chocaba contra `tarifarios_sin_traslape` a mitad del
+     * seed.
+     *
+     * `precioReal()` escribe sobre el precio de lista que el ítem YA
+     * tenga abierto. El resultado es el mismo en cualquier orden, y el
+     * precio de verdad siempre le gana al L 10.
+     *
      * @param numeric-string $precio
      */
     private function precioDeLista(Item $item, string $precio): void
     {
-        Tarifario::query()->updateOrCreate(
-            [
-                'item_id'        => $item->id,
-                'convenio_id'    => null,
-                'sede_id'        => null,
-                'vigencia_desde' => self::VIGENCIA_DESDE,
-            ],
-            [
-                'precio' => bcmul($precio, '1', 4),
-                'motivo' => 'Precio de venta de la lista de radiografías del hospital '
-                    .'(documento «Servicios Rx», septiembre de 2026).',
-            ],
+        ListaPendiente::precioReal(
+            item: $item,
+            precio: bcmul($precio, '1', 4),
+            motivo: 'Precio de venta de la lista de radiografías del hospital '
+                .'(documento «Servicios Rx», septiembre de 2026).',
+            vigenciaDesde: self::VIGENCIA_DESDE,
         );
     }
 
