@@ -289,11 +289,23 @@ class CreateRecepcion extends CreateRecord
         $aviso = app(AvisoDeLoQueSeDebe::class);
         $registro = $this->getRecord();
 
-        $items = $registro instanceof Recepcion
-            ? $registro->lineas->pluck('item_id')->map(static fn (mixed $id): int => (int) $id)->all()
-            : $this->itemsDelFormulario();
+        $items = $this->itemsDelFormulario();
 
-        $frase = $aviso->frase(array_values($items));
+        if ($registro instanceof Recepcion) {
+            /*
+             * Lo guardado le gana a lo tecleado: entre el formulario y
+             * este método el dominio pudo haber unido o descartado
+             * líneas, y avisar sobre un producto que al final no entró
+             * es la clase de aviso que enseña a no leer los avisos.
+             */
+            $items = [];
+
+            foreach ($registro->lineas as $linea) {
+                $items[] = $linea->item_id;
+            }
+        }
+
+        $frase = $aviso->frase($items);
 
         if ($frase === null) {
             return;
