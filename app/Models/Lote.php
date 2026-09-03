@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\LoteFactory;
@@ -33,6 +34,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Lote extends Model
 {
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<LoteFactory> */
@@ -63,6 +65,26 @@ class Lote extends Model
             'fecha_vencimiento' => 'date',
             'fecha_fabricacion' => 'date',
         ];
+    }
+
+    /**
+     * 🔴 El número de lote se canoniza en tres lugares y los tres hacen
+     * falta. Este es el último: el que vale aunque la escritura no venga
+     * de un formulario ni de `ResolutorDeLote` —un import del inventario
+     * viejo, un comando—.
+     *
+     * Sin esto, «lot-1» y «LOT-1» son dos lotes del mismo producto, con
+     * dos existencias y dos vencimientos, y FEFO sugiere el que no era.
+     *
+     * ⚠️ El VENCIMIENTO y el registro sanitario no se tocan: uno es
+     * fecha y el otro es un código que emite quien lo emite.
+     */
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['numero'];
     }
 
     /**

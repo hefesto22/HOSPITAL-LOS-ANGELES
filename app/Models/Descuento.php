@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Domain\Enums\AplicacionDeDescuento;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\ValueObjects\Decimal;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\DescuentoFactory;
@@ -48,6 +49,7 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
  */
 class Descuento extends Model
 {
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<DescuentoFactory> */
@@ -87,6 +89,23 @@ class Descuento extends Model
             'vigencia_desde' => 'date',
             'vigencia_hasta' => 'date',
         ];
+    }
+
+    /**
+     * ⚠️ Solo el nombre. La `nota` es texto libre para explicar el
+     * porqué —en mayúsculas se vuelve ilegible— y `aplica_a` es un enum.
+     *
+     * 🔴 Acá el canónico no es cosmética. `FijadorDeDescuento` busca el
+     * descuento vigente POR NOMBRE, así que «Tercera edad» y «TERCERA
+     * EDAD» eran dos descuentos distintos con el mismo significado, los
+     * dos saliendo impresos en facturas.
+     */
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['nombre'];
     }
 
     /**

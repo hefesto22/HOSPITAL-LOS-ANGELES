@@ -8,6 +8,7 @@ use App\Domain\Enums\AplicacionDeDescuento;
 use App\Domain\Exceptions\DescuentoNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Descuento;
+use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -65,7 +66,22 @@ final class FijadorDeDescuento
         bool $exigeReceta = false,
         ?string $nota = null,
     ): Descuento {
-        $nombre = trim($nombre);
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL NOMBRE SE CANONIZA ANTES DE BUSCAR, NO DESPUÉS
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Más abajo el descuento vigente se busca POR NOMBRE, con un
+         * `where` exacto. Con solo un `trim`, «Tercera edad» y «TERCERA
+         * EDAD» no se encontraban entre sí: el segundo no veía al primero
+         * como anterior, no lo cerraba, y quedaban DOS descuentos vigentes
+         * con el mismo significado — los dos saliendo impresos en
+         * facturas, y el que gana depende del ORDER BY.
+         *
+         * El modelo también lo canoniza al guardar (`GuardaEnMayusculas`),
+         * pero eso pasa DESPUÉS de esta búsqueda: ahí ya es tarde.
+         */
+        $nombre = TextoCanonico::mayusculas($nombre) ?? '';
         $nota = $this->limpio($nota);
 
         if (mb_strlen($nombre) < 3) {

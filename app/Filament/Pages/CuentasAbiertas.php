@@ -2171,7 +2171,7 @@ class CuentasAbiertas extends Page
                         ->all())
                     ->helperText('El de la caja que prestaron. Si no está en la lista, cargalo acá mismo.')
                     ->createOptionForm([
-                        TextInput::make('numero')->label('Número de lote')->required()->maxLength(60),
+                        CampoMayusculas::make('numero')->label('Número de lote')->required()->maxLength(60),
                         DatePicker::make('fecha_vencimiento')->label('Vence')->native(false)->displayFormat('d/m/Y'),
                     ])
                     ->createOptionUsing(function (array $data, Get $get): ?int {

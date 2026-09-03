@@ -9,6 +9,7 @@ use App\Domain\Enums\EstadoTurnoDeCaja;
 use App\Domain\Enums\FormaDePago;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Concerns\BelongsToSede;
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\TurnoDeCajaFactory;
@@ -49,6 +50,7 @@ use Illuminate\Support\Facades\DB;
 class TurnoDeCaja extends Model
 {
     use BelongsToSede;
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<TurnoDeCajaFactory> */
@@ -89,6 +91,19 @@ class TurnoDeCaja extends Model
     }
 
     // ── Relaciones ────────────────────────────────────────────────────
+
+    /**
+     * El nombre del turno —«TURNO A»— es un rótulo del hospital como
+     * cualquier otro y sale impreso en el corte de caja, al lado de
+     * datos que ya van en mayúsculas.
+     */
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['nombre'];
+    }
 
     /**
      * @return BelongsTo<User, $this>

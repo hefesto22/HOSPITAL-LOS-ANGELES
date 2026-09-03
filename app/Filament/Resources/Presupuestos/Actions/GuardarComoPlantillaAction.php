@@ -84,7 +84,7 @@ class GuardarComoPlantillaAction
                         return "⚠️ Ya existe «{$existente->nombre}» con {$cuantos} renglones. Guardar REEMPLAZA sus renglones por los de esta cotización.";
                     }),
 
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->maxLength(150)

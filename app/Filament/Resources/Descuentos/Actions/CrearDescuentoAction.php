@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Descuentos\Actions;
 use App\Domain\Enums\AplicacionDeDescuento;
 use App\Domain\Exceptions\DescuentoNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Descuento;
 use App\Services\FijadorDeDescuento;
 use App\Support\NumeroDeFormulario;
@@ -62,12 +63,12 @@ final class CrearDescuentoAction
             ->modalSubmitActionLabel('Crear')
             ->modalWidth('lg')
             ->schema([
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('Nombre')
                     ->required()
                     ->minLength(3)
                     ->maxLength(80)
-                    ->placeholder('Tercera edad')
+                    ->placeholder('TERCERA EDAD')
                     ->datalist(fn (): array => self::nombresQueYaExisten())
                     ->helperText(
                         'Es el nombre que va a aparecer en cada ítem y en la factura. '

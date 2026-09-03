@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Items\RelationManagers;
 
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Unidad;
@@ -167,12 +168,11 @@ class PresentacionesRelationManager extends RelationManager
                     ->content(fn (): string => $this->nombreBase() ?? '—')
                     ->helperText('Sale de la ficha y no se edita acá. La presentación de abajo se le agrega al final.'),
 
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label(fn (): string => $this->seAlmacena() ? 'Presentación' : 'Nombre')
                     ->required()
                     ->maxLength(255)
                     ->columnSpanFull()
-                    ->dehydrateStateUsing(fn (mixed $state): string => is_string($state) ? trim($state) : '')
                     ->placeholder($this->ejemploDeNombre())
                     ->helperText($this->ayudaDelNombre()),
 
@@ -881,7 +881,16 @@ class PresentacionesRelationManager extends RelationManager
         }
 
         $base = $this->nombreBase();
-        $actual = is_string($get('nombre')) ? trim($get('nombre')) : '';
+
+        /*
+         * ⚠️ En MAYÚSCULAS antes de comparar. El campo las muestra
+         * mientras se escribe, pero eso es CSS: el estado que viaja sigue
+         * siendo lo tecleado. Sin esto, quien escribiera «caja x 50» veía
+         * «CAJA X 50» en pantalla y el sistema lo tomaba por texto a mano
+         * —porque la forma que reconoce arranca con mayúscula— y dejaba
+         * de completarlo al cambiar el envase.
+         */
+        $actual = is_string($get('nombre')) ? mb_strtoupper(trim($get('nombre')), 'UTF-8') : '';
 
         /*
          * Lo que escribió el sistema y se puede pisar: lo vacío, lo que

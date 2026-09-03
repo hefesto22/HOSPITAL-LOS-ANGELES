@@ -6,6 +6,7 @@ namespace App\Filament\Concerns;
 
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Sede;
 use App\Models\TurnoDeCaja;
 use App\Models\User;
@@ -75,9 +76,9 @@ trait OperaElTurnoDeCaja
                  * primer paciente ya enfrente. Se puede cambiar si hoy
                  * cubre otro turno.
                  */
-                TextInput::make('nombre')
+                CampoMayusculas::make('nombre')
                     ->label('¿Cómo se llama este turno?')
-                    ->placeholder('Turno A')
+                    ->placeholder('TURNO A')
                     ->maxLength(40)
                     ->default(fn (): ?string => $this->usuarioDeCaja()?->turno)
                     ->helperText('Viene del turno asignado en tu usuario. Para reconocerlo después en el reporte.'),

@@ -8,6 +8,7 @@ use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\QuienPresta;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\Lote;
@@ -108,7 +109,7 @@ final class RegistrarPrestamoAction
                     ->searchable()
                     ->helperText('El de la caja que prestaron. Si no está en la lista, cargalo acá mismo.')
                     ->createOptionForm([
-                        TextInput::make('numero')
+                        CampoMayusculas::make('numero')
                             ->label('Número de lote')
                             ->required()
                             ->maxLength(60),

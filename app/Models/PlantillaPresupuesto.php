@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
 use Database\Factories\PlantillaPresupuestoFactory;
@@ -33,6 +34,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class PlantillaPresupuesto extends Model
 {
+    use GuardaEnMayusculas;
     use HasAuditFields;
 
     /** @use HasFactory<PlantillaPresupuestoFactory> */
@@ -62,6 +64,23 @@ class PlantillaPresupuesto extends Model
             'vigencia_desde' => 'date',
             'vigencia_hasta' => 'date',
         ];
+    }
+
+    /**
+     * ⚠️ La `descripcion` no: es texto libre que se lee cuando alguien
+     * duda al cotizar, y en mayúsculas se vuelve ilegible.
+     *
+     * El `codigo` ya entraba canónico desde el formulario y el `nombre`
+     * no, según por qué puerta se creara la plantilla — el formulario
+     * usaba `CampoMayusculas` y la acción «Guardar como plantilla» un
+     * `TextInput` pelado. Dos convenciones para una columna.
+     */
+    /**
+     * @return array<int, string>
+     */
+    public static function camposEnMayusculas(): array
+    {
+        return ['codigo', 'nombre'];
     }
 
     /**
