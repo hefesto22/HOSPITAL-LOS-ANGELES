@@ -109,6 +109,13 @@ class MatrizDePermisosSeeder extends Seeder
             'Convenio'        => ['ViewAny', 'View'],
 
             /*
+             * El préstamo es de solo lectura para auditoría, como todo lo
+             * demás: es una entrada de inventario sin factura, así que es
+             * justo lo que hay que poder revisar sin poder tocar.
+             */
+            'Prestamo' => ['ViewAny', 'View'],
+
+            /*
              * Y quién cobra los honorarios. Es la mitad de la pregunta
              * «a quién se le pagó esto»: sin el registro de médicos, un
              * honorario es un renglón sin dueño.
@@ -336,8 +343,17 @@ class MatrizDePermisosSeeder extends Seeder
          * recibe físicamente.
          */
         'farmacia' => [
-            'Persona'       => ['ViewAny', 'View'],
-            'Item'          => ['ViewAny', 'View'],
+            'Persona' => ['ViewAny', 'View'],
+            'Item'    => ['ViewAny', 'View'],
+            /*
+             * El préstamo: pedirlo y saldarlo.
+             *
+             * `Update` acá NO es editar el documento —el formulario de
+             * edición no existe—: es lo que habilita «Devolver» y
+             * «Marcar pagado». Sin él la deuda no se puede cerrar nunca.
+             */
+            'Prestamo' => ['ViewAny', 'View', 'Create', 'Update'],
+
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View', 'Create', 'Update'],
             'Unidad'        => ['ViewAny', 'View'],
@@ -463,7 +479,16 @@ class MatrizDePermisosSeeder extends Seeder
          * —solo un nombre y un RTN—.
          */
         'bodega' => [
-            'Item'          => ['ViewAny', 'View'],
+            'Item' => ['ViewAny', 'View'],
+            /*
+             * El préstamo: pedirlo y saldarlo.
+             *
+             * `Update` acá NO es editar el documento —el formulario de
+             * edición no existe—: es lo que habilita «Devolver» y
+             * «Marcar pagado». Sin él la deuda no se puede cerrar nunca.
+             */
+            'Prestamo' => ['ViewAny', 'View', 'Create', 'Update'],
+
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View'],
             'Unidad'        => ['ViewAny', 'View'],

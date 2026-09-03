@@ -33,7 +33,7 @@ use Spatie\Permission\PermissionRegistrar;
  */
 
 /**
- * Los quince sujetos que Shield genera hoy, uno por Resource registrado.
+ * Los sujetos que Shield genera hoy, uno por Resource registrado.
  *
  * Cuando se agrega un Resource nuevo hay que agregarlo acá también, o los
  * tests de esta matriz siembran un universo de permisos más chico que el
@@ -41,7 +41,7 @@ use Spatie\Permission\PermissionRegistrar;
  */
 const SUJETOS_DE_SHIELD = [
     'Activity', 'Almacen', 'CategoriaItem', 'Compra', 'Convenio', 'FusionDePersona',
-    'Item', 'MargenObjetivo', 'Persona', 'Producto', 'Proveedor', 'Recepcion',
+    'Item', 'MargenObjetivo', 'Persona', 'Prestamo', 'Producto', 'Proveedor', 'Recepcion',
     'Role', 'Sede', 'Servicio', 'Unidad', 'User',
 ];
 
