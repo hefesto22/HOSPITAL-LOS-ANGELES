@@ -408,18 +408,19 @@ final class CerradorDeConteo
          * Se corría un día entero: el ajuste quedaba fechado el 18
          * mientras la línea del conteo decía 19.
          *
-         * La causa de fondo es que hoy `APP_TIMEZONE` es Tegucigalpa y la
-         * conexión fija la sesión de PostgreSQL en UTC, así que lo que
-         * queda guardado es la hora local etiquetada como UTC. Mientras
-         * eso siga así, **la única lectura correcta es la misma que hace
-         * todo el mundo**: el cast del modelo. Cualquier conversión extra
-         * es un módulo interpretando la etiqueta de una forma en la que
-         * ningún otro la interpreta — y ahí es donde aparecen dos fechas
-         * para el mismo hecho.
+         * ✅ La causa de fondo se arregló el 3-sep-2026: la conexión fijaba
+         * la sesión de PostgreSQL en UTC mientras Laravel mandaba literales
+         * sin offset en hora de Tegucigalpa, así que lo guardado era la hora
+         * local con la etiqueta equivocada. Hoy la sesión habla la zona de
+         * la app y las dos lecturas coinciden
+         * (`tests/Feature/Infraestructura/ZonaHorariaTest.php`).
          *
-         * Está anotado como deuda: arreglar la zona es un cambio de todo
-         * el proyecto, con los datos ya escritos adentro, y no se hace de
-         * paso en un módulo de inventario.
+         * La regla, sin embargo, NO cambia y por eso el comentario se queda:
+         * **la lectura correcta sigue siendo la que hace todo el mundo**, el
+         * cast del modelo. Un módulo que se ponga a convertir por su cuenta
+         * vuelve a producir dos fechas para el mismo hecho — ahora por otro
+         * motivo, y más difícil de encontrar porque ya no hay un desfase fijo
+         * de seis horas que delate el patrón.
          */
         $ultima = $conteo->lineas()
             ->whereNotNull('contado_en')

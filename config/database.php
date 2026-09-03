@@ -69,16 +69,50 @@ return [
             'sslmode'        => env('DB_SSLMODE', 'prefer'),
 
             /*
-             * §7.5.2 — la base guarda UTC; la app convierte a Tegucigalpa.
+             * §7.5.2 — la sesión de PostgreSQL habla la zona de la app.
              *
-             * Esto emite SET TIME ZONE 'UTC' en CADA conexión, así que la
-             * sesión queda en UTC aunque el servidor, el contenedor o la
-             * variable PGTZ estén mal configurados. Sin esto, un servidor
-             * en otra zona corre el censo de medianoche y el corte de caja
-             * seis horas, y el error no se ve hasta que alguien cuadra el
-             * mes.
+             * Esto emite SET TIME ZONE en CADA conexión, así que la sesión
+             * queda fija aunque el servidor, el contenedor o PGTZ estén mal
+             * configurados. Eso NO cambió. Lo que cambió es la zona, y hay
+             * que entender por qué antes de volver a poner 'UTC' acá.
+             *
+             * ───────────────────────────────────────────────────────────
+             * POR QUÉ ESTA LÍNEA NO PUEDE DECIR 'UTC'
+             * ───────────────────────────────────────────────────────────
+             *
+             * Laravel serializa el Carbon con getDateFormat() = 'Y-m-d
+             * H:i:s': un literal SIN offset, en la zona de la aplicación.
+             * Con la sesión en UTC, PostgreSQL recibía
+             * «2026-08-19 01:45:00» y lo entendía como 01:45 UTC, cuando
+             * el instante real era 01:45 de Tegucigalpa = 07:45 UTC.
+             *
+             * ⇒ TODA columna timestamptz quedaba guardada seis horas antes
+             *   de lo que pasó. No se veía porque al leer tampoco convertía:
+             *   el sistema escribía 01:45 y leía 01:45, y solo se rompía
+             *   cuando alguien tomaba la etiqueta en serio (psql, un reporte
+             *   fuera de Laravel, o dos procesos en zonas distintas).
+             *
+             * Con la sesión en la zona de la app, ese mismo literal se
+             * interpreta como local y el instante que queda guardado es el
+             * correcto. Adentro, `timestamptz` sigue siendo UTC —siempre lo
+             * fue—: la zona de la sesión NO decide cómo se almacena, decide
+             * cómo se lee un literal que entra y cómo se imprime uno que
+             * sale. Confundir esas dos cosas es exactamente lo que produjo
+             * el desfase.
+             *
+             * DB_TIMEZONE existe para poder desviarse en un servidor
+             * concreto sin tocar código. El default es la zona de la app,
+             * NUNCA la del servidor: un `'timezone' => null` dejaría la
+             * sesión a merced de la TZ del contenedor, que es el escenario
+             * que el §7.5-1 prohíbe.
+             *
+             * `?:` y no el segundo argumento de env(): una variable
+             * ESCRITA Y VACÍA en el .env —`DB_TIMEZONE=`, que es
+             * exactamente como la trae la plantilla— devuelve '' y no
+             * dispara el default. Con `env('DB_TIMEZONE', ...)` eso
+             * terminaría en `SET TIME ZONE ''`.
              */
-            'timezone' => 'UTC',
+            'timezone' => env('DB_TIMEZONE') ?: (env('APP_TIMEZONE') ?: 'America/Tegucigalpa'),
 
             /*
              * Aparece en pg_stat_activity y en los logs de Postgres: permite

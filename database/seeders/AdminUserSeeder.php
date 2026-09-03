@@ -36,11 +36,32 @@ class AdminUserSeeder extends Seeder
 
     private const DEFAULT_NAME = 'Administrador';
 
+    /**
+     * Las contraseñas que este archivo y el `.env.example` reparten.
+     *
+     * ⚠️ El guard de «ADMIN_PASSWORD vacío» NO alcanzaba: el `.env` de
+     * producción se arma copiando `.env.example`, que trae
+     * `ADMIN_PASSWORD=12345678` escrito. Con eso la variable no está
+     * vacía, el guard no dispara, y el hospital arranca con un
+     * super-admin —el rol que se salta TODAS las policies— con la
+     * contraseña que está publicada en el repo.
+     *
+     * @var list<string>
+     */
+    private const CONTRASENAS_QUEMADAS = ['12345678', 'password', 'secret', 'admin'];
+
     public function run(): void
     {
         $email = (string) env('ADMIN_EMAIL', self::DEFAULT_EMAIL);
         $password = (string) env('ADMIN_PASSWORD', '');
         $nombre = (string) env('ADMIN_NAME', self::DEFAULT_NAME);
+
+        if (app()->environment('production') && in_array($password, self::CONTRASENAS_QUEMADAS, true)) {
+            throw new RuntimeException(
+                "ADMIN_PASSWORD sigue siendo la de la plantilla ({$password}). Es una contraseña pública: está escrita en .env.example, "
+                .'y este usuario es super_admin, que se salta las policies. Poné una contraseña real en el .env antes de sembrar producción.'
+            );
+        }
 
         if ($password === '') {
             if (app()->environment('production')) {

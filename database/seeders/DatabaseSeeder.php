@@ -26,37 +26,47 @@ class DatabaseSeeder extends Seeder
             // 4. Recién ahora se puede aplicar la matriz de permisos.
             MatrizDePermisosSeeder::class,
 
-            // 5. Vocabulario del catálogo. Va antes que cualquier ítem:
+            // 5. La administradora del hospital: la persona real que va a
+            //    operar el sistema. Va después de la matriz porque su rol
+            //    tiene que llegar ya con permisos —un usuario con un rol
+            //    vacío entra al panel y no ve nada, y eso se diagnostica
+            //    mal («no me funciona el sistema»)—. Es «direccion», NO
+            //    super_admin: el rol de soporte se salta las policies, y
+            //    quien opera el hospital todos los días tiene que pasar
+            //    por ellas como todo el mundo.
+            UsuarioDeDireccionSeeder::class,
+
+            // 6. Vocabulario del catálogo. Va antes que cualquier ítem:
             //    un medicamento sin unidad de dispensación lo rechaza la
             //    base, no el formulario.
             UnidadesSeeder::class,
 
-            // 6. Los porcentajes del Art. 30. De estos ocho numeros sale
+            // 7. Los porcentajes del Art. 30. De estos ocho numeros sale
             //    el precio de lista de todo el catalogo, asi que se
             //    siembran antes de que exista cualquier tarifario.
             DescuentosLegalesSeeder::class,
 
-            // 7. El margen objetivo. Va después de los descuentos porque
+            // 8. El margen objetivo. Va después de los descuentos porque
             //    el precio de lista se deriva de los dos: el margen dice
             //    cuánto tiene que dejar el ítem y el descuento máximo
             //    dice desde qué precio hay que partir para que lo deje
             //    incluso con el paciente que menos paga (§4.5).
             MargenesObjetivoSeeder::class,
 
-            // 8. El pagador que siempre existe. Va antes de cualquier
+            // 9. El pagador que siempre existe. Va antes de cualquier
             //    tarifario porque el precio se resuelve SIEMPRE por
             //    convenio: si CONTADO no existiera, una cuenta sin seguro
             //    no tendría a quién cobrarle.
             ConveniosSeeder::class,
 
-            // 9. El vocabulario clínico. No depende de nada del catálogo
-            //    comercial —un diagnóstico no tiene precio— pero sí tiene
-            //    que existir antes del primer encuentro: sin él, la cuenta
-            //    no se le puede reclamar a una aseguradora y el Art. 180
-            //    del Código de Salud queda sin con qué cumplirse.
+            // 10. El vocabulario clínico. No depende de nada del catálogo
+            //     comercial —un diagnóstico no tiene precio— pero sí tiene
+            //     que existir antes del primer encuentro: sin él, la cuenta
+            //     no se le puede reclamar a una aseguradora y el Art. 180
+            //     del Código de Salud queda sin con qué cumplirse.
             Cie10DeArranqueSeeder::class,
 
-            // 10. Las especialidades médicas. Van antes del primer
+            // 11. Las especialidades médicas. Van antes del primer
             //     médico: con la lista vacía, quien registra al doctor
             //     inventa la especialidad desde el «crear al vuelo» y a
             //     la semana hay tres formas de escribir «cirugía».
