@@ -91,9 +91,28 @@
                         <div class="sihla-tarjeta-cabecera">
                             <span class="sihla-nombre">{{ $resumen['nombre'] }}</span>
 
-                            <x-filament::badge :color="$cuenta->encuentro->tipo->color()" size="sm">
-                                {{ $resumen['tipo'] }}
-                            </x-filament::badge>
+                            <div class="sihla-insignias">
+                                {{--
+                                    N · 3R · 4R: el rango de edad, que es
+                                    lo que decide el descuento de ley en
+                                    cada cargo. Va junto al tipo para que
+                                    se lea de un vistazo sin abrir nada.
+                                --}}
+                                @if ($resumen['rango'] !== '')
+                                    <x-filament::badge
+                                        :color="$resumen['rango_color']"
+                                        size="sm"
+                                        :title="$resumen['rango_titulo']"
+                                        class="sihla-rango"
+                                    >
+                                        {{ $resumen['rango'] }}
+                                    </x-filament::badge>
+                                @endif
+
+                                <x-filament::badge :color="$cuenta->encuentro->tipo->color()" size="sm">
+                                    {{ $resumen['tipo'] }}
+                                </x-filament::badge>
+                            </div>
                         </div>
 
                         <div class="sihla-linea-tenue">
@@ -365,6 +384,10 @@
         .sihla-nombre {
             font-size: 1rem; font-weight: 600; line-height: 1.25; color: rgb(24 24 27);
         }
+        .sihla-insignias {
+            display: flex; align-items: center; gap: .3rem; flex-shrink: 0;
+        }
+        .sihla-rango { font-weight: 700; letter-spacing: .02em; cursor: help; }
 
         .sihla-linea-tenue,
         .sihla-ingreso {

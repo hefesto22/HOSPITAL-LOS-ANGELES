@@ -228,7 +228,7 @@ final class ConvenioForm
 
     private static function descuentoDeLey(): Section
     {
-        return Section::make('Descuento de ley — Art. 30 del Decreto 199-2006')
+        return Section::make('Descuento de tercera y cuarta edad — Art. 30 del Decreto 199-2006')
             ->description(BaseDelDescuentoLegal::advertencia())
             ->schema([
                 /*
@@ -238,7 +238,7 @@ final class ConvenioForm
                  * decisión legal en un campo que se llena de apuro.
                  */
                 Radio::make('base_descuento_legal')
-                    ->label('Sobre qué monto se calcula el descuento')
+                    ->label('¿Este pagador acepta el descuento de tercera y cuarta edad?')
                     ->options(fn (): array => collect(BaseDelDescuentoLegal::cases())
                         ->mapWithKeys(fn (BaseDelDescuentoLegal $base): array => [
                             $base->value => $base->etiqueta(),

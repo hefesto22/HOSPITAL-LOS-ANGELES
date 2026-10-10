@@ -87,12 +87,20 @@ final class CalculadoraDeCargo
         // 2 ── Descuento legal, sobre la base que declaró el convenio
         $base = $this->baseLegalDe($convenio);
         $fraccionLegal = $descuentoLegal->aplica() ? $descuentoLegal->fraccion : Decimal::cero();
-        $montoLegal = $this->descuentoLegal($bruto, $fraccionLegal, $base, $cobertura);
+        $fraccionAplicada = $this->fraccionLegalAplicada($fraccionLegal, $base, $cobertura);
+        $montoLegal = Monto::de($bruto->cantidad()->por($fraccionAplicada)->redondeado(2));
 
         // 3 ── Descuento comercial, el que decide el hospital
         $montoComercial = $this->descuentoComercial($linea, $bruto);
 
-        $this->exigirQueRespeteLaPolitica($linea, $bruto, $montoComercial, $descuentoLegal->rango);
+        $this->exigirQueRespeteLaPolitica(
+            $linea,
+            $bruto,
+            $montoComercial,
+            $descuentoLegal,
+            $fraccionLegal,
+            $fraccionAplicada,
+        );
 
         $descuentos = $montoLegal->sumar($montoComercial);
 
@@ -249,23 +257,33 @@ final class CalculadoraDeCargo
      *     mensaje accionable en el mostrador; «el descuento total no
      *     puede pasar del máximo de la categoría» no lo es.
      *
-     * ⚠️ El rango sale del descuento de ley que YA lleva la línea, no
+     * ⚠️ El rango sale del descuento de ley que le TOCABA a la línea, no
      * de la edad suelta del paciente. Es la misma cosa en un medicamento
      * —que es donde la pantalla ofrece el descuento— y es lo correcto
      * fuera del Art. 30: en la cafetería nadie recibe rebaja de ley, así
      * que ahí el margen entero está disponible para todos por igual.
+     *
+     * 🔴 «Le tocaba» y «le llegó» no son lo mismo (9-oct-2026). Con un
+     * pagador que no aplica el Art. 30, al adulto mayor le tocaba el 25 %
+     * y le llegó cero. Si el tope del hospital siguiera siendo el de su
+     * edad —10 %, o 0 % en la cuarta— pagaría más que un joven de la
+     * misma aseguradora, al que se le puede dar 30 %. La política suma lo
+     * que no llegó: ver `PoliticaDeDescuentoComercial::topeParaLaLinea()`.
      */
     private function exigirQueRespeteLaPolitica(
         LineaDeCargo $linea,
         Monto $bruto,
         Monto $comercial,
-        ?RangoEdad $rango,
+        DescuentoAplicable $deLey,
+        Decimal $leTocaba,
+        Decimal $recibio,
     ): void {
         if ($comercial->esCero() || $bruto->esCero()) {
             return;
         }
 
-        $tope = $this->politicaDelHospital->topePara($rango);
+        $rango = $deLey->aplica() ? $deLey->rango : null;
+        $tope = $this->politicaDelHospital->topeParaLaLinea($rango, $leTocaba, $recibio);
         $aQuien = $this->politicaDelHospital->aQuien($rango);
 
         if ($tope->esCero()) {
@@ -328,14 +346,26 @@ final class CalculadoraDeCargo
         return $convenio->base_descuento_legal;
     }
 
-    private function descuentoLegal(
-        Monto $bruto,
+    /**
+     * Qué parte del descuento de ley llega de verdad a la línea.
+     *
+     * Devuelve una FRACCIÓN del bruto, no lempiras: la usan el monto del
+     * descuento y el tope del hospital, y los dos tienen que partir del
+     * mismo número. El producto es exacto —bruto con 2 decimales por dos
+     * fracciones de 4 caben de sobra en la escala 12 de `Decimal`—, así
+     * que el monto da al centavo lo mismo que antes de separarlo.
+     *
+     * Con «no aplica» devuelve cero aunque al paciente le tocara: la
+     * fracción que le tocaba se sigue guardando en el cargo
+     * (`descuento_legal_fraccion`) y la base dice por qué no llegó.
+     */
+    private function fraccionLegalAplicada(
         Decimal $fraccion,
         BaseDelDescuentoLegal $base,
         CoberturaAplicada $cobertura,
-    ): Monto {
+    ): Decimal {
         if ($fraccion->esCero() || ! $base->aplica()) {
-            return Monto::cero();
+            return Decimal::cero();
         }
 
         /*
@@ -359,13 +389,16 @@ final class CalculadoraDeCargo
          * agotado y siempre en contra del hospital, nunca del paciente.
          */
         if ($base === BaseDelDescuentoLegal::SobreLoQuePagaElPaciente && $cobertura->elegible) {
-            $resto = Decimal::de('1')->restar($cobertura->fraccion);
-
-            return Monto::de(
-                $bruto->cantidad()->por($resto)->por($fraccion)->redondeado(2)
-            );
+            return $fraccion->por(Decimal::de('1')->restar($cobertura->fraccion));
         }
 
-        return Monto::de($bruto->cantidad()->por($fraccion)->redondeado(2));
+        /*
+         * «Sobre el total facturado» (el Hospital Militar, 9-oct-2026):
+         * cada línea con el porcentaje de SU categoría del Art. 30 sobre
+         * el bruto entero, lo cubra quien lo cubra. La suma de las líneas
+         * es el descuento sobre el total de la factura, y lo que aprueba
+         * el pagador se resta DESPUÉS, en `Cuenta::repartir()`.
+         */
+        return $fraccion;
     }
 }

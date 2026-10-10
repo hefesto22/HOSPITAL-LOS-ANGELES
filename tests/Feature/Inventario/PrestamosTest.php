@@ -2,20 +2,15 @@
 
 declare(strict_types=1);
 
-use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\EstadoPrestamo;
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\QuienPresta;
-use App\Domain\Enums\TipoItem;
 use App\Domain\Enums\TipoMovimiento;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Almacen;
-use App\Models\Existencia;
-use App\Models\Item;
 use App\Models\MovimientoKardex;
 use App\Models\Prestamo;
-use App\Services\RegistradorDePrestamo;
 
 /*
  * Pedir prestado lo que no hay.
@@ -38,28 +33,12 @@ use App\Services\RegistradorDePrestamo;
  *      mueve el precio de lista de todo el producto.
  */
 
-function elPrestamista(): RegistradorDePrestamo
-{
-    return app(RegistradorDePrestamo::class);
-}
-
-/** Un insumo que sí se almacena y no exige lote. */
-function unInsumoDeBodega(): Item
-{
-    return Item::factory()
-        ->de(TipoItem::Insumo, CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico)
-        ->create(['se_almacena' => true]);
-}
-
-function elSaldoDe(Item $item, Almacen $almacen): string
-{
-    $saldo = Existencia::query()
-        ->where('item_id', $item->id)
-        ->where('almacen_id', $almacen->id)
-        ->first();
-
-    return $saldo instanceof Existencia ? $saldo->cantidadDecimal()->redondeado(4) : '0.0000';
-}
+/*
+ * `elPrestamista()`, `unInsumoDeBodega()` y `elSaldoDe()` viven en
+ * `tests/Pest.php`: los usa también `EstanteQueRecibePrestamoTest`, y
+ * con `pest --parallel` un ayudante definido en OTRO archivo existe o
+ * no según cómo caiga el reparto entre procesos.
+ */
 
 it('sube la existencia y deja el documento con el acreedor', function (): void {
     $item = unInsumoDeBodega();

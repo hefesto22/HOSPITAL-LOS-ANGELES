@@ -71,7 +71,7 @@ final class AgregadorDePresupuestoALaCuenta
         $cuenta = $this->cuentaAbiertaDe($presupuesto);
         $item = $this->itemDeCobro($presupuesto);
         $total = Decimal::de($presupuesto->total);
-        $descuento = $this->descuentoDeFarmacia($presupuesto, $cuenta, $total);
+        $descuento = $this->descuentoDeFarmacia($presupuesto, $cuenta, $item, $total);
 
         return DB::transaction(function () use ($presupuesto, $cuenta, $item, $total, $descuento): ?Cargo {
             $vigente = $this->cargoVigente($presupuesto);
@@ -301,8 +301,15 @@ final class AgregadorDePresupuestoALaCuenta
      * Topar da el mismo resultado que la política quería: a quien no
      * puede recibir rebaja comercial no se le da, y nadie se entera por
      * un error rojo en la cara del paciente.
+     *
+     * ⚠️ El tope sale de la MISMA regla que usa la calculadora, con la
+     * categoría del renglón del paquete: si el pagador no aplica el
+     * Art. 30 (PALIG, 9-oct-2026), al adulto mayor se le suma lo que la
+     * ley no le dio. Un tope más chico que el de la calculadora le
+     * quitaría al paquete un descuento que el mismo paciente sí recibe
+     * en los cargos sueltos de farmacia.
      */
-    private function descuentoDeFarmacia(Presupuesto $presupuesto, Cuenta $cuenta, Decimal $bruto): Decimal
+    private function descuentoDeFarmacia(Presupuesto $presupuesto, Cuenta $cuenta, Item $paquete, Decimal $bruto): Decimal
     {
         $fraccion = $cuenta->descuento_hospital;
 
@@ -314,8 +321,10 @@ final class AgregadorDePresupuestoALaCuenta
             $presupuesto->farmaciaEntregada()->por($fraccion)->redondeado(2)
         );
 
-        $tope = $this->politicaDelHospital->topePara(
-            $cuenta->encuentro->persona->rangoDeEdadEn(now())
+        $tope = $this->politicaDelHospital->topeEnLaCuenta(
+            $cuenta,
+            $paquete->categoria_legal_descuento,
+            now(),
         );
 
         $maximo = Decimal::de($bruto->por($tope)->redondeado(2));

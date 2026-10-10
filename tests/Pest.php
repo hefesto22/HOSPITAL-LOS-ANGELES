@@ -11,8 +11,10 @@ use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Abono;
+use App\Models\Almacen;
 use App\Models\Convenio;
 use App\Models\Cuenta;
+use App\Models\Existencia;
 use App\Models\Expediente;
 use App\Models\Item;
 use App\Models\Persona;
@@ -22,6 +24,7 @@ use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\RegistradorDeCargo;
+use App\Services\RegistradorDePrestamo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Pest\Expectation;
@@ -201,4 +204,33 @@ function abonarle(Cuenta $cuenta, string $monto): void
         'turno_id'  => $turno->id,
         'total'     => $monto,
     ]);
+}
+
+/*
+ * Préstamos de medicamento — los usan `PrestamosTest` y
+ * `EstanteQueRecibePrestamoTest`. Vivían en el primero y con
+ * `--parallel` el segundo reventaba con «Call to undefined function»
+ * según cómo cayera el reparto (10-oct-2026).
+ */
+function elPrestamista(): RegistradorDePrestamo
+{
+    return app(RegistradorDePrestamo::class);
+}
+
+/** Un insumo que sí se almacena y no exige lote. */
+function unInsumoDeBodega(): Item
+{
+    return Item::factory()
+        ->de(TipoItem::Insumo, CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico)
+        ->create(['se_almacena' => true]);
+}
+
+function elSaldoDe(Item $item, Almacen $almacen): string
+{
+    $saldo = Existencia::query()
+        ->where('item_id', $item->id)
+        ->where('almacen_id', $almacen->id)
+        ->first();
+
+    return $saldo instanceof Existencia ? $saldo->cantidadDecimal()->redondeado(4) : '0.0000';
 }

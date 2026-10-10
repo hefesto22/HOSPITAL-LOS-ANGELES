@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\FormaDePago;
@@ -1293,14 +1294,14 @@ class CuentasAbiertas extends Page
              * al día contra un escaneo que se usa cien.
              */
             ->modalContent(function (array $arguments) {
-                $rango = $this->rangoDelPacienteDe($arguments);
+                $cuenta = $this->cuentaDe($arguments);
 
                 return view('filament.pages.partials.atajos-de-cargo', [
-                    'cuenta'    => $this->cuentaDe($arguments),
+                    'cuenta'    => $cuenta,
                     'items'     => $this->itemsFrecuentes($arguments),
                     'puede'     => $this->puedeCargar(),
-                    'tope'      => $this->topeDeDescuento($rango)->por('100')->redondeado(2),
-                    'ayuda'     => $this->ayudaDelDescuento($rango),
+                    'tope'      => $this->topeDeDescuento($cuenta)->por('100')->redondeado(2),
+                    'ayuda'     => $this->ayudaDelDescuento($cuenta),
                     'descuento' => $this->descuentoDeLaTanda,
                     'motivo'    => $this->motivoDeLaTanda,
                 ]);
@@ -4726,22 +4727,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * El rango de edad del paciente de esta cuenta, como texto.
-     *
-     * @param array<string, mixed> $arguments
-     */
-    private function rangoDelPacienteDe(array $arguments): ?string
-    {
-        $cuenta = $this->cuentaDe($arguments);
-
-        if (! $cuenta instanceof Cuenta) {
-            return null;
-        }
-
-        return $cuenta->encuentro->persona->rangoDeEdadEn(now())?->value;
-    }
-
-    /**
      * @param array<string, mixed> $arguments
      */
     private function cuentaDe(array $arguments): ?Cuenta
@@ -4943,11 +4928,29 @@ class CuentasAbiertas extends Page
      * pantalla tuviera su propia tabla de topes, el día que dirección
      * cambie uno quedarían dos verdades y la pantalla ofrecería algo que
      * el servicio rechaza.
+     *
+     * Mira la cuenta entera y no solo la edad: con un pagador que no
+     * aplica el Art. 30 (PALIG, 9-oct-2026) el adulto mayor no recibe el
+     * de ley, y el tope le suma lo que la ley no le dio — 35 % la tercera
+     * edad, 40 % la cuarta —. Con el tope de su edad solo, quedaba por
+     * debajo del 30 % que se le puede dar a un joven del mismo seguro.
+     *
+     * La categoría es la de medicamentos porque es lo único que esta
+     * banda toca: el descuento de la cuenta solo cae en lo que sale de
+     * farmacia (`se_almacena`), y eso nace con esa categoría.
      */
-    public function topeDeDescuento(mixed $rango): Decimal
+    public function topeDeDescuento(?Cuenta $cuenta): Decimal
     {
-        return app(PoliticaDeDescuentoComercial::class)->topePara(
-            is_string($rango) ? RangoEdad::tryFrom($rango) : null
+        $politica = app(PoliticaDeDescuentoComercial::class);
+
+        if (! $cuenta instanceof Cuenta) {
+            return $politica->topePara(null);
+        }
+
+        return $politica->topeEnLaCuenta(
+            $cuenta,
+            CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico,
+            now(),
         );
     }
 
@@ -4956,15 +4959,15 @@ class CuentasAbiertas extends Page
      * error, no debajo de un campo que alguien mira de reojo entre dos
      * pacientes. Acá solo va el número que necesita para decidir.
      */
-    public function ayudaDelDescuento(mixed $rango): string
+    public function ayudaDelDescuento(?Cuenta $cuenta): string
     {
-        $tope = $this->topeDeDescuento($rango);
+        $tope = $this->topeDeDescuento($cuenta);
 
         if ($tope->esCero()) {
             return 'No aplica: ya recibe el descuento de ley más alto.';
         }
 
-        $caso = is_string($rango) ? RangoEdad::tryFrom($rango) : null;
+        $caso = $cuenta instanceof Cuenta ? $cuenta->encuentro->persona->rangoDeEdadEn(now()) : null;
 
         /*
          * «Aplica a lo que agregues» y no «aplica a la cuenta»: los cargos
@@ -4974,9 +4977,13 @@ class CuentasAbiertas extends Page
          * rehacer una línea, se anula y se vuelve a cargar — y ahí queda
          * escrito que se rehizo.
          */
-        return $caso instanceof RangoEdad && $caso->tieneDescuentoLegal()
+        if (! $caso instanceof RangoEdad || ! $caso->tieneDescuentoLegal() || ! $cuenta instanceof Cuenta) {
+            return 'Hasta '.$tope->comoPorcentaje().'. Aplica a toda la cuenta.';
+        }
+
+        return $cuenta->convenio->aplicaDescuentoLegal()
             ? 'Hasta '.$tope->comoPorcentaje().', además del de ley. Aplica a toda la cuenta.'
-            : 'Hasta '.$tope->comoPorcentaje().'. Aplica a toda la cuenta.';
+            : 'Hasta '.$tope->comoPorcentaje().'. Este pagador no da el de ley: es todo su descuento. Aplica a toda la cuenta.';
     }
 
     /**
@@ -6404,19 +6411,45 @@ class CuentasAbiertas extends Page
         $encuentro = $cuenta->encuentro;
         $persona = $encuentro->persona;
 
+        /*
+         * El rango de edad va en la tarjeta porque decide cómo se cobra:
+         * a un 3R o 4R la ley le descuenta en cada cargo. Se resuelve a
+         * HOY —es orientación visual, no el cálculo—; cada cargo vuelve
+         * a resolverlo contra su propia fecha de servicio. Sin fecha de
+         * nacimiento (el NN) no hay sigla, y la tarjeta lo muestra así
+         * en vez de inventar «normal».
+         *
+         * ⚠️ Si el pagador no aplica el Art. 30 (PALIG, 9-oct-2026), el
+         * 3R o 4R sigue saliendo —la edad es un dato del paciente— pero
+         * en gris y con el porqué en el título: en color, la cajera lo
+         * leería como «este lleva descuento» y no lo lleva.
+         */
+        $ahora = now();
+        $rango = $persona->rangoDeEdadEn($ahora);
+        $edad = $persona->edadEn($ahora);
+        $sinLey = $rango instanceof RangoEdad
+            && $rango->tieneDescuentoLegal()
+            && ! $cuenta->convenio->aplicaDescuentoLegal();
+
         return [
-            'nombre'      => $persona->nombreCompleto(),
-            'expediente'  => $encuentro->expediente->numero,
-            'ingreso'     => $encuentro->abierto_en->format('d/m/Y H:i'),
-            'desde'       => $encuentro->abierto_en->diffForHumans(),
-            'tipo'        => $encuentro->tipo->etiqueta(),
-            'servicio'    => $encuentro->servicio_id === null ? '' : $encuentro->servicio->nombre,
-            'pagador'     => $cuenta->convenio->nombre,
-            'total'       => $cuenta->saldo()->formateado(),
-            'paciente'    => $cuenta->saldoDelPaciente()->formateado(),
-            'aseguradora' => $cuenta->saldoDeLaAseguradora()->formateado(),
-            'lineas'      => (string) $cuenta->lineas,
-            'estado'      => $cuenta->estado->etiqueta(),
+            'nombre'       => $persona->nombreCompleto(),
+            'expediente'   => $encuentro->expediente->numero,
+            'ingreso'      => $encuentro->abierto_en->format('d/m/Y H:i'),
+            'desde'        => $encuentro->abierto_en->diffForHumans(),
+            'tipo'         => $encuentro->tipo->etiqueta(),
+            'servicio'     => $encuentro->servicio_id === null ? '' : $encuentro->servicio->nombre,
+            'pagador'      => $cuenta->convenio->nombre,
+            'total'        => $cuenta->saldo()->formateado(),
+            'paciente'     => $cuenta->saldoDelPaciente()->formateado(),
+            'aseguradora'  => $cuenta->saldoDeLaAseguradora()->formateado(),
+            'lineas'       => (string) $cuenta->lineas,
+            'estado'       => $cuenta->estado->etiqueta(),
+            'rango'        => $rango instanceof RangoEdad ? $rango->sigla() : '',
+            'rango_color'  => $rango instanceof RangoEdad && ! $sinLey ? $rango->color() : 'gray',
+            'rango_titulo' => $rango instanceof RangoEdad && $edad !== null
+                ? $rango->etiqueta().' · '.$edad.' años'.($persona->fechaNacimientoEsExacta() ? '' : ' (edad estimada)')
+                    .($sinLey ? ' · '.$cuenta->convenio->nombre.' no aplica el descuento de ley' : '')
+                : '',
         ];
     }
 

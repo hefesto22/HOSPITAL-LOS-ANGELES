@@ -41,18 +41,26 @@ enum BaseDelDescuentoLegal: string
     case SobreElTotalFacturado = 'sobre_el_total_facturado';
 
     /**
-     * Este convenio no aplica el descuento porque su propio esquema ya
-     * contempla el beneficio, o porque la cobertura es total y no hay
-     * monto del paciente sobre el cual calcularlo.
+     * Este pagador no acepta el descuento del Art. 30.
+     *
+     * Es la que llevan las aseguradoras privadas por decisión del
+     * hospital (9-oct-2026): la mayoría no asegura a esa población, y
+     * con la que sí, la cuenta se cobra sin el descuento de ley.
+     *
+     * ⚠️ El adulto mayor no queda peor que el joven del mismo seguro: el
+     * hospital puede darle por su cuenta lo que la ley no le dio, hasta
+     * el mismo techo que tendría con ella —ver
+     * `PoliticaDeDescuentoComercial::topeParaLaLinea()`—. Pero eso es
+     * descuento del hospital, con motivo escrito; no se aplica solo.
      */
     case NoAplica = 'no_aplica';
 
     public function etiqueta(): string
     {
         return match ($this) {
-            self::SobreLoQuePagaElPaciente => 'Sobre lo que paga el paciente',
-            self::SobreElTotalFacturado    => 'Sobre el total facturado',
-            self::NoAplica                 => 'No aplica en este convenio',
+            self::SobreLoQuePagaElPaciente => 'Sí, solo sobre lo que paga el paciente',
+            self::SobreElTotalFacturado    => 'Sí, sobre el total de la factura',
+            self::NoAplica                 => 'No lo acepta',
         };
     }
 
@@ -62,12 +70,14 @@ enum BaseDelDescuentoLegal: string
             self::SobreLoQuePagaElPaciente => 'El descuento se calcula solo sobre el deducible, '
                 .'coaseguro o copago que el paciente desembolsa. Lo que cubre el pagador queda '
                 .'fuera de la base.',
-            self::SobreElTotalFacturado => 'El descuento se calcula sobre el total de la '
-                .'factura, sin importar quién la paga. Es la lectura más literal del artículo '
-                .'y también la que más discute el pagador.',
-            self::NoAplica => 'Este convenio no aplica el descuento del Art. 30, sea porque su '
-                .'propio esquema ya contempla el beneficio o porque la cobertura es total y no '
-                .'queda monto del paciente sobre el cual calcularlo.',
+            self::SobreElTotalFacturado => 'Cada línea lleva el porcentaje del Art. 30 que le toca '
+                .'según lo que es —laboratorio, medicamento, hospitalización— sobre su valor entero, '
+                .'y lo que aprueba el pagador se resta después. Es lo del Hospital Militar: de una '
+                .'cuenta de L 10,000 al 25 % quedan L 7,500, el Militar paga lo aprobado y el '
+                .'paciente el resto.',
+            self::NoAplica => 'La cuenta se cobra sin el descuento de tercera y cuarta edad. Es lo '
+                .'de las aseguradoras privadas. Si el hospital quiere, le puede dar al adulto mayor '
+                .'su propio descuento —con motivo— hasta el mismo techo que tendría con la ley.',
         };
     }
 

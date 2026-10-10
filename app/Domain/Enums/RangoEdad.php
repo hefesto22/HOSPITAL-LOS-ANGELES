@@ -117,6 +117,20 @@ enum RangoEdad: string
     }
 
     /**
+     * La sigla para donde la etiqueta no cabe: la tarjeta de la cuenta,
+     * una columna angosta, una etiqueta impresa. Se lee de un vistazo
+     * junto al nombre y dice cómo se le va a cobrar a este paciente.
+     */
+    public function sigla(): string
+    {
+        return match ($this) {
+            self::Normal  => 'N',
+            self::Tercera => '3R',
+            self::Cuarta  => '4R',
+        };
+    }
+
+    /**
      * ¿Este rango tiene derecho a descuento legal?
      *
      * Responde SÍ o NO. Cuánto es, lo resuelve el tarifario contra el

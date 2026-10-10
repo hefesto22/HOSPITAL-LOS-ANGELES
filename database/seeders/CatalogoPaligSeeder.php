@@ -296,11 +296,18 @@ class CatalogoPaligSeeder extends Seeder
         $convenio = Convenio::query()->updateOrCreate(
             ['codigo' => 'PALIG'],
             [
-                'nombre'               => 'PAN-AMERICAN LIFE INSURANCE GROUP',
-                'tipo'                 => TipoConvenio::AseguradoraPrivada,
-                'base_descuento_legal' => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
-                'fundamento_descuento' => 'El descuento del Art. 30 se aplica sobre el deducible y el '
-                    .'coaseguro que desembolsa el paciente, que es lo que él paga de su bolsillo.',
+                'nombre' => 'PAN-AMERICAN LIFE INSURANCE GROUP',
+                'tipo'   => TipoConvenio::AseguradoraPrivada,
+                /*
+                 * 🔴 Las aseguradoras NO aplican el descuento de tercera y
+                 * cuarta edad (decisión del hospital, 9-oct-2026). Antes
+                 * PALIG lo calculaba sobre lo que paga el paciente.
+                 */
+                'base_descuento_legal' => BaseDelDescuentoLegal::NoAplica,
+                'fundamento_descuento' => 'Decisión del hospital comunicada el 9-oct-2026: las aseguradoras '
+                    .'privadas no aplican el descuento de tercera y cuarta edad del Art. 30, porque en su '
+                    .'mayoría no aseguran a esa población. Reemplaza el criterio del 2-sep-2026 (sobre lo que '
+                    .'paga el paciente). Pendiente la opinión del contador (consulta del 9-sep-2026).',
                 'requiere_autorizacion' => true,
                 'dias_credito'          => 30,
                 'vigencia_desde'        => self::VIGENCIA_DESDE,

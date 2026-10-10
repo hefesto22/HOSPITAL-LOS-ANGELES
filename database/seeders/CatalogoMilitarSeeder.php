@@ -87,9 +87,12 @@ use RuntimeException;
  *     autorice nada el paciente aparece debiendo todo —visible y
  *     corregible— en vez de que el Militar aparezca cubriendo lo que no
  *     aprobó.
- *   · `base_descuento_legal` quedó igual que el de PALIG (sobre el total
- *     facturado). Si el criterio del Militar es otro, se cambia en
- *     Seguros y convenios; el cálculo lo sigue.
+ *   · `base_descuento_legal` es «sobre el total facturado» (decisión del
+ *     hospital, 9-oct-2026): el descuento de tercera y cuarta edad cae
+ *     sobre el valor entero de cada línea y lo aprobado se resta después.
+ *     Antes decía «sobre lo que paga el paciente» y daba el mismo número
+ *     solo porque la cobertura es 0 %: el día que alguien le cargara un
+ *     porcentaje, el descuento se habría achicado sin aviso.
  *   · Falta el R.T.N. del Hospital Militar. Sin él la factura sale con
  *     un guión donde va el número del cliente. Es dato, no código.
  */
@@ -262,7 +265,16 @@ class CatalogoMilitarSeeder extends Seeder
      *
      * Aparte por volumen: todos son estudio de laboratorio y caen bajo
      * el mismo numeral del Art. 30, así que solo hacen falta el nombre
-     * y el precio. El código lo pone `codigoLibre('LAB')`.
+     * y el precio.
+     *
+     * El código lo pone `codigoLibre('LABEXT')`, no `LAB`: la lista del
+     * propio hospital («Servicios Médicos Generales y Lab», septiembre
+     * de 2026) los trae en la hoja de laboratorios EXTERNOS —se toma la
+     * muestra acá y se manda afuera— y `CategoriasDelCatalogoSeeder`
+     * los reparte a LABORATORIO EXTERNO por ese prefijo. Los cuatro
+     * nombres que llevan «(LAB. EXTERNO)» o que acá se completan son
+     * los que `CatalogoLaboratorioHlaSeeder` canoniza; se escriben igual
+     * en los dos archivos para que ninguno cree un duplicado del otro.
      *
      * @var list<array{0: string, 1: numeric-string}>
      */
@@ -270,14 +282,14 @@ class CatalogoMilitarSeeder extends Seeder
         ['TIEMPO DE SANGRADO', '150.00'],
         ['TIEMPO DE COAGULACION', '150.00'],
         ['TIEMPO DE PROTOMBINA', '210.00'],
-        ['TIEMPO PARCIAL DE', '210.00'],
+        ['TIEMPO PARCIAL DE TROMBOPLASTINA', '210.00'],  // la foto lo traía truncado como «TIEMPO PARCIAL DE»
         ['FROTIS DE SANGRE PERIFERICA', '350.00'],
         ['RECUENTO DE PLAQUETAS EN FROTIS', '300.00'],
         ['ANTI PEPTIDO CICLICO', '2100.00'],
         ['CURVA DE TOLERANCIA', '700.00'],
         ['TESTOSTERONA', '800.00'],
-        ['ANTIGENOS FEBRILES', '700.00'],
-        ['HELICOBACTER PYLORI EN HECES', '650.00'],
+        ['ANTIGENOS FEBRILES (LAB. EXTERNO)', '700.00'],  // el hospital también lo hace adentro, a otro precio
+        ['HELICOBACTER PYLORI EN HECES (LAB. EXTERNO)', '650.00'],  // ídem
         ['CRUCE SANGUINEO', '3500.00'],
         ['UROCULTIVO', '600.00'],
         ['TRANSFUSION 1 UNIDAD DE SANGRE', '8000.00'],
@@ -331,8 +343,8 @@ class CatalogoMilitarSeeder extends Seeder
         ['RECUENTO DE RETICULOCITOS', '400.00'],
         ['NIVELES DE HIERRO', '1050.00'],
         ['SUPERFICIE HEPATITIS B', '500.00'],
-        ['AC. HEPATITIS B', '450.00'],
-        ['HEPATITIS C', '500.00'],
+        ['ANTICUERPO HEPATITIS B (LAB. EXTERNO)', '450.00'],  // la foto decía «AC. HEPATITIS B»; ídem
+        ['HEPATITIS C', '500.00'],  // ⚠️ en esa posición la lista del hospital trae «ALCOHOLEMIA EN SANGRE» a 250. Confirmar
         ['PROLACTINA', '750.00'],
         ['ANTIGENO PROSTATICO LIBRE', '1400.00'],
         ['CITOLOGIA DE HECES', '750.00'],
@@ -345,7 +357,7 @@ class CatalogoMilitarSeeder extends Seeder
         ['GLOBULINA FIJADORA DE HORMONAS', '1650.00'],
         ['ESTRADIOL', '1700.00'],
         ['HORMONA ADENOCORTICOTROPICA', '3000.00'],
-        ['ELECTROLITOS EN ORINA', '6000.00'],
+        ['ELECTROLITOS EN ORINA', '6000.00'],  // ⚠️ la lista del hospital dice 750. Uno de los dos leyó mal; confirmar
         ['HORMONA LUTEINIZANTE', '1200.00'],
         ['CA 19-9', '1600.00'],
         ['ALFA FETO PROTEINA', '1100.00'],
@@ -414,7 +426,7 @@ class CatalogoMilitarSeeder extends Seeder
 
         foreach (self::OTROS_LABORATORIOS as [$nombre, $precio]) {
             $item = $this->itemDeLaPropuesta(
-                'LAB',
+                'LABEXT',
                 $nombre,
                 TipoItem::EstudioLaboratorio,
                 CategoriaLegalDeDescuento::RadiologiaYLaboratorio,
@@ -456,11 +468,12 @@ class CatalogoMilitarSeeder extends Seeder
             [
                 'nombre'               => 'HOSPITAL MILITAR',
                 'tipo'                 => TipoConvenio::Institucional,
-                'base_descuento_legal' => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
-                'fundamento_descuento' => 'El descuento del Art. 30 se aplica sobre lo que desembolsa el '
-                    .'paciente, no sobre el total: de una cuenta de L 1,000 con el 50 % autorizado, el '
-                    .'descuento cae sobre los L 500 que paga él. Criterio de dirección, 2-sep-2026, el '
-                    .'mismo con el que quedó cargado PALIG.',
+                'base_descuento_legal' => BaseDelDescuentoLegal::SobreElTotalFacturado,
+                'fundamento_descuento' => 'Decisión del hospital comunicada el 9-oct-2026: con el Hospital '
+                    .'Militar el descuento de tercera y cuarta edad se aplica sobre el total de la factura, '
+                    .'cada línea con el porcentaje del Art. 30 de su categoría. De una cuenta de L 10,000 en '
+                    .'servicio hospitalario a un paciente de 68 años (25 %) quedan L 7,500; si el Militar '
+                    .'aprobó L 6,000, el paciente paga L 1,500.',
                 'requiere_autorizacion' => true,
                 'dias_credito'          => 30,
                 'vigencia_desde'        => self::VIGENCIA_DESDE,

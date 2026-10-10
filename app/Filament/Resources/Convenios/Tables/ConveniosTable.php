@@ -103,7 +103,7 @@ final class ConveniosTable
                     ->tooltip(fn (Convenio $record, mixed $state): string => self::explicacionDeLosPrecios($record, $state)),
 
                 TextColumn::make('base_descuento_legal')
-                    ->label('Descuento Art. 30')
+                    ->label('3.ª y 4.ª edad')
                     ->badge()
                     ->color(fn (BaseDelDescuentoLegal $state): string => $state->aplica() ? 'success' : 'gray')
                     ->formatStateUsing(fn (BaseDelDescuentoLegal $state): string => $state->etiqueta())

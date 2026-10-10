@@ -259,6 +259,19 @@ Por eso el diseño soporta las tres variantes **sin migración**, con un campo p
 
 Va como pregunta **#16** en `dominio.md`.
 
+### 5.2 Decisión del hospital (9-oct-2026)
+
+| Pagador | Base del descuento de 3.ª y 4.ª edad | Ejemplo: L 10,000 de servicio hospitalario, paciente de 68 años (25 %) |
+|---|---|---|
+| Particular (`CONTADO`) | Sobre lo que paga el paciente — que es el total | Descuento 2,500 → paga 7,500 |
+| **Hospital Militar** | **Sobre el total facturado** | Descuento 2,500 → total 7,500 → el Militar paga lo aprobado (6,000) y el paciente el resto (1,500) |
+| **Aseguradoras privadas** (PALIG y las que se agreguen) | **No aplica** | Sin descuento de ley → total 10,000, repartido según la cobertura |
+
+- **"Sobre el total" es línea por línea**, cada una con el porcentaje del Art. 30 de su categoría (laboratorio 30 %, medicamento 25 %, hospitalario 25 % en la tercera edad). La suma es el descuento sobre la factura. Nunca un porcentaje parejo sobre el total: eso regalaría descuento en lo que la ley rebaja menos.
+- **Se configura por convenio** en Seguros y convenios → «¿Este pagador acepta el descuento de tercera y cuarta edad?». Una aseguradora nueva declara la suya al darse de alta; no hay default.
+- **El adulto mayor no queda peor que el joven del mismo seguro.** Con un pagador que no aplica el Art. 30, el tope del descuento del hospital suma lo que la ley no le dio: en medicamentos, la tercera edad puede llegar a **35 %** y la cuarta a **40 %**, contra **30 %** de un joven. Es descuento del hospital —con motivo escrito—, no se aplica solo. Ver `PoliticaDeDescuentoComercial::topeParaLaLinea()`.
+- ⚠️ **Riesgo que se asume a sabiendas:** lo de §5.1 sigue en pie —el Art. 30 obliga al prestador, no al pagador—. El adulto mayor asegurado paga su coaseguro sin descuento de ley. La defensa ante un reclamo al 115 es el fundamento escrito en el convenio, con fecha y autor. La consulta al contador del 9-sep-2026 sigue sin respuesta.
+
 ---
 
 ## 6. Estructura operativa mencionada
@@ -281,7 +294,7 @@ Anotado para el bloque 1 (Cimientos), pendiente de detallar:
 |---|---|---|---|
 | 1 | Confirmar los porcentajes de descuento (§4.4). Definen el precio de lista de todo el catálogo (§4.5) | Motor de precios | ✅ **Verificado 18-ago-2026** contra el Art. 30 del Decreto 199-2006. Queda la revisión de un abogado sobre la consolidación completa |
 | 2 | Definir el **margen objetivo por categoría** de producto — 120 % es el de medicamentos | Carga inicial | Abierto |
-| 3 | ¿El descuento legal aplica con seguro? (§5.1) | Facturación | Abierto — la ley calla; requiere criterio jurídico |
+| 3 | ¿El descuento legal aplica con seguro? (§5.1) | Facturación | **Decidido por el hospital 9-oct-2026** (§5.2): aseguradoras no aplica, Militar sobre el total. Sigue pendiente el criterio jurídico |
 | 4 | ISV en compras exentas → costo (pendiente #4 de `dominio.md`) | Costeo | Abierto — contador |
 | 5 | Tarifarios reales de las aseguradoras (pendiente #10 de `dominio.md`) | Carga inicial | Abierto |
 | 6 | Confirmar §2.6: costo por producto, no por lote | Kardex | Abierto |
