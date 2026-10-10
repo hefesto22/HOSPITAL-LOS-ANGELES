@@ -391,13 +391,21 @@ class CuentasAbiertas extends Page
              * Columnas nombradas y no `with('encuentro.persona')` a
              * secas: la tarjeta necesita seis campos y traer la persona
              * entera son cuarenta columnas por fila (§12).
+             *
+             * ⚠️ La contracara: lo que la tarjeta lee y no está en esta
+             * lista llega NULO, sin error. Así se cayó /cuentas el
+             * 10-oct-2026 —`base_descuento_legal` faltaba y la sigla
+             * 3R/4R le preguntaba al convenio si aplica el Art. 30— y
+             * así decía «(edad estimada)» de toda fecha exacta, porque
+             * faltaba `precision_fecha_nacimiento`. Columna que se lea
+             * en `resumenDe()`, columna que se agrega acá.
              */
             ->with([
                 'encuentro:id,numero,tipo,estado,abierto_en,persona_id,expediente_id,servicio_id',
-                'encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido,apellido_casada,fecha_nacimiento,sexo_biologico,es_nn',
+                'encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido,apellido_casada,fecha_nacimiento,precision_fecha_nacimiento,sexo_biologico,es_nn',
                 'encuentro.expediente:id,numero',
                 'encuentro.servicio:id,nombre',
-                'convenio:id,codigo,nombre,tipo',
+                'convenio:id,codigo,nombre,tipo,base_descuento_legal',
             ])
             ->vivas()
             /*
