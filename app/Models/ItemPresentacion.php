@@ -29,6 +29,7 @@ use RuntimeException;
  * @property string $unidades_por_presentacion
  * @property string|null $codigo_barras
  * @property bool $es_predeterminada
+ * @property bool $se_vende_entera
  * @property CarbonInterface $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
  */
@@ -60,6 +61,7 @@ class ItemPresentacion extends Model
         'unidades_por_presentacion',
         'codigo_barras',
         'es_predeterminada',
+        'se_vende_entera',
         'vigencia_desde',
         'vigencia_hasta',
     ];
@@ -162,6 +164,7 @@ class ItemPresentacion extends Model
     {
         return [
             'es_predeterminada' => 'boolean',
+            'se_vende_entera'   => 'boolean',
             'vigencia_desde'    => 'date',
             'vigencia_hasta'    => 'date',
         ];

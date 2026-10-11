@@ -74,6 +74,14 @@ final class FacturaException extends SihlaException
         );
     }
 
+    public static function faltaElRtnDelPagador(string $pagador): self
+    {
+        return new self(
+            "Con seguro, la factura sale con el RTN de {$pagador}, y no está cargado. "
+            .'Cargalo en Seguros y convenios y volvé a emitir: es una sola vez.'
+        );
+    }
+
     public static function faltaElTipoDeDocumento(): self
     {
         return new self('Decí qué documento es: RTN, identidad o pasaporte. El papel imprime la etiqueta que corresponde.');

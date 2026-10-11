@@ -17,6 +17,7 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Utilities\Get;
@@ -240,6 +241,35 @@ class PresentacionesRelationManager extends RelationManager
 
                 /*
                  * ─────────────────────────────────────────────────────
+                 * 🔴 ¿ESTE ENVASE TAMBIÉN SE VENDE ENTERO?
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Regla de Mauricio (10-oct-2026): la caja de tabletas se
+                 * despacha por tableta o entera, y lo decide cada envase
+                 * —la caja de 100 sí, el blíster de 10 capaz que no—.
+                 *
+                 * Prendido, al cobrar aparece este envase al lado de la
+                 * unidad suelta, y elegirlo descuenta TODO lo que trae y
+                 * deja el renglón diciendo «1 CAJA». Apagado, el envase
+                 * solo dice de dónde se sacó y no multiplica nada.
+                 *
+                 * ⚠️ Apagado por defecto. Es un botón que multiplica por
+                 * cien en la pantalla de cobro: se prende a conciencia,
+                 * una presentación a la vez, por quien conoce el
+                 * producto.
+                 */
+                Toggle::make('se_vende_entera')
+                    ->label(fn (Get $get): string => $this->etiquetaDeVentaEntera($get))
+                    ->columnSpanFull()
+                    ->default(false)
+                    ->visible(fn (): bool => $this->seAlmacena())
+                    ->helperText(
+                        'Prendido, al cobrar se elige entre la unidad suelta y este envase entero, y el '
+                        .'envase descuenta todo lo que trae. Apagado, solo dice de qué envase se sacó.'
+                    ),
+
+                /*
+                 * ─────────────────────────────────────────────────────
                  * ESCANEAR EL DE LA CAJA, O GENERAR EL DEL HOSPITAL
                  * ─────────────────────────────────────────────────────
                  *
@@ -411,6 +441,19 @@ class PresentacionesRelationManager extends RelationManager
                     ->trueColor('warning')
                     ->falseColor('gray')
                     ->tooltip('La que propone el formulario de compra.'),
+
+                IconColumn::make('se_vende_entera')
+                    ->label('Entera')
+                    ->alignCenter()
+                    ->visible(fn (): bool => $this->seAlmacena())
+                    ->boolean()
+                    ->trueIcon('heroicon-o-cube')
+                    ->falseIcon('heroicon-o-minus-small')
+                    ->trueColor('success')
+                    ->falseColor('gray')
+                    ->tooltip(fn (ItemPresentacion $record): string => $record->se_vende_entera
+                        ? 'Al cobrar se puede vender entera.'
+                        : 'Solo dice de dónde se sacó: se cobra por unidad.'),
 
                 /*
                  * Se ve de un vistazo cuáles quedaron sin código: son las
@@ -778,6 +821,34 @@ class PresentacionesRelationManager extends RelationManager
         return new HtmlString(
             '<span style="font-size:.9375rem;font-weight:600">'.e($frase).'</span>'
             .'<span style="font-size:.875rem;color:#6b7280"> — así entra al kardex.</span>'
+        );
+    }
+
+    /**
+     * «También se vende sin abrir (1 CAJA = 100 TAB de una)», con lo que
+     * ya está contestado arriba. La cifra va en el rótulo y no en la
+     * ayuda: es lo que se va a descontar del estante con un solo botón,
+     * y tiene que leerse antes de prender el interruptor.
+     *
+     * «Sin abrir» y no «la caja entera»: el envase puede ser una caja o
+     * un frasco, y el rótulo no puede salir «la FRASCO entera».
+     */
+    private function etiquetaDeVentaEntera(Get $get): string
+    {
+        $unidadId = $get('unidad_id');
+        $contenido = $get('unidades_por_presentacion');
+
+        $envase = is_numeric($unidadId) ? Unidad::query()->find((int) $unidadId) : null;
+
+        if (! $envase instanceof Unidad || ! is_numeric($contenido)) {
+            return 'También se vende sin abrir, el envase entero';
+        }
+
+        return sprintf(
+            'También se vende sin abrir (1 %s = %s %s de una)',
+            $envase->codigo,
+            ItemPresentacion::sinCerosDeMas((string) $contenido),
+            $this->codigoDeDispensacion(),
         );
     }
 

@@ -9,7 +9,6 @@ use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\FormaDePago;
 use App\Domain\Enums\FormaDeSaldo;
-use App\Domain\Enums\MagnitudDeMedida;
 use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\QuienPresta;
@@ -24,6 +23,7 @@ use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
+use App\Domain\Exceptions\FacturaException;
 use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\Exceptions\SihlaException;
@@ -61,6 +61,7 @@ use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
+use App\Services\FormasDeCobro;
 use App\Services\LecturaEnEnvases;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ReceptorDeAbono;
@@ -72,7 +73,6 @@ use App\Services\ResolutorDeHonorario;
 use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
-use App\Support\NormalizadorDeTexto;
 use App\Support\NumeroDeFormulario;
 use App\Support\UsuarioAutenticado;
 use BackedEnum;
@@ -87,12 +87,16 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\ToggleButtons;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
+use Filament\Support\Enums\Size;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
@@ -161,22 +165,16 @@ class CuentasAbiertas extends Page
      * cada tecla sería una consulta sobre pacientes (§13.2).
      */
     /**
-     * Las claves del selector de unidad de cobro. Constantes y no strings
-     * sueltos porque viajan entre el formulario, la conversión y la vista.
+     * Las claves de «¿Cómo se le agrega?». Son las de `FormasDeCobro`,
+     * que es quien decide qué significa cada una; acá solo se nombran
+     * más corto porque viajan entre el formulario, la conversión y la
+     * vista.
      */
-    private const POR_UNIDAD = 'dispensacion';
+    private const POR_UNIDAD = FormasDeCobro::SUELTA;
 
-    private const POR_FRACCION = 'fraccion';
+    private const POR_FRACCION = FormasDeCobro::FRACCION;
 
-    private const POR_PRESENTACION = 'presentacion:';
-
-    /**
-     * Lo que separa el ítem de la forma en que se entrega dentro del
-     * valor del selector: «705|presentacion:12» es «ese jarabe, en el
-     * frasco de 60». Un producto con una sola forma viaja pelado —«705»—,
-     * que es como viajaba antes de que el selector se abriera por envase.
-     */
-    private const SEPARADOR_DE_FORMA = '|';
+    private const POR_PRESENTACION = FormasDeCobro::ENVASE;
 
     public string $busqueda = '';
 
@@ -238,7 +236,7 @@ class CuentasAbiertas extends Page
      * supositorio, y cuál se le dio al paciente lo sabe quien lo dio.
      *
      * Así que el escaneo no elige: acota. Mientras esto tenga un valor,
-     * «¿Qué se le agrega?» ofrece solo los productos que lo llevan.
+     * debajo del buscador aparecen solo los productos que lo llevan.
      *
      * ⚠️ Se limpia en `fillForm`, que corre al abrir el modal Y en cada
      * remontaje después de agregar una línea. Un filtro que sobrevive a
@@ -257,12 +255,50 @@ class CuentasAbiertas extends Page
     public ?int $cuentaDelFormulario = null;
 
     /**
-     * Memoria por pintada de los productos de ese principio, ya abiertos
-     * por forma de entrega.
+     * De qué envase se leyó el código, mientras dure esta línea.
      *
-     * @var array<int, array<int|string, string>>
+     * El código de barras vive en la presentación, así que pasar la
+     * pistola por una caja de 100 dice QUÉ producto es y DE DÓNDE se
+     * saca, pero no cómo se vende: eso lo elige quien cobra en «¿Cómo se
+     * le agrega?». Si elige la tableta suelta, la caja queda en el cargo
+     * como origen —que es el dato que el 3-sep-2026 pidió no perder—.
+     *
+     * ⚠️ Se limpia en cada escaneo y en `fillForm`, por lo mismo que el
+     * principio activo: un origen que sobrevive a la línea siguiente le
+     * pega la caja de un producto al cargo de otro.
      */
-    private array $productosPorPrincipio = [];
+    public ?int $presentacionEscaneada = null;
+
+    /**
+     * Lo que el buscador tiene que decir debajo del campo, cuando lo
+     * escrito no llevó a nada: «no hay nada con…», «esa etiqueta de
+     * gaveta no existe».
+     *
+     * Va debajo del campo y no en una notificación: el campo busca
+     * mientras se escribe, y una notificación por cada pausa del teclado
+     * es una pantalla que grita mientras alguien todavía está tecleando.
+     */
+    public ?string $avisoDelBuscador = null;
+
+    /**
+     * Memoria por pintada de lo que encontró el buscador.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $resultadosDelBuscador = [];
+
+    /**
+     * Memoria por pintada de los ítems leídos.
+     *
+     * 🔴 Cada campo del formulario pregunta «¿qué ítem es?» para decidir
+     * si se muestra —la cantidad, el estante, el precio del honorario, el
+     * médico, la forma, el resumen—, y cada pregunta era un `find()`. Son
+     * diez consultas iguales por pintada, en el modal que se repinta con
+     * cada pausa del teclado (§13.2).
+     *
+     * @var array<int, Item|null>
+     */
+    private array $itemsPorId = [];
 
     /**
      * Memoria por pintada de los estantes de cada ítem, con cuánto hay.
@@ -750,50 +786,94 @@ class CuentasAbiertas extends Page
             ->schema([
                 Section::make()
                     /*
-                     * Doce columnas y no cuatro: con cuatro, los cuatro
-                     * campos no entran en una fila y el almacén cae solo
-                     * abajo, desalineado. Con doce se reparten 5-3-2-2 y
-                     * la fila se lee de un vistazo.
+                     * Doce columnas: la cantidad, el estante y el
+                     * préstamo se reparten 3-5-4 en una sola fila, y lo
+                     * demás va a lo ancho.
                      */
                     ->columns(12)
                     ->schema([
                         /*
-                         * ⚠️ `dehydrated()` en TRUE, al revés que en la
-                         * pantalla de conteo.
+                         * ─────────────────────────────────────────────
+                         * 🔴 UN SOLO CAMPO: EL CÓDIGO O EL NOMBRE
+                         * ─────────────────────────────────────────────
                          *
-                         * Una pistola de código de barras teclea el código
-                         * y manda Enter de una. Ese Enter envía el
-                         * formulario ANTES de que el `afterStateUpdated`
-                         * termine de resolver el ítem, así que si el
+                         * Regla de Mauricio (10-oct-2026): «solo debería
+                         * estar lo de escanea el código o escribe el
+                         * nombre, el resto no debe». Había un segundo
+                         * desplegable abajo para el nombre, y eran dos
+                         * lugares para decir lo mismo: se escribía
+                         * «acetamin» arriba y había que volver a
+                         * escribirlo abajo.
+                         *
+                         * Ahora la pistola escribe un código y elige; una
+                         * persona escribe un nombre y los resultados
+                         * aparecen debajo, en la misma línea. Lo demás
+                         * —cuánto, de dónde, cómo— aparece recién cuando
+                         * ya se sabe QUÉ.
+                         *
+                         * ⚠️ `dehydrated()` en TRUE. La pistola teclea el
+                         * código y manda Enter de una, y ese Enter puede
+                         * llegar antes de que el ítem quede elegido: si el
                          * escaneo no viaja con los datos, el envío llega
-                         * sin nada y no pasa nada. Viajando, el servicio
-                         * lo resuelve como respaldo y escanear + Enter
-                         * carga la línea sin tocar el mouse.
+                         * sin nada. Viajando, `agregar()` lo resuelve como
+                         * respaldo y escanear + Enter carga la línea sin
+                         * tocar el mouse.
+                         *
+                         * ⚠️ Con pausa de 400 ms: busca cuando se deja de
+                         * teclear, no en cada letra. Cada búsqueda es una
+                         * consulta al catálogo (§13.2).
                          */
                         BarcodeInput::make('escaneo')
                             ->label('Escaneá el código o escribí el nombre')
-                            ->live()
+                            ->live(debounce: 400)
                             ->autofocus()
                             ->columnSpanFull()
-                            ->helperText(
-                                'Pistola, cámara o teclado. El código del envase carga el producto; el de '
-                                .'la gaveta —PA-0001— acota la lista al principio activo; y si escribís un '
-                                .'nombre, busca en el catálogo.'
-                            )
+                            ->placeholder('Pistola, cámara, o escribí tres letras del nombre')
                             ->afterStateUpdated(fn (mixed $state, Set $set) => $this->resolverEscaneo($state, $set)),
 
                         /*
+                         * Lo que el buscador no pudo resolver, dicho
+                         * debajo del campo y no en una notificación que
+                         * se va sola.
+                         */
+                        Placeholder::make('aviso_del_buscador')
+                            ->hiddenLabel()
+                            ->columnSpanFull()
+                            ->visible(fn (): bool => $this->avisoDelBuscador !== null)
+                            ->content(fn (): HtmlString => new HtmlString(
+                                '<span style="font-size:.8125rem;color:rgb(248 113 113)">'
+                                .e((string) $this->avisoDelBuscador).'</span>'
+                            )),
+
+                        /*
                          * ─────────────────────────────────────────────
-                         * LO QUE ENCONTRÓ, EN UNA LÍNEA
+                         * LOS RESULTADOS, DEBAJO DEL MISMO CAMPO
                          * ─────────────────────────────────────────────
                          *
-                         * Después de pasar la pistola, el único lugar
-                         * donde se veía qué producto quedó elegido era el
-                         * desplegable de abajo, y una notificación que se
-                         * va sola a los pocos segundos. Con el paciente
-                         * enfrente eso se lee mal: acá queda fijo el
-                         * nombre, la presentación de la que se leyó y por
-                         * qué unidad se está cobrando.
+                         * Un botón por producto: tocarlo lo elige. Se
+                         * quedan a la vista después de elegir, con el
+                         * elegido marcado, para poder cambiar de idea sin
+                         * volver a escribir.
+                         *
+                         * Productos y no formas: «ACETAMINOFEN 500 MG
+                         * TABLETA» una vez, aunque se venda por tableta y
+                         * por caja. Cómo se le agrega se pregunta después,
+                         * con el producto ya elegido.
+                         */
+                        Actions::make($this->botonesDelBuscador())
+                            ->key('resultados_del_buscador')
+                            ->columnSpanFull(),
+
+                        Hidden::make('item_id'),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * LO QUE QUEDÓ ELEGIDO, EN UNA LÍNEA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Fijo y no en una notificación que se va sola a
+                         * los pocos segundos: el nombre, de qué envase se
+                         * leyó el código y el código del catálogo.
                          */
                         Placeholder::make('lo_encontrado')
                             ->hiddenLabel()
@@ -801,108 +881,51 @@ class CuentasAbiertas extends Page
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
                             ->content(fn (Get $get): HtmlString => $this->resumenDeLoElegido($get)),
 
-                        Select::make('item_id')
-                            ->label('¿Qué se le agrega?')
-                            /*
-                             * 🔴 Obligatorio también cuando lo escaneado
-                             * fue una gaveta.
-                             *
-                             * El código de un principio activo NO resuelve
-                             * un ítem —esa es toda su gracia: son varios—,
-                             * así que sin esto el Enter de la pistola
-                             * mandaría el formulario con el selector vacío
-                             * y el respaldo de `agregar()` no encontraría
-                             * nada. Terminaba en «falta decir qué se
-                             * agrega» después de apretar, en vez de antes.
-                             */
-                            ->required(fn (Get $get): bool => blank($get('escaneo'))
-                                || $this->principioEscaneado !== null)
-                            ->searchable()
-                            ->native(false)
-                            ->live()
-                            /*
-                             * Se queda con las tres columnas que dejó
-                             * «Se cobra por»: ahora el renglón dice
-                             * producto Y envase, y en cuatro columnas se
-                             * partía en dos líneas.
-                             */
-                            ->columnSpan(7)
-                            /*
-                             * Con la gaveta escaneada la lista ya viene
-                             * puesta: se abre el desplegable y están los
-                             * tres o cuatro, sin teclear nada. Sin gaveta
-                             * queda vacía y manda la búsqueda de siempre.
-                             */
-                            ->options(fn (): array => $this->opcionesDelSelector())
-                            ->getSearchResultsUsing(fn (string $search): array => $this->resultadosDeBusqueda($search))
-                            /*
-                             * ⚠️ El valor elegido se rotula con la MISMA
-                             * frase que la opción —«ACETAMINOFEN JARABE —
-                             * FRASCO 60 ML»—, no solo con el nombre del
-                             * producto. Con el envase adentro de esta
-                             * elección, mostrar nada más el nombre dejaba
-                             * el campo diciendo «ACETAMINOFEN JARABE» con
-                             * tres frascos distintos posibles y ninguna
-                             * forma de saber cuál quedó.
-                             */
-                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->etiquetaDeLoElegido($value))
-                            /*
-                             * 🔴 Un filtro que no se ve es una lista corta
-                             * que nadie entiende por qué está corta —y de
-                             * ahí sale «el sistema no tiene el producto»
-                             * cuando sí lo tiene. Se dice qué acotó la
-                             * lista, y se sale de ahí con un clic.
-                             */
-                            ->hint(fn (): ?string => $this->principioEscaneado === null
-                                ? null
-                                : 'Solo lo que lleva '.$this->nombreDelPrincipioEscaneado())
-                            ->hintAction(
-                                Action::make('quitar_filtro_de_principio')
-                                    ->label('Ver todo el catálogo')
-                                    ->icon(Heroicon::OutlinedXMark)
-                                    ->color('gray')
-                                    ->visible(fn (): bool => $this->principioEscaneado !== null)
-                                    ->action(function (Set $set): void {
-                                        $this->principioEscaneado = null;
-                                        $set('item_id', null);
-                                        $set('escaneo', null);
-                                    }),
-                            )
-                            ->placeholder(fn (): string => $this->principioEscaneado === null
-                                ? 'Escribí tres letras o el código'
-                                : 'Elegí en qué forma se le dio')
-                            /*
-                             * Elegir el producto elige también el estante
-                             * del que se va a sacar. Sin esto el campo de
-                             * abajo queda vacío y hay que abrirlo en cada
-                             * línea de una ronda de veinte.
-                             */
-                            ->afterStateUpdated(function (mixed $state, Set $set): void {
-                                $this->prepararLaLinea($state, $set);
-                            }),
-
                         /*
                          * ─────────────────────────────────────────────
-                         * 🔴 «SE COBRA POR» YA NO ES UN CAMPO
+                         * 🔴 ¿CÓMO SE LE AGREGA? — LO ELIGE QUIEN COBRA
                          * ─────────────────────────────────────────────
                          *
-                         * Eran dos desplegables encadenados para una sola
-                         * decisión: arriba «ACETAMINOFEN JARABE», abajo
-                         * «FRASCO 60 ML». Pero el producto no se entrega
-                         * en abstracto —se entrega un frasco de 60 o uno
-                         * de 120—, así que cada forma pasó a ser un
-                         * renglón del selector de arriba, con el nombre
-                         * adelante. Elegir ya es elegir el envase.
+                         * Regla de Mauricio (10-oct-2026): con la caja de
+                         * tabletas, quien cobra «escoge cómo se le va a
+                         * agregar, si la caja o tabletas».
                          *
-                         * La CLAVE sigue viajando en el formulario: de
-                         * ella dependen la conversión a unidad de
-                         * dispensación, cuántos frascos hay en cada
-                         * estante y la equivalencia que se lee antes de
-                         * apretar Agregar. Lo que se fue es el campo, no
-                         * el dato.
+                         * Solo aparece cuando hay algo que elegir: la
+                         * tableta suelta y, al lado, cada envase que el
+                         * catálogo marcó «también se vende sin abrir».
+                         * Con una sola forma no hay pregunta.
+                         *
+                         * ⚠️ SIN NADA MARCADO. Venir con «TABLETA» puesta
+                         * es apretar Agregar sin mirar y cobrar tabletas
+                         * cuando se entregó la caja; venir con la caja
+                         * puesta es cobrar cien cuando se entregaron dos.
+                         * Las dos equivocaciones son plata, así que la
+                         * respuesta la da la persona y el formulario no
+                         * deja seguir sin ella.
                          */
-                        Hidden::make('unidad_cobro')
-                            ->default(self::POR_UNIDAD),
+                        ToggleButtons::make('unidad_cobro')
+                            ->label('¿Cómo se le agrega?')
+                            ->inline()
+                            ->columnSpanFull()
+                            ->live()
+                            ->options(fn (Get $get): array => $this->unidadesDeCobro($this->itemDe($get('item_id'))))
+                            ->visible(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
+                            ->required(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
+                            ->validationMessages([
+                                'required' => 'Elegí cómo se le agrega: suelto o el envase sin abrir.',
+                            ])
+                            /*
+                             * Cuántas cajas hay en cada estante depende
+                             * de si se vende la caja o la tableta, así que
+                             * el estante se vuelve a sugerir con la forma
+                             * ya elegida.
+                             */
+                            ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
+                                $set('almacen_id', $this->estanteSugerido(
+                                    $this->itemDe($get('item_id')),
+                                    is_string($state) ? $state : null,
+                                )?->id);
+                            }),
 
                         TextInput::make('cantidad')
                             ->label('Cantidad')
@@ -911,26 +934,35 @@ class CuentasAbiertas extends Page
                             ->default(1)
                             ->minValue(0.0001)
                             ->step('0.0001')
-                            ->columnSpan(2)
+                            ->columnSpan(3)
                             ->live(onBlur: true)
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
+                            /*
+                             * Escondida también viaja: el Enter de la
+                             * pistola puede llegar antes de que el campo
+                             * se pinte, y sin esto la línea llegaba sin
+                             * cantidad.
+                             */
+                            ->dehydratedWhenHidden()
                             /*
                              * 🔴 La equivalencia, a la vista y en vivo.
                              *
                              * «1» escrito en una caja de cien tabletas y «1»
                              * escrito en una tableta son el mismo carácter y
                              * son L 900 de diferencia. Que la pantalla diga
-                             * «1 CAJA X 100 TABLETAS = 100 TABLETA» antes de
+                             * «1 CAJA X 100 TABLETAS = 100 TAB» antes de
                              * apretar Agregar es lo único que impide ese
                              * error, porque después ya está cobrado.
                              */
                             ->helperText(function (Get $get): ?string {
                                 $item = $this->itemDe($get('item_id'));
+                                $forma = $this->formaEnUso($get);
 
-                                if (! $item instanceof Item) {
+                                if (! $item instanceof Item || $forma === null) {
                                     return null;
                                 }
 
-                                return $this->equivalencia($item, $this->formaEnUso($get), $get('cantidad'));
+                                return $this->equivalencia($item, $forma, $get('cantidad'));
                             }),
 
                         /*
@@ -954,7 +986,7 @@ class CuentasAbiertas extends Page
                          * el caso normal nadie toca este campo.
                          */
                         /*
-                         * ⚠️ TRES COLUMNAS Y TEXTO DE UNA LÍNEA.
+                         * ⚠️ CINCO COLUMNAS Y TEXTO DE UNA LÍNEA.
                          *
                          * Con dos columnas y un párrafo de ayuda, el
                          * campo quedaba con el nombre partido en tres
@@ -968,7 +1000,8 @@ class CuentasAbiertas extends Page
                         Select::make('almacen_id')
                             ->label('¿De dónde sale?')
                             ->native(false)
-                            ->columnSpan(3)
+                            ->columnSpan(5)
+                            ->dehydratedWhenHidden()
                             ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
@@ -1001,7 +1034,7 @@ class CuentasAbiertas extends Page
                         Actions::make([
                             $this->accionDePedirPrestado(),
                         ])
-                            ->columnSpan(3)
+                            ->columnSpan(4)
                             ->visible(fn (Get $get): bool => $this->sePuedePedirPrestado($get)),
 
                         /*
@@ -1160,11 +1193,12 @@ class CuentasAbiertas extends Page
                         Placeholder::make('como_queda')
                             ->hiddenLabel()
                             ->columnSpanFull()
-                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item
+                                && $this->formaEnUso($get) !== null)
                             ->content(fn (Get $get): HtmlString => $this->comoQuedaLaLinea($get)),
                     ]),
             ])
-            ->action(function (array $data, array $arguments): void {
+            ->action(function (array $data, array $arguments, Action $action): void {
                 abort_unless(Gate::allows('create', Cargo::class), 403);
 
                 $cuenta = $this->cuentaDe($arguments);
@@ -1180,7 +1214,18 @@ class CuentasAbiertas extends Page
                  */
                 abort_unless(Gate::allows('update', $cuenta), 403);
 
-                $this->agregar($cuenta, $data);
+                /*
+                 * 🔴 Si no se pudo agregar, la línea se queda como está.
+                 *
+                 * Antes el modal se volvía a montar igual, y con eso se
+                 * borraba lo tecleado: «no hay suficiente en el estante»
+                 * dejaba el campo en blanco y había que volver a escanear
+                 * para corregir solo la cantidad. `halt()` corta acá y
+                 * deja el formulario con todo puesto.
+                 */
+                if (! $this->agregar($cuenta, $data)) {
+                    $action->halt();
+                }
 
                 /*
                  * ─────────────────────────────────────────────────────
@@ -1249,41 +1294,38 @@ class CuentasAbiertas extends Page
                  * seguir acotando el siguiente.
                  */
                 $this->principioEscaneado = null;
+                $this->presentacionEscaneada = null;
+                $this->busquedaEscrita = null;
+                $this->avisoDelBuscador = null;
 
                 $itemPuesto = is_numeric($arguments['item'] ?? null) ? (int) $arguments['item'] : null;
 
                 /*
                  * ⚠️ El precio también se propone ACÁ y no solo en
                  * `prepararLaLinea()`. Cuando el ítem llega puesto —desde
-                 * un atajo de la banda de arriba— nadie tocó el selector,
+                 * un atajo de la banda de arriba— nadie tocó el buscador,
                  * así que su `afterStateUpdated` nunca corre y el campo
                  * se quedaba vacío justo en el camino más rápido.
                  */
                 $puesto = $this->itemDe($itemPuesto);
 
+                /*
+                 * La forma solo viene puesta cuando hay una sola. Con la
+                 * tableta y la caja, «¿Cómo se le agrega?» abre sin nada
+                 * marcado: lo elige quien cobra.
+                 */
+                $forma = $puesto instanceof Item ? $this->formaUnicaDe($puesto) : null;
+
                 return [
-                    /*
-                     * El valor del selector y no el id pelado: con el
-                     * selector abierto por envase, «705» no es una de sus
-                     * opciones cuando el producto tiene tres frascos, y
-                     * el campo aparecía en blanco en el camino más rápido.
-                     */
-                    'item_id'         => $this->valorDelSelector($puesto),
+                    'item_id'         => $puesto?->id,
                     'cantidad'        => 1,
+                    'unidad_cobro'    => $forma,
+                    'almacen_id'      => $this->estanteSugerido($puesto, $forma)?->id,
                     'precio_acordado' => $this->esHonorario($puesto)
                         ? $this->precioPropuesto($puesto)
                         : null,
                     'medico_id'           => null,
                     'referencia_acordada' => null,
-
-                    /*
-                     * El default va acá también: `fillForm` pisa el estado
-                     * entero, así que sin esta línea el selector volvía a
-                     * «Seleccione una opción» después de cada ítem cargado.
-                     */
-                    'unidad_cobro' => $puesto instanceof Item
-                        ? $this->unidadDeCobroPorDefecto($puesto)
-                        : self::POR_UNIDAD,
                 ];
             })
             /*
@@ -1339,9 +1381,12 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * Asienta la línea. Devuelve si quedó asentada, para que quien llama
+     * sepa si puede limpiar el formulario o tiene que dejarlo como está.
+     *
      * @param array<string, mixed> $data
      */
-    private function agregar(Cuenta $cuenta, array $data): void
+    private function agregar(Cuenta $cuenta, array $data): bool
     {
         /*
          * ⚠️ La memoria de estantes se tira ANTES de cargar: lo que se
@@ -1353,51 +1398,56 @@ class CuentasAbiertas extends Page
         $this->estantesPorItem = [];
 
         $item = $this->itemDe($data['item_id'] ?? null);
+        $origen = $this->presentacionEscaneada;
 
         /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 EL GUARDIÁN ESTÁ ACÁ, NO EN EL SELECTOR
-         * ─────────────────────────────────────────────────────────────
-         *
-         * El selector ya filtra por área, pero esto es un método público
-         * de Livewire: el id del ítem llega del cliente y se puede armar
-         * a mano. Una regla que solo vive en la pantalla no es una regla,
-         * y lo que limita qué se le puede cobrar a un paciente tiene que
-         * estar donde se escribe.
-         */
-        if ($item instanceof Item) {
-            try {
-                CatalogoDelRol::exigirQuePuedaCargar($item);
-            } catch (CargoException $e) {
-                Notification::make()
-                    ->danger()
-                    ->title('Eso no se carga desde tu área')
-                    ->body($e->getMessage())
-                    ->persistent()
-                    ->send();
-
-                return;
-            }
-        }
-
-        /*
-         * Respaldo del Enter de la pistola: si el selector quedó vacío
+         * Respaldo del Enter de la pistola: si todavía no quedó elegido
          * pero vino un código, se resuelve acá. Sin esto, escanear y
          * presionar Enter no hace nada y el operador vuelve a escanear —
          * que es como nacen los cargos duplicados.
          */
         if (! $item instanceof Item) {
             $item = $this->itemPorCodigo($data['escaneo'] ?? null);
+            $origen = $this->presentacionPorCodigo($data['escaneo'] ?? null)?->id;
         }
 
         if (! $item instanceof Item) {
             Notification::make()
                 ->warning()
                 ->title('Falta decir qué se agrega')
-                ->body('Escaneá el código o elegí el ítem del catálogo.')
+                ->body('Escaneá el código, o escribí el nombre y tocá el producto en la lista.')
                 ->send();
 
-            return;
+            return false;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL GUARDIÁN ESTÁ ACÁ, NO EN EL BUSCADOR
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El buscador ya filtra por área, pero esto es un método público
+         * de Livewire: el id del ítem llega del cliente y se puede armar
+         * a mano. Una regla que solo vive en la pantalla no es una regla,
+         * y lo que limita qué se le puede cobrar a un paciente tiene que
+         * estar donde se escribe.
+         *
+         * ⚠️ DESPUÉS del respaldo del Enter y no antes. Antes el guardián
+         * corría solo sobre el ítem elegido, así que un código escaneado
+         * y mandado con Enter de una pasaba por el costado sin que nadie
+         * preguntara de qué área era.
+         */
+        try {
+            CatalogoDelRol::exigirQuePuedaCargar($item);
+        } catch (CargoException $e) {
+            Notification::make()
+                ->danger()
+                ->title('Eso no se carga desde tu área')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return false;
         }
 
         /*
@@ -1416,7 +1466,31 @@ class CuentasAbiertas extends Page
                 ->persistent()
                 ->send();
 
-            return;
+            return false;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 CÓMO SE LE AGREGA: LO QUE ELIGIÓ LA PERSONA, O NADA
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Con una sola forma no hay nada que elegir. Con la tableta y la
+         * caja, la respuesta la tiene que dar quien cobra: el formulario
+         * ya lo exige, pero esto es un método público y el Enter de la
+         * pistola puede llegar antes de que «¿Cómo se le agrega?» se
+         * pinte. Adivinar acá sería cobrar tabletas por una caja o una
+         * caja por dos tabletas.
+         */
+        $forma = $this->formaElegida($item, $data['unidad_cobro'] ?? null);
+
+        if ($forma === null) {
+            Notification::make()
+                ->warning()
+                ->title('Elegí cómo se le agrega')
+                ->body(implode(' o ', $this->unidadesDeCobro($item)).'. Tocá una y presioná Agregar.')
+                ->send();
+
+            return false;
         }
 
         /*
@@ -1425,39 +1499,24 @@ class CuentasAbiertas extends Page
          * la unidad del kardex: si la conversión viviera repartida, una
          * caja terminaría descontando una tableta.
          */
-        $unidadDeCobro = self::formaDe($data['item_id'] ?? null)
-            ?? (is_string($data['unidad_cobro'] ?? null) && $data['unidad_cobro'] !== ''
-                ? $data['unidad_cobro']
-                : $this->unidadDeCobroPorDefecto($item));
-
-        /*
-         * ⚠️ Y si lo que llegó NO está entre las formas de cobrar este
-         * ítem, se repone la que corresponde. No es pisar una decisión:
-         * una unidad fuera de la lista nadie la pudo elegir mirando —
-         * viene de un valor pegado del ítem anterior o del Enter de la
-         * pistola, que manda el formulario antes de que el selector se
-         * actualice—. Dejarla pasar cobraría un jarabe entero por
-         * mililitro.
-         */
-        if (! isset($this->unidadesDeCobro($item)[$unidadDeCobro])) {
-            $unidadDeCobro = $this->unidadDeCobroPorDefecto($item);
-        }
-
-        $cantidad = $this->aUnidadesDeDispensacion($item, $unidadDeCobro, $tecleada);
+        $cantidad = $this->aUnidadesDeDispensacion($item, $forma, $tecleada);
 
         if (! $cantidad instanceof Decimal) {
             Notification::make()
                 ->danger()
-                ->title('Esa unidad no aplica a este ítem')
+                ->title('Esa forma no aplica a este ítem')
                 ->body(
-                    'Elegí otra forma de cobrarlo. Si el producto se fracciona y no aparece la '
+                    'Elegí otra forma de agregarlo. Si el producto se fracciona y no aparece la '
                     .'fracción, hay que declararla en el catálogo antes de poder venderla así.'
                 )
                 ->persistent()
                 ->send();
 
-            return;
+            return false;
         }
+
+        $envase = $this->presentacionDeLaUnidad($item, $forma);
+        $enteros = app(FormasDeCobro::class)->envasesEnteros($forma, $tecleada, $this->presentacionesDe($item));
 
         $almacen = isset($data['almacen_id']) && is_numeric($data['almacen_id'])
             ? Almacen::query()->find((int) $data['almacen_id'])
@@ -1538,26 +1597,23 @@ class CuentasAbiertas extends Page
                         : null,
 
                     /*
-                     * 🔴 EN QUÉ SE COBRÓ, PARA QUE EL RENGLÓN SE LEA.
+                     * ─────────────────────────────────────────────────
+                     * 🔴 EN QUÉ SE COBRÓ, PARA QUE EL RENGLÓN SE LEA
+                     * ─────────────────────────────────────────────────
                      *
-                     * `cantidad` va en unidad de dispensación —60 ML— y
-                     * eso no cambia: es lo que sale del estante. Esto es
-                     * lo otro: que fue UN FRASCO. Sin los dos, el renglón
-                     * dice «60 × L 61.11» y el paciente no reconoce ni la
-                     * cantidad ni el precio.
+                     * `cantidad` va en unidad de dispensación —100 TAB—
+                     * y eso no cambia: es lo que sale del estante. Esto
+                     * es lo otro:
                      *
-                     * `$tecleada` ya está en envases cuando la unidad de
-                     * cobro es una presentación: es el mismo número que
-                     * la persona escribió mirando el frasco.
+                     *   · la CAJA vendida sin abrir viaja con cuántas
+                     *     —«1 CAJA»—, y el renglón se lee así y no «100»;
+                     *   · el envase que solo es origen viaja sin
+                     *     cantidad: dice de cuál frasco se sirvió;
+                     *   · la tableta suelta lleva como origen la caja de
+                     *     la que se leyó el código, si se escaneó una.
                      */
-                    presentacion: $this->presentacionDeLaUnidad($item, $unidadDeCobro),
-                    /*
-                     * Sin cantidad de envases: ya nunca se cobra POR
-                     * envase. La presentación viaja como origen y la
-                     * cantidad va en la unidad de dispensación, que es la
-                     * de venta.
-                     */
-                    envases: null,
+                    presentacion: $envase ?? $this->presentacionDe($item, $origen),
+                    envases: $enteros,
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {
@@ -1568,7 +1624,7 @@ class CuentasAbiertas extends Page
                 ->persistent()
                 ->send();
 
-            return;
+            return false;
         } catch (ExistenciaInsuficienteException $e) {
             Notification::make()
                 ->danger()
@@ -1577,7 +1633,7 @@ class CuentasAbiertas extends Page
                 ->persistent()
                 ->send();
 
-            return;
+            return false;
         }
 
         /*
@@ -1612,6 +1668,8 @@ class CuentasAbiertas extends Page
                     : 'Agregado por L '.number_format((float) $total->redondeado(2), 2).'.'
             )
             ->send();
+
+        return true;
     }
 
     // ── Anular un cargo ───────────────────────────────────────────────
@@ -2507,16 +2565,15 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Deja listo lo que se puede deducir del producto elegido: de qué
-     * estante sale y en qué unidad se cobra.
+     * Deja listo lo que se puede deducir del producto elegido: cómo se
+     * agrega —si hay una sola forma— y de qué estante sale.
      *
-     * Se llama desde los TRES caminos por los que queda elegido un
-     * producto —la pistola, la gaveta de un principio activo con un solo
-     * producto, y la búsqueda por nombre con un solo resultado—, porque
-     * el `afterStateUpdated` del selector NO corre cuando el valor se
-     * pone con `$set()` desde el código. Sin esto, escanear cargaba el
-     * producto y dejaba «¿de dónde sale?» en blanco, que es justo el
-     * campo que se quería ahorrar.
+     * Se llama desde todos los caminos por los que queda elegido un
+     * producto —la pistola, la gaveta con un solo producto, la búsqueda
+     * con un solo resultado y el botón de la lista—, porque un `$set()`
+     * desde el código NO dispara los `afterStateUpdated` de los campos.
+     * Sin esto, escanear cargaba el producto y dejaba «¿de dónde sale?»
+     * en blanco, que es justo el campo que se quería ahorrar.
      */
     private function prepararLaLinea(mixed $valor, Set $set): void
     {
@@ -2525,30 +2582,21 @@ class CuentasAbiertas extends Page
         /*
          * 🔴 LA FORMA PRIMERO, Y DESPUÉS EL ESTANTE.
          *
-         * La forma la trae el propio valor elegido —«705|presentacion:12»
-         * es el frasco de 60—, y solo cuando el valor viene pelado se
-         * cae al despacho por defecto. Sin esto, un jarabe quedaba con
-         * «dispensacion» pegado del ítem anterior —un valor que ya no
-         * está entre sus opciones—, y el desplegable de estantes se veía
-         * vacío justo después de escanear.
+         * Cuántas cajas hay en cada estante depende de si se vende la
+         * caja o la tableta, así que el estante se sugiere con la forma
+         * ya resuelta y no con la que quedó del producto anterior.
          *
-         * El orden importa: cuántos frascos hay en cada estante depende
-         * del envase, así que el estante se sugiere con la forma ya
-         * resuelta y no con la que quedó del producto anterior.
+         * La forma queda puesta solo cuando no hay nada que preguntar:
+         * una sola, o el frasco del que se leyó el código cuando ese
+         * frasco es solo el origen —no multiplica nada, así que dejarlo
+         * marcado no puede cobrar de más—. La caja sin abrir NUNCA viene
+         * marcada sola: pasar la pistola por una caja de cien no es
+         * venderla.
          */
-        $unidad = null;
+        $forma = $item instanceof Item ? $this->formaInicial($item) : null;
 
-        if ($item instanceof Item) {
-            $elegida = self::formaDe($valor);
-
-            $unidad = $elegida !== null && isset($this->unidadesDeCobro($item)[$elegida])
-                ? $elegida
-                : $this->unidadDeCobroPorDefecto($item);
-
-            $set('unidad_cobro', $unidad);
-        }
-
-        $set('almacen_id', $this->estanteSugerido($item, $unidad)?->id);
+        $set('unidad_cobro', $forma);
+        $set('almacen_id', $this->estanteSugerido($item, $forma)?->id);
 
         /*
          * El honorario arranca con el precio del tarifario a la vista.
@@ -3075,9 +3123,9 @@ class CuentasAbiertas extends Page
     /**
      * Lo que se escribió en el campo de escaneo cuando no era un código.
      *
-     * Sirve para que el selector de abajo se abra ya con los resultados:
-     * quien está en el mostrador escribe «acetamin», presiona Enter y
-     * elige — sin volver a teclear lo mismo en otro campo.
+     * Mientras tenga valor, los resultados se ofrecen como botones
+     * debajo del mismo campo: quien está en el mostrador escribe
+     * «acetamin» y toca el que es, sin volver a teclear en otro lado.
      */
     public ?string $busquedaEscrita = null;
 
@@ -3168,25 +3216,21 @@ class CuentasAbiertas extends Page
         $convenio = $cuenta?->convenio;
 
         if ($convenio instanceof Convenio && $convenio->tipo !== TipoConvenio::Contado) {
-            $rtn = $convenio->rtn;
-            $tieneRtn = $rtn !== null && trim($rtn) !== '';
+            $rtn = trim((string) $convenio->rtn);
 
             /*
-             * ⚠️ SI LA ASEGURADORA NO TIENE RTN CARGADO, VA EL DOCUMENTO
-             * DEL PACIENTE.
+             * 🔴 CON SEGURO VA EL RTN DEL SEGURO, Y NADA MÁS.
              *
-             * Lo correcto es el RTN del seguro —es quien paga y quien
-             * reembolsa— pero mientras no esté cargado el campo salía
-             * vacío y quien factura tenía que teclear a mano un número
-             * que el sistema ya conoce, o emitir sin documento.
-             *
-             * No es lo ideal, es lo menos malo: identificado con la
-             * identidad del asegurado es mejor que «sin documento» en
-             * una factura que pasa el umbral. Cargá el RTN del seguro en
-             * «Seguros y convenios» y esto deja de hacer falta.
+             * Regla del hospital (10-oct-2026). Hasta ese día, sin RTN
+             * cargado en el convenio se proponía la identidad del
+             * paciente: la factura salía a nombre de la aseguradora con
+             * el documento de otra persona. Ahora, si falta, el campo
+             * queda vacío con el aviso de dónde cargarlo, y
+             * `EmisorDeFactura` no emite — es el que manda, no esta
+             * pantalla.
              */
-            $documento = $tieneRtn
-                ? ['tipo' => TipoIdentificador::Rtn->value, 'numero' => trim((string) $rtn)]
+            $documento = $convenio->tipo->pagaUnTercero()
+                ? ['tipo' => TipoIdentificador::Rtn->value, 'numero' => $rtn === '' ? null : $rtn]
                 : $this->documentoDelPaciente();
 
             return [
@@ -3287,6 +3331,51 @@ class CuentasAbiertas extends Page
             ->whereNotNull('presupuesto_id')
             ->whereNull('presupuesto_linea_id')
             ->exists();
+    }
+
+    /**
+     * ¿La columna de la derecha del modal de factura tiene algo?
+     *
+     * Ahí van la autorización del seguro —solo si paga un tercero— y el
+     * desglose de la cirugía —solo si hay paquete—. Sin ninguno de los
+     * dos, «A quién se le factura» toma el ancho entero.
+     */
+    private function hayColumnaDerechaAlFacturar(): bool
+    {
+        if ($this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false) {
+            return true;
+        }
+
+        return $this->laCuentaFacturandoTienePaquete();
+    }
+
+    /**
+     * ¿La cuenta que se está facturando la paga un seguro?
+     *
+     * Con seguro, el documento de la factura es el RTN del convenio y no
+     * se elige en la pantalla.
+     */
+    private function elPagadorEsUnTercero(): bool
+    {
+        return $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false;
+    }
+
+    /**
+     * Una cifra del resumen de arriba del modal de factura.
+     *
+     * Estilos en línea y grises con transparencia, a propósito: el CSS
+     * del panel viene precompilado (§9.A7) y un gris con alfa se lee
+     * igual en el tema claro que en el oscuro.
+     */
+    private static function cajaDeResumen(string $etiqueta, string $valor, ?string $color = null, ?string $nota = null): string
+    {
+        return '<div style="flex:1 1 12rem;padding:.75rem 1rem;border:1px solid rgba(127,127,127,.25);'
+            .'border-radius:.75rem;background:rgba(127,127,127,.06)">'
+            .'<div style="font-size:.75rem;letter-spacing:.03em;text-transform:uppercase;opacity:.7">'.e($etiqueta).'</div>'
+            .'<div style="font-size:1.35rem;font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums'
+            .($color === null ? '' : ';color:'.e($color)).'">'.e($valor).'</div>'
+            .($nota === null ? '' : '<div style="font-size:.8rem;opacity:.7;margin-top:.1rem">'.e($nota).'</div>')
+            .'</div>';
     }
 
     /**
@@ -3438,7 +3527,8 @@ class CuentasAbiertas extends Page
             ->label('Facturar')
             ->icon(Heroicon::OutlinedDocumentText)
             ->color('primary')
-            ->modalWidth('2xl')
+            ->modalWidth('5xl')
+            ->stickyModalFooter()
             ->modalHeading(function (array $arguments): string {
                 $cuenta = $this->cuentaDe($arguments);
 
@@ -3472,7 +3562,7 @@ class CuentasAbiertas extends Page
                                          */
                         $saldo = $cuenta->saldoPendienteDelPaciente();
 
-                        $texto = 'Total <strong>L '.number_format((float) $cuenta->total, 2).'</strong>';
+                        $cajas = [self::cajaDeResumen('Total de la cuenta', 'L '.number_format((float) $cuenta->total, 2))];
 
                         /*
                          * `esCero()` y no `mayorQue('0')`: a diferencia
@@ -3481,187 +3571,264 @@ class CuentasAbiertas extends Page
                          * un string suelto no lo es.
                          */
                         if (! $cuenta->saldoDeLaAseguradora()->esCero()) {
-                            $texto .= ' · seguro L '
-                                .number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2);
+                            $cajas[] = self::cajaDeResumen(
+                                'Lo pone el seguro',
+                                'L '.number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2),
+                                nota: 'Se factura y queda por cobrar',
+                            );
                         }
 
-                        $texto .= $saldo->mayorQue('0')
-                            ? ' · <span style="color:rgb(220 38 38)">el paciente debe L '
-                                .number_format((float) $saldo->redondeado(2), 2)
-                                .', hay que recibir ese abono antes de facturar</span>'
-                            : ' · <span style="color:rgb(22 163 74)">el paciente ya puso lo suyo</span>';
+                        $cajas[] = $saldo->mayorQue('0')
+                            ? self::cajaDeResumen(
+                                'Falta que pague el paciente',
+                                'L '.number_format((float) $saldo->redondeado(2), 2),
+                                'rgb(220 38 38)',
+                                'Se cobra abajo, en el mismo acto',
+                            )
+                            : self::cajaDeResumen('El paciente', 'Ya puso lo suyo', 'rgb(22 163 74)');
 
-                        return new HtmlString('<span style="font-size:.95rem">'.$texto.'</span>');
+                        return new HtmlString('<div style="display:flex;flex-wrap:wrap;gap:.75rem">'.implode('', $cajas).'</div>');
                     }),
 
                 /*
                  * ─────────────────────────────────────────────────────
-                 * 🔴 LO QUE EL SEGURO AUTORIZÓ, ANTES DE EMITIR
+                 * DOS COLUMNAS EN PANTALLA ANCHA (10-oct-2026)
                  * ─────────────────────────────────────────────────────
                  *
-                 * El convenio trae lo que ese pagador cubre EN GENERAL, y
-                 * con eso se fue cargando la cuenta. Pero la autorización
-                 * llega después y no siempre coincide: el Hospital
-                 * Militar aprueba un MONTO —L 5,000 de los L 10,000—, y
-                 * PALIG puede decir «de esto solo cubro el 30 %».
+                 * A la izquierda, a quién se le factura. A la derecha,
+                 * lo que cambia el reparto —la autorización del seguro—
+                 * y cómo sale el papel. En 2xl el modal era una tira de
+                 * cuatro secciones con un párrafo abajo de cada campo.
                  *
-                 * Sin este campo la única salida era corregir a mano cada
-                 * cobro, o sea que tarde o temprano se cobrara mal.
-                 *
-                 * Solo aparece cuando paga un tercero: en una cuenta de
-                 * contado no hay nada que autorizar.
+                 * Si la derecha no tiene nada (contado sin cirugía), la
+                 * izquierda toma el ancho entero en vez de dejar un
+                 * hueco. «Cobrar ahora» va abajo y a lo ancho: su tabla
+                 * de tres columnas no cabe en media pantalla.
                  */
-                Section::make('Lo que autorizó el seguro')
-                    ->description(
-                        'Dejalo vacío y manda lo que cubre el convenio. Escribí un porcentaje o un '
-                        .'monto solo si para esta cuenta autorizaron otra cosa: al guardar se '
-                        .'reparte de nuevo el total entre el paciente y el seguro.'
-                    )
-                    ->visible(fn (): bool => $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false)
-                    ->columns(2)
+                Grid::make(['default' => 1, 'lg' => 2])
                     ->schema([
-                        TextInput::make('cobertura_autorizada')
-                            ->label('Cubre este porcentaje')
-                            ->numeric()
-                            ->minValue(0)
-                            ->maxValue(100)
-                            ->suffix('%')
-                            ->live(onBlur: true)
-                            ->default(fn (): ?string => $this->coberturaPropuesta())
-                            /*
-                             * Uno u otro, nunca los dos: con los dos
-                             * puestos, cuál manda lo decidiría el código
-                             * y alguna vez elegiría mal. La base lo
-                             * rechaza igual con un CHECK.
+                        /*
+                         * ─────────────────────────────────────────────────────
+                         * DOS SECCIONES Y NO OCHO CAMPOS SUELTOS
+                         * ─────────────────────────────────────────────────────
+                         *
+                         * El modal era una columna de ocho campos con un párrafo
+                         * abajo de cada uno: había que bajar dos pantallas para
+                         * llegar a «Emitir», y el ojo no tenía dónde apoyarse.
+                         *
+                         * Son dos preguntas distintas: A QUIÉN se le factura, y
+                         * CON QUÉ se paga. La segunda ya estaba separada; la
+                         * primera ahora también, con el documento y su número en
+                         * la misma fila —se llenan juntos, se leen juntos—.
+                         */
+                        Section::make('A quién se le factura')
+                            ->icon(Heroicon::OutlinedUser)
+                            ->columnSpan(fn (): array => $this->hayColumnaDerechaAlFacturar() ? ['default' => 1] : ['default' => 'full'])
+                            ->columns(2)
+                            ->schema([
+                                /*
+                         * ⚠️ A nombre de quién sale NO es siempre el paciente: la
+                         * factura puede ir a la empresa que lo mandó o al
+                         * familiar que paga. Se propone el paciente y se puede
+                         * cambiar.
+                         */
+                                TextInput::make('cliente_nombre')
+                                    ->columnSpanFull()
+                                    ->label('A nombre de')
+                                    ->required()
+                                    ->maxLength(200)
+                                    ->default(fn (): string => $this->clientePropuesto()['nombre'])
+                                    ->helperText(fn (): ?string => $this->cuentaFacturando()?->convenio?->tipo === TipoConvenio::Contado
+                                        ? null
+                                        : 'Con seguro va a nombre de la aseguradora con el paciente: ella es la que paga y reembolsa.'),
+
+                                /*
+                         * ─────────────────────────────────────────────────────
+                         * 🔴 NO TODO PACIENTE TIENE RTN
+                         * ─────────────────────────────────────────────────────
+                         *
+                         * Y arriba del umbral igual hay que identificarlo. Se
+                         * acepta RTN, identidad o pasaporte, precargado con lo
+                         * que el paciente ya tiene en su expediente: en el
+                         * mostrador nadie debería teclear un número que el
+                         * sistema ya conoce.
+                         */
+                                Select::make('cliente_documento_tipo')
+                                    ->label('Documento')
+                                    ->options(fn (): array => self::tiposDeDocumento())
+                                    ->native(false)
+                                    /*
+                                     * Con seguro no se elige: es el RTN
+                                     * del convenio (ver `clientePropuesto()`).
+                                     * `dehydrated()` para que viaje igual
+                                     * aunque esté bloqueado.
+                                     */
+                                    ->disabled(fn (): bool => $this->elPagadorEsUnTercero())
+                                    ->dehydrated()
+                                    ->default(fn (): ?string => $this->clientePropuesto()['tipo'])
+                                    ->requiredWith('cliente_documento'),
+
+                                TextInput::make('cliente_documento')
+                                    ->label('Número')
+                                    ->maxLength(20)
+                                    ->disabled(fn (): bool => $this->elPagadorEsUnTercero())
+                                    ->dehydrated()
+                                    ->default(fn (): ?string => $this->clientePropuesto()['numero'])
+                                    /*
+                             * Si viene vacío no es un error del sistema: a ese
+                             * paciente nunca le registraron documento. Decirlo
+                             * evita que alguien lo teclee a mano cada vez en vez
+                             * de agregarlo al expediente una sola vez.
                              */
-                            ->disabled(fn (Get $get): bool => filled($get('monto_autorizado')))
-                            ->helperText('Como en PALIG: 50 es la mitad.'),
+                                    /*
+                                     * 🔴 EL AVISO TIENE QUE APUNTAR AL DATO QUE
+                                     * FALTA DE VERDAD.
+                                     *
+                                     * Decía «sin documento en el expediente»
+                                     * también cuando la cuenta era de un seguro,
+                                     * y ahí el que falta NO es el documento del
+                                     * paciente: es el RTN de la aseguradora, que
+                                     * es quien paga y a cuyo nombre sale la
+                                     * factura. Quien facturaba salía a buscar la
+                                     * identidad del paciente —o la tecleaba a
+                                     * mano cada vez— por un dato que se carga una
+                                     * sola vez en el convenio.
+                                     */
+                                    ->hint(fn (): ?string => $this->queDocumentoFalta())
+                                    ->helperText(function (): string {
+                                        if ($this->elPagadorEsUnTercero()) {
+                                            return 'Con seguro va el RTN de la aseguradora, tal como está en Seguros y convenios.';
+                                        }
 
-                        TextInput::make('monto_autorizado')
-                            ->label('O aprobó este monto')
-                            ->numeric()
-                            ->minValue(0)
-                            ->step('0.01')
-                            ->prefix('L')
-                            ->live(onBlur: true)
-                            ->disabled(fn (Get $get): bool => filled($get('cobertura_autorizada')))
-                            ->helperText('Como el Hospital Militar: aprueba una cantidad, no un porcentaje.'),
+                                        $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
 
-                        Placeholder::make('como_queda_el_reparto')
-                            ->hiddenLabel()
-                            ->columnSpanFull()
-                            ->content(fn (Get $get): HtmlString => $this->comoQuedaElReparto($get)),
-                    ]),
+                                        return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
+                                            .' el SAR exige identificar al cliente. Sin RTN, sirve la identidad.';
+                                    }),
 
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * DOS SECCIONES Y NO OCHO CAMPOS SUELTOS
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * El modal era una columna de ocho campos con un párrafo
-                 * abajo de cada uno: había que bajar dos pantallas para
-                 * llegar a «Emitir», y el ojo no tenía dónde apoyarse.
-                 *
-                 * Son dos preguntas distintas: A QUIÉN se le factura, y
-                 * CON QUÉ se paga. La segunda ya estaba separada; la
-                 * primera ahora también, con el documento y su número en
-                 * la misma fila —se llenan juntos, se leen juntos—.
-                 */
-                Section::make('A quién se le factura')
-                    ->columns(2)
-                    ->schema([
-                        /*
-                 * ⚠️ A nombre de quién sale NO es siempre el paciente: la
-                 * factura puede ir a la empresa que lo mandó o al
-                 * familiar que paga. Se propone el paciente y se puede
-                 * cambiar.
-                 */
-                        TextInput::make('cliente_nombre')
-                            ->columnSpanFull()
-                            ->label('A nombre de')
-                            ->required()
-                            ->maxLength(200)
-                            ->default(fn (): string => $this->clientePropuesto()['nombre'])
-                            ->helperText(fn (): ?string => $this->cuentaFacturando()?->convenio?->tipo === TipoConvenio::Contado
-                                ? null
-                                : 'Con seguro la factura sale a nombre de la aseguradora con el paciente: es ella la que paga y la que reembolsa.'),
+                                TextInput::make('cliente_direccion')
+                                    ->label('Dirección')
+                                    ->columnSpanFull()
+                                    ->maxLength(250),
 
-                        /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 NO TODO PACIENTE TIENE RTN
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Y arriba del umbral igual hay que identificarlo. Se
-                 * acepta RTN, identidad o pasaporte, precargado con lo
-                 * que el paciente ya tiene en su expediente: en el
-                 * mostrador nadie debería teclear un número que el
-                 * sistema ya conoce.
-                 */
-                        Select::make('cliente_documento_tipo')
-                            ->label('Documento')
-                            ->options(fn (): array => self::tiposDeDocumento())
-                            ->native(false)
-                            ->default(fn (): ?string => $this->clientePropuesto()['tipo'])
-                            ->requiredWith('cliente_documento'),
+                                /*
+                         * El «Código de Cliente» del formulario: con seguro es
+                         * el número de póliza, que es por donde la aseguradora
+                         * busca al asegurado cuando reembolsa.
+                         */
+                                TextInput::make('cliente_codigo')
+                                    ->label('Código de cliente / póliza')
+                                    ->maxLength(40)
+                                    ->columnSpanFull()
+                                    ->default(fn (): ?string => $this->clientePropuesto()['codigo'])
+                                    ->hint(fn (): ?string => $this->clientePropuesto()['codigo'] === null
+                                        ? 'Sin póliza en la cuenta'
+                                        : null)
+                                    ->helperText('Por ahí busca la aseguradora al asegurado cuando reembolsa.')
+                                    ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
 
-                        TextInput::make('cliente_documento')
-                            ->label('Número')
-                            ->maxLength(20)
-                            ->default(fn (): ?string => $this->clientePropuesto()['numero'])
+                                Textarea::make('nota')
+                                    ->label('Nota')
+                                    ->rows(2)
+                                    ->columnSpanFull()
+                                    ->maxLength(300),
+                            ]),
+
+                        Group::make([
                             /*
-                     * Si viene vacío no es un error del sistema: a ese
-                     * paciente nunca le registraron documento. Decirlo
-                     * evita que alguien lo teclee a mano cada vez en vez
-                     * de agregarlo al expediente una sola vez.
-                     */
-                            /*
-                             * 🔴 EL AVISO TIENE QUE APUNTAR AL DATO QUE
-                             * FALTA DE VERDAD.
+                             * ─────────────────────────────────────────────────────
+                             * 🔴 LO QUE EL SEGURO AUTORIZÓ, ANTES DE EMITIR
+                             * ─────────────────────────────────────────────────────
                              *
-                             * Decía «sin documento en el expediente»
-                             * también cuando la cuenta era de un seguro,
-                             * y ahí el que falta NO es el documento del
-                             * paciente: es el RTN de la aseguradora, que
-                             * es quien paga y a cuyo nombre sale la
-                             * factura. Quien facturaba salía a buscar la
-                             * identidad del paciente —o la tecleaba a
-                             * mano cada vez— por un dato que se carga una
-                             * sola vez en el convenio.
+                             * El convenio trae lo que ese pagador cubre EN GENERAL, y
+                             * con eso se fue cargando la cuenta. Pero la autorización
+                             * llega después y no siempre coincide: el Hospital
+                             * Militar aprueba un MONTO —L 5,000 de los L 10,000—, y
+                             * PALIG puede decir «de esto solo cubro el 30 %».
+                             *
+                             * Sin este campo la única salida era corregir a mano cada
+                             * cobro, o sea que tarde o temprano se cobrara mal.
+                             *
+                             * Solo aparece cuando paga un tercero: en una cuenta de
+                             * contado no hay nada que autorizar.
                              */
-                            ->hint(fn (): ?string => $this->queDocumentoFalta())
-                            ->helperText(function (): string {
-                                $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
+                            Section::make('Lo que autorizó el seguro')
+                                ->icon(Heroicon::OutlinedShieldCheck)
+                                ->description('Vacío, manda lo que cubre el convenio. Llená uno solo si para esta cuenta autorizaron otra cosa.')
+                                ->visible(fn (): bool => $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false)
+                                ->columns(2)
+                                ->schema([
+                                    TextInput::make('cobertura_autorizada')
+                                        ->label('Cubre este porcentaje')
+                                        ->numeric()
+                                        ->minValue(0)
+                                        ->maxValue(100)
+                                        ->suffix('%')
+                                        ->live(onBlur: true)
+                                        ->default(fn (): ?string => $this->coberturaPropuesta())
+                                        /*
+                                         * Uno u otro, nunca los dos: con los dos
+                                         * puestos, cuál manda lo decidiría el código
+                                         * y alguna vez elegiría mal. La base lo
+                                         * rechaza igual con un CHECK.
+                                         */
+                                        ->disabled(fn (Get $get): bool => filled($get('monto_autorizado')))
+                                        ->helperText('Como PALIG: 50 es la mitad.'),
 
-                                return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
-                                    .' el SAR exige identificar al cliente. Si no tiene RTN, sirve la identidad.';
-                            }),
+                                    TextInput::make('monto_autorizado')
+                                        ->label('O aprobó este monto')
+                                        ->numeric()
+                                        ->minValue(0)
+                                        ->step('0.01')
+                                        ->prefix('L')
+                                        ->live(onBlur: true)
+                                        ->disabled(fn (Get $get): bool => filled($get('cobertura_autorizada')))
+                                        ->helperText('Como el Militar: una cantidad fija.'),
 
-                        TextInput::make('cliente_direccion')
-                            ->label('Dirección')
-                            ->columnSpanFull()
-                            ->maxLength(250),
+                                    Placeholder::make('como_queda_el_reparto')
+                                        ->hiddenLabel()
+                                        ->columnSpanFull()
+                                        ->content(fn (Get $get): HtmlString => $this->comoQuedaElReparto($get)),
+                                ]),
 
-                        /*
-                 * El «Código de Cliente» del formulario: con seguro es
-                 * el número de póliza, que es por donde la aseguradora
-                 * busca al asegurado cuando reembolsa.
-                 */
-                        TextInput::make('cliente_codigo')
-                            ->label('Código de cliente / póliza')
-                            ->maxLength(40)
-                            ->columnSpanFull()
-                            ->default(fn (): ?string => $this->clientePropuesto()['codigo'])
-                            ->hint(fn (): ?string => $this->clientePropuesto()['codigo'] === null
-                                ? 'Sin póliza en la cuenta'
-                                : null)
-                            ->helperText('Es por donde la aseguradora busca al asegurado cuando reembolsa.')
-                            ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
-
-                        Textarea::make('nota')
-                            ->label('Nota')
-                            ->rows(2)
-                            ->columnSpanFull()
-                            ->maxLength(300),
+                            /*
+                             * ─────────────────────────────────────────────────────
+                             * SOLO APARECE SI HAY UNA CIRUGÍA QUE ABRIR
+                             * ─────────────────────────────────────────────────────
+                             *
+                             * En la factura de una consulta no hay nada que
+                             * desglosar, y una casilla que no cambia nada distrae en
+                             * la pantalla donde menos conviene.
+                             */
+                            Section::make('Cómo sale el papel')
+                                ->icon(Heroicon::OutlinedDocumentText)
+                                ->visible(fn (): bool => $this->laCuentaFacturandoTienePaquete())
+                                ->schema([
+                                    Toggle::make('desglosar_paquetes')
+                                        ->label('Detallar la cirugía renglón por renglón')
+                                        /*
+                                         * Viene marcada según el pagador y se puede
+                                         * cambiar para ESTA factura. Lo que se
+                                         * decida acá queda congelado en el papel:
+                                         * volver a imprimirlo da exactamente lo
+                                         * mismo, porque el mismo número de CAI no
+                                         * puede producir dos documentos distintos.
+                                         */
+                                        /*
+                                         * ⚠️ `->` y no `?->`: adentro de un `??` el
+                                         * nullsafe sobra y PHPStan lo rechaza con
+                                         * `nullsafe.neverNull`. Sin cuenta o sin
+                                         * convenio, el `?? false` responde igual.
+                                         */
+                                        ->default(fn (): bool => (bool) ($this->cuentaFacturando()->convenio->desglosa_paquetes ?? false))
+                                        ->helperText(
+                                            'La cirugía sale en sus renglones —sala, habitación, medicamentos— con el '
+                                            .'monto del paquete repartido entre ellos. El total no cambia. Se lista lo '
+                                            .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
+                                        ),
+                                ]),
+                        ])
+                            ->visible(fn (): bool => $this->hayColumnaDerechaAlFacturar()),
                     ]),
 
                 /*
@@ -3678,43 +3845,8 @@ class CuentasAbiertas extends Page
                  * fue abonando durante la estadía no hay nada que
                  * cobrarle acá.
                  */
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * SOLO APARECE SI HAY UNA CIRUGÍA QUE ABRIR
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * En la factura de una consulta no hay nada que
-                 * desglosar, y una casilla que no cambia nada distrae en
-                 * la pantalla donde menos conviene.
-                 */
-                Section::make('Cómo sale el papel')
-                    ->visible(fn (): bool => $this->laCuentaFacturandoTienePaquete())
-                    ->schema([
-                        Toggle::make('desglosar_paquetes')
-                            ->label('Detallar la cirugía renglón por renglón')
-                            /*
-                             * Viene marcada según el pagador y se puede
-                             * cambiar para ESTA factura. Lo que se
-                             * decida acá queda congelado en el papel:
-                             * volver a imprimirlo da exactamente lo
-                             * mismo, porque el mismo número de CAI no
-                             * puede producir dos documentos distintos.
-                             */
-                            /*
-                             * ⚠️ `->` y no `?->`: adentro de un `??` el
-                             * nullsafe sobra y PHPStan lo rechaza con
-                             * `nullsafe.neverNull`. Sin cuenta o sin
-                             * convenio, el `?? false` responde igual.
-                             */
-                            ->default(fn (): bool => (bool) ($this->cuentaFacturando()->convenio->desglosa_paquetes ?? false))
-                            ->helperText(
-                                'La cirugía sale en sus renglones —sala, habitación, medicamentos— con el '
-                                .'monto del paquete repartido entre ellos. El total no cambia. Se lista lo '
-                                .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
-                            ),
-                    ]),
-
                 Section::make('Cobrar ahora')
+                    ->icon(Heroicon::OutlinedBanknotes)
                     ->description(
                         'Lo que le falta AL PACIENTE, en el mismo acto: se recibe el abono y se '
                         .'emite la factura seguido. Lo que cubre el seguro no se cobra acá — se '
@@ -3785,6 +3917,26 @@ class CuentasAbiertas extends Page
                 }
 
                 abort_unless(Gate::allows('create', Factura::class), 403);
+
+                /*
+                 * 🔴 EL RTN DEL SEGURO, ANTES DE TOCAR NADA.
+                 *
+                 * `EmisorDeFactura` lo exige igual, pero llega tarde:
+                 * para entonces ya se anotó la autorización y, si el
+                 * paciente debía algo, ya se le recibió el abono. Se
+                 * pregunta acá primero para que «no se pudo facturar»
+                 * no deje plata cobrada a medio camino.
+                 */
+                if ($cuenta->convenio->tipo->pagaUnTercero() && trim((string) $cuenta->convenio->rtn) === '') {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo facturar')
+                        ->body(FacturaException::faltaElRtnDelPagador($cuenta->convenio->nombre)->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
 
                 /*
                  * 🔴 LA AUTORIZACIÓN, ANTES QUE TODO LO DEMÁS.
@@ -5010,22 +5162,9 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Las tres formas de contar lo mismo.
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * POR QUÉ ESTO ES UNA CONVERSIÓN Y NO UN PRECIO DISTINTO
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * El kardex y el tarifario se llevan SIEMPRE en unidad de
-     * dispensación (§8.7). Vender la caja de cien tabletas no es otro
-     * precio: son cien tabletas. Por eso este selector convierte la
-     * CANTIDAD y no toca el precio unitario.
-     *
-     * Si algún día el hospital quiere cobrar la caja más barata que cien
-     * tabletas sueltas, eso es una fila de tarifario para otro ítem —o
-     * un descuento con motivo y autorizador—, nunca un número escondido
-     * en una conversión de unidades. Un descuento invisible es la fuga de
-     * caja que el §8.6.2-4 existe para evitar.
+     * Las formas de agregar el producto, rotuladas para «¿Cómo se le
+     * agrega?». Qué formas existen lo decide `FormasDeCobro`; acá solo se
+     * les pone nombre.
      *
      * @return array<string, string>
      */
@@ -5035,140 +5174,80 @@ class CuentasAbiertas extends Page
             return [];
         }
 
-        $unidad = $this->unidadDe($item);
+        $presentaciones = $this->presentacionesDe($item);
 
         $opciones = [];
 
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 LO QUE NO SE FRACCIONA NO SE COBRA POR MILILITRO
-         * ─────────────────────────────────────────────────────────────
-         *
-         * Un jarabe que el hospital NO fracciona se entrega en frascos
-         * cerrados. Si la receta pide 20 ml cada 6 horas por 3 días —240
-         * ml—, lo que se le cobra son DOS frascos de 120, no «240 ml»:
-         * el hospital entregó dos frascos y ya no puede vender lo que
-         * sobre.
-         *
-         * Ofrecer el mililitro ahí no es una comodidad, es una fuga: se
-         * cobran 240 ml y salen del estante 240 de un frasco de 120 que
-         * queda abierto, sin dueño y sin cobrar. Al mes son varios
-         * frascos que nadie pagó.
-         *
-         * Los que SÍ se fraccionan —contados, y marcados como tales en el
-         * catálogo— conservan el mililitro, que es justamente su gracia.
-         *
-         * La condición mira la MAGNITUD y no una lista de productos: una
-         * unidad de conteo —TABLETA, AMPOLLA— se entrega suelta por
-         * naturaleza y nunca pierde esta opción.
-         */
-        /*
-         * ⚠️ La opción suelta desaparece cuando el envase ya es solo el
-         * origen y el producto tiene presentaciones cargadas.
-         *
-         * Con la cantidad siempre en tabletas, «TABLETA (tab)» y «BLISTER
-         * X 10» significan exactamente lo mismo salvo por un dato: de
-         * cuál se sacó. Dejar las dos es ofrecer una opción que TIRA ese
-         * dato, y la que lo tira es la primera de la lista — o sea, la que
-         * se elige cuando hay prisa.
-         *
-         * Si todavía no hay presentaciones cargadas, se queda: es el
-         * respaldo de más abajo y sin él el producto no se podría cobrar.
-         */
-        $soloElOrigen = $this->presentacionesDe($item)->isNotEmpty();
-
-        if ($this->seEntregaSuelta($item) && ! $soloElOrigen) {
-            $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
-        }
-
-        /*
-         * La fracción primero entre las «menores»: un frasco que se
-         * fracciona se cobra por ml muchas más veces que por frasco.
-         */
-        if ($item->fraccionable && $item->unidad_fraccion_id !== null && $item->fracciones_por_unidad !== null) {
-            $opciones[self::POR_FRACCION] = $item->unidadFraccion->etiqueta()
-                .' — '.rtrim(rtrim($item->fracciones_por_unidad, '0'), '.')
-                .' por '.($unidad ?? 'unidad');
-        }
-
-        $codigo = self::codigoDeLaUnidad($item) ?? $unidad ?? 'unidades';
-
-        foreach ($this->presentacionesDe($item) as $presentacion) {
-            $trae = rtrim(rtrim((string) $presentacion->unidades_por_presentacion, '0'), '.');
-
-            /*
-             * El texto distingue los dos mundos, porque el número dice
-             * cosas distintas: en el envase-unidad-de-cobro «100 TAB» es
-             * lo que se cobra al poner 1; en el envase-origen es lo que
-             * TRAE la caja, y lo que se cobra es lo que se teclee.
-             * Escribirlo igual en los dos es como se cobra una caja
-             * entera creyendo que se cobró una tableta.
-             */
-            $opciones[self::POR_PRESENTACION.$presentacion->id] = self::envaseCorto($presentacion)
-                .($soloElOrigen ? ' — trae '.$trae.' '.$codigo : ' — '.$trae.' '.$codigo);
-        }
-
-        /*
-         * ⚠️ NUNCA VACÍO. Un ítem de volumen que todavía no tiene su
-         * presentación cargada se quedaría sin ninguna forma de cobrarse
-         * —el mostrador vería un desplegable en blanco y el paciente
-         * esperando—. Ahí vuelve el mililitro: cobrar en la unidad del
-         * kardex es peor que la regla, pero es infinitamente mejor que no
-         * poder cobrar. El hueco se arregla cargando la presentación.
-         */
-        if ($opciones === []) {
-            $opciones[self::POR_UNIDAD] = $unidad ?? 'Unidad';
-        }
-
-        /*
-         * ⚠️ Y se DICE que el hueco existe. Un producto de farmacia que
-         * solo ofrece su unidad mínima es, casi siempre, un producto al
-         * que nadie le cargó las presentaciones — no un producto que se
-         * venda por mililitro.
-         *
-         * Sin este rótulo, el renglón se ve igual de normal que
-         * cualquier otro y el hueco se descubre recién cuando alguien
-         * pregunta por qué no aparece el frasco. Con él, quien está
-         * cobrando sabe qué falta y dónde: en la ficha del producto,
-         * pestaña «Presentaciones de compra».
-         *
-         * ⚠️ Con «·» y no con «—». `soloLaForma()` recorta el renglón del
-         * selector en el primer « —», así que con una raya el aviso se
-         * perdía justo en la pantalla donde tiene que leerse.
-         */
-        if ($item->mueveInventario()
-            && $this->presentacionesDe($item)->isEmpty()
-            && array_keys($opciones) === [self::POR_UNIDAD]
-        ) {
-            $opciones[self::POR_UNIDAD] .= ' · sin envases cargados';
+        foreach (app(FormasDeCobro::class)->de($item, $presentaciones) as $clave) {
+            $opciones[$clave] = $this->rotuloDeLaForma($item, $clave);
         }
 
         return $opciones;
     }
 
     /**
+     * «Por TABLETA», «CAJA X 100 TABLETAS · sin abrir», «Del FRASCO X 120
+     * ML, por ML».
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL ENVASE QUE MULTIPLICA Y EL QUE NO SE ESCRIBEN DISTINTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «CAJA X 100 TABLETAS» puede significar dos cosas: la caja vendida
+     * sin abrir —descuenta las cien— o la caja de la que se sacaron unas
+     * tabletas. Escribirlas igual es como se cobra una caja entera
+     * creyendo que se cobró una tableta, así que la que multiplica dice
+     * «sin abrir» y la que no dice «del … por …».
+     */
+    private function rotuloDeLaForma(Item $item, string $clave): string
+    {
+        $codigo = self::codigoDeLaUnidad($item) ?? 'unidad';
+
+        if ($clave === self::POR_UNIDAD) {
+            /*
+             * La columna y no `?->`: Larastan tipa la relación como no nula
+             * aunque la FK sí lo sea (§9.B1).
+             */
+            $rotulo = 'Por '.($item->unidad_dispensacion_id === null ? 'unidad' : $item->unidadDispensacion->nombre);
+
+            /*
+             * ⚠️ Y se DICE que el hueco existe. Un producto de farmacia
+             * que solo se ofrece en su unidad mínima es, casi siempre, un
+             * producto al que nadie le cargó las presentaciones. Con el
+             * rótulo, quien cobra sabe qué falta y dónde: en la ficha del
+             * producto, pestaña «Presentaciones de compra».
+             */
+            return $item->mueveInventario() && $this->presentacionesDe($item)->isEmpty()
+                ? $rotulo.' · sin envases cargados'
+                : $rotulo;
+        }
+
+        if ($clave === self::POR_FRACCION) {
+            return 'Por '.$item->unidadFraccion->nombre
+                .' ('.ItemPresentacion::sinCerosDeMas((string) $item->fracciones_por_unidad).' por '.$codigo.')';
+        }
+
+        $presentacion = $this->presentacionDeLaUnidad($item, $clave);
+
+        if (! $presentacion instanceof ItemPresentacion) {
+            return $clave;
+        }
+
+        return $presentacion->se_vende_entera
+            ? self::envaseCorto($presentacion).' · sin abrir'
+            : 'Del '.self::envaseCorto($presentacion).', por '.$codigo;
+    }
+
+    /**
      * Cómo se llama el envase sin repetir el producto: «FRASCO 60 ML»,
      * «CAJA X 100 TABLETAS».
      *
-     * ─────────────────────────────────────────────────────────────────
-     * EL PRODUCTO YA ESTÁ ADELANTE EN EL MISMO RENGLÓN
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * El renglón del selector es «PRODUCTO — forma», así que acá va solo
-     * la forma. Puesto entero salía «ACETAMINOFEN JARABE 60 ML — 60
-     * MILILITRO (ml)»: cuarenta y cinco caracteres en una columna de
-     * tres, partidos en tres líneas, con el dato que distingue —60 ML— al
-     * final. Cuatro campos así uno al lado del otro es la pantalla
-     * amontonada que nadie quiere leer con el paciente enfrente.
-     *
-     * ⚠️ Esto era un recorte palabra por palabra de lo que el producto ya
-     * decía, porque la columna guardaba «PRODUCTO / envase». Desde el
-     * 3-sep-2026 guarda el envase pelado y el recorte vive una sola vez,
-     * en `ItemPresentacion::envase()`.
-     *
-     * Lo único que queda acá es anteponer la unidad cuando el nombre no
-     * la trae: una presentación cargada como «X 100 TABLETAS» con envase
-     * CAJA se lee «CAJA X 100 TABLETAS», que es lo que hay en el estante.
+     * El producto ya está escrito arriba, en lo que quedó elegido, así
+     * que acá va solo el envase. El recorte del nombre vive una sola vez,
+     * en `ItemPresentacion::envase()`; lo único que queda acá es
+     * anteponer la unidad cuando el nombre no la trae: una presentación
+     * cargada como «X 100 TABLETAS» con envase CAJA se lee «CAJA X 100
+     * TABLETAS», que es lo que hay en el estante.
      */
     private static function envaseCorto(ItemPresentacion $presentacion): string
     {
@@ -5179,272 +5258,81 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * ¿Este producto se entrega suelto, sin envase?
-     *
-     * Una TABLETA o una AMPOLLA sí: son unidades de conteo, se sacan del
-     * blíster y se entregan. Un jarabe medido en ML no, salvo que el
-     * hospital lo fraccione —y eso es una decisión declarada en el
-     * catálogo, no algo que se deduzca del producto—.
-     *
-     * Sin presentaciones cargadas también devuelve true: no hay envase
-     * que ofrecer, así que la unidad suelta es lo único que hay.
+     * La forma, cuando hay una sola y no hay nada que preguntar.
      */
-    private function seEntregaSuelta(Item $item): bool
+    private function formaUnicaDe(Item $item): ?string
     {
-        if ($item->fraccionable) {
-            return true;
-        }
-
-        $magnitud = $item->unidadDispensacion?->magnitud;
-
-        if ($magnitud === null || $magnitud === MagnitudDeMedida::Conteo) {
-            return true;
-        }
-
-        return $this->presentacionesDe($item)->isEmpty();
+        return app(FormasDeCobro::class)->unica($item, $this->presentacionesDe($item));
     }
 
     /**
-     * Un renglón del selector por cada forma en que se entrega este
-     * producto, con el nombre adelante.
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * 🔴 EL PRODUCTO NO SE ENTREGA EN ABSTRACTO
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * Nadie despacha «ACETAMINOFEN JARABE»: despacha un frasco de 60 o
-     * uno de 120. Eran dos desplegables encadenados para una sola
-     * decisión —qué producto arriba, en qué envase abajo—, y el de abajo
-     * era además el que nadie miraba: se elegía el producto, se tecleaba
-     * la cantidad y se apretaba Agregar con el envase que hubiera
-     * quedado.
-     *
-     * Acá cada forma es una opción con su propio nombre, así que elegir
-     * ya es elegir el envase.
-     *
-     * ⚠️ El producto que tiene UNA sola forma no se abre: un honorario,
-     * una consulta o un examen no tienen envase, y «CONSULTA GENERAL —
-     * Unidad» es ruido en el único renglón que iba a haber. Ahí el valor
-     * sigue siendo el id pelado.
-     *
-     * @return array<int|string, string>
+     * Con qué forma viene marcado «¿Cómo se le agrega?» al elegir el
+     * producto: la única, o el envase del que se leyó el código cuando
+     * ese envase es solo el origen. Nunca el envase sin abrir.
      */
-    private function formasDeEntrega(Item $item): array
+    private function formaInicial(Item $item): ?string
     {
-        $formas = $this->unidadesDeCobro($item);
+        $unica = $this->formaUnicaDe($item);
 
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 UN PRODUCTO CON UNA SOLA FORMA IGUAL SE ABRE
-         * ─────────────────────────────────────────────────────────────
-         *
-         * El renglón se colapsaba cuando había una sola forma, y eso
-         * estaba pensado para lo que NO tiene envase: «CONSULTA GENERAL
-         * — Unidad» es ruido en el único renglón que iba a haber.
-         *
-         * Pero se colapsaba también en un MEDICAMENTO con una sola
-         * presentación cargada, y ahí se comía las dos cosas que hacen
-         * falta:
-         *
-         *   · en pantalla, cuál envase se está cobrando — que era
-         *     justamente lo que Mauricio no encontraba: «solo me muestra
-         *     ACETAMINOFEN JARABE cuando debería mostrarme las
-         *     presentaciones en las que se vende»;
-         *   · y en el VALOR, la presentación. Colapsado, el valor es el
-         *     id pelado, así que el cargo entra sin
-         *     `item_presentacion_id` y después nadie sabe de qué envase
-         *     salió. Eso no se ve en la pantalla: se ve meses más tarde,
-         *     cuando hay que auditar de cuál frasco se sirvió.
-         *
-         * Así que ahora la condición mira lo que de verdad importa: si
-         * el producto MUEVE INVENTARIO, la forma siempre se dice, aunque
-         * sea una sola.
-         */
-        if (! self::seAbrePorForma($item, $formas)) {
-            return [$item->id => $item->etiqueta()];
+        if ($unica !== null) {
+            return $unica;
         }
 
-        $filas = [];
+        $leida = $this->presentacionDe($item, $this->presentacionEscaneada);
 
-        foreach ($formas as $clave => $etiqueta) {
-            $filas[$item->id.self::SEPARADOR_DE_FORMA.$clave] = $item->nombre.' — '.self::soloLaForma($etiqueta);
-        }
-
-        return $filas;
-    }
-
-    /**
-     * ¿Este producto se abre en un renglón por forma de entrega?
-     *
-     * Lo que NO mueve inventario y tiene una sola forma, no: «CONSULTA
-     * GENERAL — Unidad» es ruido en el único renglón que iba a haber.
-     *
-     * Lo que SÍ mueve inventario, siempre — aunque tenga una sola
-     * presentación cargada. Ver el comentario de `formasDeEntrega()`: el
-     * renglón colapsado no dice qué envase es, y su valor viaja sin la
-     * presentación, así que el cargo entra sin saber de cuál salió.
-     *
-     * @param array<int|string, string> $formas
-     */
-    private static function seAbrePorForma(Item $item, array $formas): bool
-    {
-        if ($formas === []) {
-            return false;
-        }
-
-        return count($formas) > 1 || $item->mueveInventario();
-    }
-
-    /**
-     * Cómo se lee lo que quedó elegido en el selector.
-     */
-    private function etiquetaDeLoElegido(mixed $valor): ?string
-    {
-        $item = $this->itemDe($valor);
-
-        if (! $item instanceof Item) {
+        if (! $leida instanceof ItemPresentacion || $leida->se_vende_entera) {
             return null;
         }
 
-        $filas = $this->formasDeEntrega($item);
+        $clave = self::POR_PRESENTACION.$leida->id;
 
-        return is_int($valor) || is_string($valor)
-            ? ($filas[$valor] ?? $item->nombre)
-            : $item->nombre;
+        return isset($this->unidadesDeCobro($item)[$clave]) ? $clave : null;
     }
 
     /**
-     * «FRASCO 60 ML — 60 ml» → «FRASCO 60 ML».
+     * La forma con la que se asienta la línea: la elegida si es de este
+     * producto, la única si hay una sola, y si no, ninguna.
      *
-     * El contenido lo repite el envase casi siempre —un frasco de 60 ml
-     * trae 60 ml— y lo que no repite lo dice la equivalencia debajo de la
-     * cantidad, que es donde hace falta leerlo. Acá alargaba el renglón
-     * hasta partirlo en dos.
+     * ⚠️ Una forma que no está en la lista de este producto no se
+     * corrige a otra: viene pegada del producto anterior o armada a mano
+     * en el cliente, y reemplazarla en silencio es elegir por la persona.
      */
-    private static function soloLaForma(string $etiqueta): string
+    private function formaElegida(Item $item, mixed $elegida): ?string
     {
-        $corto = mb_strstr($etiqueta, ' —', true);
+        if (is_string($elegida) && isset($this->unidadesDeCobro($item)[$elegida])) {
+            return $elegida;
+        }
 
-        return $corto === false || $corto === '' ? $etiqueta : $corto;
+        return $this->formaUnicaDe($item);
     }
 
     /**
-     * El valor que hay que ponerle al selector para dejar elegido este
-     * producto en la forma en que se despacha por defecto.
-     *
-     * ⚠️ NO se usa el envase que se acaba de escanear aunque se conozca.
-     * El código de barras vive en la presentación, así que pasar la
-     * pistola por una caja de cien dejaría «1 CAJA X 100» cargado, y en
-     * un hospital lo que se dispensa son dos tabletas. El default sigue
-     * siendo el más barato de los posibles: el escaneo dice QUÉ es,
-     * cuánto y en qué forma lo dice la persona.
+     * En qué forma se está agregando la línea que se está tecleando, o
+     * nulo mientras la persona no la elija.
      */
-    private function valorDelSelector(?Item $item): int|string|null
+    private function formaEnUso(Get $get): ?string
     {
-        if (! $item instanceof Item) {
+        $item = $this->itemDe($get('item_id'));
+
+        return $item instanceof Item ? $this->formaElegida($item, $get('unidad_cobro')) : null;
+    }
+
+    /**
+     * Una presentación de este producto, por id. Nulo si no es suya.
+     */
+    private function presentacionDe(Item $item, ?int $id): ?ItemPresentacion
+    {
+        if ($id === null) {
             return null;
         }
 
-        $formas = $this->unidadesDeCobro($item);
+        $presentacion = $this->presentacionesDe($item)->firstWhere('id', $id);
 
-        /*
-         * ⚠️ El MISMO criterio que `formasDeEntrega()`, y por eso vive en
-         * un método y no repetido acá. Si los dos no deciden igual, el
-         * escaneo deja puesto un valor que no está entre las opciones: el
-         * selector se ve vacío con el producto ya elegido, y no hay error
-         * en ningún lado.
-         */
-        if (! self::seAbrePorForma($item, $formas)) {
-            return $item->id;
-        }
-
-        return $item->id.self::SEPARADOR_DE_FORMA.$this->unidadDeCobroPorDefecto($item);
+        return $presentacion instanceof ItemPresentacion ? $presentacion : null;
     }
 
     /**
-     * Varios productos abiertos por forma, listos para el desplegable.
-     *
-     * @param iterable<int, Item> $items
-     *
-     * @return array<int|string, string>
-     */
-    private function filasDelSelector(iterable $items): array
-    {
-        $filas = [];
-
-        foreach ($items as $item) {
-            foreach ($this->formasDeEntrega($item) as $clave => $etiqueta) {
-                $filas[$clave] = $etiqueta;
-            }
-        }
-
-        return $filas;
-    }
-
-    /**
-     * En qué forma se está cobrando la línea que se está tecleando.
-     *
-     * Manda lo que dice el SELECTOR, no el campo escondido: el valor del
-     * selector es la elección que la persona vio y tocó, y el campo
-     * escondido puede venir pegado del ítem anterior cuando el Enter de
-     * la pistola manda el formulario antes de que el formulario se
-     * vuelva a pintar.
-     */
-    private function formaEnUso(Get $get): string
-    {
-        $valor = $get('item_id');
-        $item = $this->itemDe($valor);
-        $forma = self::formaDe($valor);
-
-        if ($forma === null) {
-            $escondida = $get('unidad_cobro');
-            $forma = is_string($escondida) && $escondida !== '' ? $escondida : null;
-        }
-
-        if (! $item instanceof Item) {
-            return $forma ?? self::POR_UNIDAD;
-        }
-
-        return $forma !== null && isset($this->unidadesDeCobro($item)[$forma])
-            ? $forma
-            : $this->unidadDeCobroPorDefecto($item);
-    }
-
-    /**
-     * Con qué unidad viene marcado el selector al elegir el producto.
-     *
-     * El envase habitual primero —el que el hospital marcó como
-     * predeterminado—, después el más chico, y recién al final la unidad
-     * suelta. Es el orden en que se despacha: quien pide un jarabe se
-     * lleva un frasco, no una lista de mililitros.
-     */
-    private function unidadDeCobroPorDefecto(Item $item): string
-    {
-        $opciones = $this->unidadesDeCobro($item);
-
-        if ($opciones === []) {
-            return self::POR_UNIDAD;
-        }
-
-        if (isset($opciones[self::POR_UNIDAD]) && $this->seEntregaSuelta($item)) {
-            return self::POR_UNIDAD;
-        }
-
-        $habitual = $this->presentacionesDe($item)
-            ->sortByDesc('es_predeterminada')
-            ->first();
-
-        $clave = $habitual instanceof ItemPresentacion
-            ? self::POR_PRESENTACION.$habitual->id
-            : null;
-
-        return $clave !== null && isset($opciones[$clave])
-            ? $clave
-            : (string) array_key_first($opciones);
-    }
-
-    /**
-     * Las presentaciones vigentes del ítem, en orden de contenido.
+     * Las presentaciones del ítem, en orden de contenido.
      *
      * @return ColeccionDeModelos<int, ItemPresentacion>
      */
@@ -5452,11 +5340,9 @@ class CuentasAbiertas extends Page
     {
         /*
          * 🔴 Memoria por pintada, por la misma razón que los estantes.
-         * Desde que la unidad de cobro depende del envase, esto se
-         * pregunta seis veces por render —las opciones del selector, si
-         * el producto se entrega suelto, cuál viene marcado, y la
-         * conversión de cada estante—. Sin la memoria son seis consultas
-         * por tecla en el buscador.
+         * Las formas, sus rótulos, la conversión y los estantes preguntan
+         * esto varias veces por render; sin la memoria son varias
+         * consultas por cada pausa del teclado.
          */
         if (isset($this->presentacionesPorItem[$item->id])) {
             return $this->presentacionesPorItem[$item->id];
@@ -5470,69 +5356,44 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Lo tecleado, llevado a unidades de dispensación.
-     *
-     * Devuelve `null` cuando la unidad elegida no se puede resolver —una
-     * presentación de otro ítem, una fracción en algo que no se
-     * fracciona—. Nunca un cero: el cero es una cantidad legal y
-     * confundirlos sería cobrar la nada (lección de `NumeroDeFormulario`).
+     * Lo tecleado, llevado a unidades de dispensación. La regla vive en
+     * `FormasDeCobro`: solo el envase marcado «sin abrir» multiplica.
      */
-    private function aUnidadesDeDispensacion(Item $item, string $unidad, Decimal $cantidad): ?Decimal
+    private function aUnidadesDeDispensacion(Item $item, string $forma, Decimal $cantidad): ?Decimal
     {
-        if ($unidad === self::POR_UNIDAD) {
-            return $cantidad;
-        }
-
-        if ($unidad === self::POR_FRACCION) {
-            if (! $item->fraccionable || $item->fracciones_por_unidad === null) {
-                return null;
-            }
-
-            return $cantidad->entre(Decimal::de($item->fracciones_por_unidad));
-        }
-
-        if (! str_starts_with($unidad, self::POR_PRESENTACION)) {
-            return null;
-        }
-
-        $presentacion = ItemPresentacion::query()
-            ->find((int) mb_substr($unidad, mb_strlen(self::POR_PRESENTACION)));
-
-        if (! $presentacion instanceof ItemPresentacion || $presentacion->item_id !== $item->id) {
-            return null;
-        }
-
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 EL ENVASE NUNCA MULTIPLICA. ES SOLO EL ORIGEN.
-         * ─────────────────────────────────────────────────────────────
-         *
-         * Regla de Mauricio (3-sep-2026): **se vende en lo que diga «se
-         * dispensa en»**. Si el hospital pone ML, se vende por ml; si
-         * pone FRASCO, por frasco; si pone TABLETA, por tableta. El
-         * hospital elige la unidad y con eso queda dicho todo.
-         *
-         * Por eso la presentación dejó de ser una unidad de cobro: dice
-         * de qué envase salió, y nada más. «5 de la caja de 100» son 5
-         * tabletas y quedan 95. Multiplicar acá era cobrar 500 y
-         * descontar 500 del estante con cinco tabletas en la mano.
-         *
-         * Y no hay excepción por magnitud ni por bandera: una sola regla,
-         * escrita en la ficha del producto, que se lee sin abrir el
-         * código. La versión anterior la deducía de la magnitud de la
-         * unidad — más lista y peor, porque había que ir a buscarla.
-         */
-        return $cantidad;
+        return app(FormasDeCobro::class)->aUnidadesDeDispensacion(
+            $item,
+            $forma,
+            $cantidad,
+            $this->presentacionesDe($item),
+        );
     }
 
     /**
-     * «2 CAJA X 100 TABLETAS = 200 TABLETA», para leerlo antes de apretar.
+     * Lo tecleado en el campo, ya en la unidad del kardex. Nulo si no se
+     * entiende, si no es positivo o si la forma no aplica.
      */
-    private function equivalencia(Item $item, string $unidad, mixed $cantidad): ?string
+    private function loPedidoEnDispensacion(Item $item, string $forma, mixed $cantidad): ?Decimal
     {
-        $enLaUnidad = $this->unidadDe($item);
+        $tecleada = NumeroDeFormulario::aDecimal($cantidad);
 
-        if ($unidad === self::POR_UNIDAD) {
+        if (! $tecleada instanceof Decimal || ! $tecleada->mayorQue('0')) {
+            return null;
+        }
+
+        return $this->aUnidadesDeDispensacion($item, $forma, $tecleada);
+    }
+
+    /**
+     * «2 CAJA X 100 TABLETAS = 200 TAB», para leerlo antes de apretar.
+     */
+    private function equivalencia(Item $item, string $forma, mixed $cantidad): ?string
+    {
+        $codigo = self::codigoDeLaUnidad($item) ?? $this->unidadDe($item) ?? 'unidades';
+
+        if ($forma === self::POR_UNIDAD) {
+            $enLaUnidad = $this->unidadDe($item);
+
             return $enLaUnidad === null ? null : 'En '.$enLaUnidad.'.';
         }
 
@@ -5542,39 +5403,39 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        $convertida = $this->aUnidadesDeDispensacion($item, $unidad, $tecleada);
+        $convertida = $this->aUnidadesDeDispensacion($item, $forma, $tecleada);
 
         if (! $convertida instanceof Decimal) {
             return null;
         }
 
-        $etiqueta = $this->unidadesDeCobro($item)[$unidad] ?? '';
+        $numero = ItemPresentacion::sinCerosDeMas($tecleada->redondeado(4));
+        $presentacion = $this->presentacionDeLaUnidad($item, $forma);
 
         /*
-         * Con el envase como origen no hay conversión que mostrar: la
-         * cantidad ya está en la unidad del kardex. Lo útil es decir de
-         * dónde sale, que es lo que la persona tiene que ir a buscar.
+         * El envase que solo es origen no convierte nada: la cantidad ya
+         * está en la unidad del kardex. Lo útil es decir de dónde sale,
+         * que es lo que la persona tiene que ir a buscar.
          */
-        if (str_starts_with($unidad, self::POR_PRESENTACION)) {
-            return sprintf(
-                '%s %s, del %s.',
-                rtrim(rtrim($tecleada->redondeado(4), '0'), '.'),
-                self::codigoDeLaUnidad($item) ?? $enLaUnidad ?? 'unidades',
-                mb_strstr($etiqueta, ' —', true) ?: $etiqueta,
-            );
+        if ($presentacion instanceof ItemPresentacion && ! $presentacion->se_vende_entera) {
+            return sprintf('%s %s, del %s.', $numero, $codigo, self::envaseCorto($presentacion));
         }
+
+        $enQue = $presentacion instanceof ItemPresentacion
+            ? self::envaseCorto($presentacion)
+            : $item->unidadFraccion->codigo;
 
         return sprintf(
             '%s %s = %s %s',
-            rtrim(rtrim($tecleada->redondeado(4), '0'), '.'),
-            mb_strstr($etiqueta, ' —', true) ?: $etiqueta,
-            rtrim(rtrim($convertida->redondeado(4), '0'), '.'),
+            $numero,
+            $enQue,
+            ItemPresentacion::sinCerosDeMas($convertida->redondeado(4)),
             /*
              * El CÓDIGO y no la etiqueta completa: «60 ml» en vez de «60
              * MILILITRO (ml)». Es la línea que va debajo de un campo
              * angosto, y la palabra larga la partía en tres.
              */
-            self::codigoDeLaUnidad($item) ?? $enLaUnidad ?? 'unidades',
+            $codigo,
         );
     }
 
@@ -5735,16 +5596,18 @@ class CuentasAbiertas extends Page
             return null;
         }
 
+        if (array_key_exists($id, $this->itemsPorId)) {
+            return $this->itemsPorId[$id];
+        }
+
         $item = Item::query()->find($id);
 
-        return $item instanceof Item ? $item : null;
+        return $this->itemsPorId[$id] = $item instanceof Item ? $item : null;
     }
 
     /**
-     * El ítem que hay dentro del valor del selector.
-     *
-     * «705» y «705|presentacion:12» son el mismo producto: lo segundo
-     * dice además en qué envase se está entregando.
+     * El id del ítem elegido. Llega como entero desde el código y como
+     * cadena desde el navegador; cualquier otra cosa no es un ítem.
      */
     private static function idDelItem(mixed $valor): ?int
     {
@@ -5752,35 +5615,7 @@ class CuentasAbiertas extends Page
             return $valor;
         }
 
-        if (! is_string($valor) || $valor === '') {
-            return null;
-        }
-
-        $izquierda = mb_strstr($valor, self::SEPARADOR_DE_FORMA, true);
-        $id = $izquierda === false ? $valor : $izquierda;
-
-        return is_numeric($id) ? (int) $id : null;
-    }
-
-    /**
-     * La forma de entrega que trae el valor del selector, o nulo cuando
-     * el producto tiene una sola y el valor viaja pelado.
-     */
-    private static function formaDe(mixed $valor): ?string
-    {
-        if (! is_string($valor)) {
-            return null;
-        }
-
-        $derecha = mb_strstr($valor, self::SEPARADOR_DE_FORMA);
-
-        if ($derecha === false) {
-            return null;
-        }
-
-        $forma = mb_substr($derecha, 1);
-
-        return $forma === '' ? null : $forma;
+        return is_string($valor) && ctype_digit($valor) ? (int) $valor : null;
     }
 
     /**
@@ -5814,8 +5649,8 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * El código escaneado resuelve el ítem y deja el foco listo para la
-     * cantidad. Si no lo encuentra, lo dice y no adivina.
+     * Lo escrito en el campo: un código elige el producto, un nombre
+     * busca, y la etiqueta de una gaveta acota.
      *
      * ─────────────────────────────────────────────────────────────────
      * 🔴 EN ESTE HOSPITAL SE ESCANEAN DOS COSAS DISTINTAS
@@ -5832,80 +5667,90 @@ class CuentasAbiertas extends Page
      * una forma farmacéutica por otra. Por eso la gaveta no elige, acota
      * — y quien dispensó dice cuál fue.
      *
-     * El prefijo alcanza para distinguirlas sin preguntarle nada a quien
-     * escanea, que es todo el punto de que el prefijo exista.
+     * ⚠️ Corre en cada pausa del teclado, así que NO manda
+     * notificaciones: lo que haya que decir va debajo del campo.
      */
     private function resolverEscaneo(mixed $codigo, Set $set): void
     {
-        if (! is_string($codigo) || trim($codigo) === '') {
-            return;
-        }
-
         $this->principioEscaneado = null;
+        $this->presentacionEscaneada = null;
+        $this->busquedaEscrita = null;
+        $this->avisoDelBuscador = null;
 
-        if (PrincipioActivo::pareceUnCodigoSuyo($codigo)) {
-            $this->resolverGaveta($codigo, $set);
-
-            return;
-        }
-
-        $presentacion = $this->presentacionPorCodigo($codigo);
-        $item = $this->itemPorCodigo($codigo);
+        $texto = is_string($codigo) ? trim($codigo) : '';
 
         /*
-         * ─────────────────────────────────────────────────────────────
-         * NO ERA UN CÓDIGO: SE BUSCA POR NOMBRE
-         * ─────────────────────────────────────────────────────────────
-         *
-         * El mismo campo sirve para las dos cosas, que es como se usa de
-         * verdad: la pistola escribe un código y una persona escribe
-         * «acetamin». Antes lo segundo terminaba en un aviso de «ese
-         * código no está», obligando a repetir el nombre en el selector
-         * de abajo.
+         * Borrar el campo es empezar de nuevo: lo elegido se suelta. Si
+         * no, el producto anterior queda puesto debajo de un campo vacío
+         * y Agregar cobra algo que ya no se ve.
          */
-        if (! $item instanceof Item) {
-            $this->buscarPorNombre($codigo, $set);
+        if ($texto === '') {
+            $this->soltarLoElegido($set);
 
             return;
         }
 
-        $this->busquedaEscrita = null;
+        if (PrincipioActivo::pareceUnCodigoSuyo($texto)) {
+            $this->resolverGaveta($texto, $set);
 
-        $valor = $this->valorDelSelector($item);
+            return;
+        }
 
-        $set('item_id', $valor);
-        $this->prepararLaLinea($valor, $set);
+        $item = $this->itemPorCodigo($texto);
+
+        /*
+         * No era un código: se busca por nombre. El mismo campo sirve
+         * para las dos cosas, que es como se usa de verdad — la pistola
+         * escribe un código y una persona escribe «acetamin».
+         */
+        if (! $item instanceof Item) {
+            $this->buscarPorNombre($texto, $set);
+
+            return;
+        }
+
+        /*
+         * ⚠️ El envase leído queda como ORIGEN, no como forma de cobro.
+         * Pasar la pistola por una caja de cien no es venderla: si se
+         * venden dos tabletas, el cargo dice que salieron de esa caja; si
+         * se vende la caja, lo elige quien cobra.
+         */
+        $presentacion = $this->presentacionPorCodigo($texto);
+
+        $this->presentacionEscaneada = $presentacion instanceof ItemPresentacion
+            && $presentacion->item_id === $item->id
+                ? $presentacion->id
+                : null;
+
+        $this->elegir($item->id, $set);
+    }
+
+    /**
+     * Deja el producto elegido, con la línea lista para escribir la
+     * cantidad.
+     */
+    private function elegir(int $id, Set $set): void
+    {
+        $set('item_id', $id);
 
         /*
          * ⚠️ La cantidad queda en UNO, no en el contenido de la caja.
          *
-         * La tentación es poner 100 al escanear una caja de 100 tabletas.
-         * Sería cobrarle una caja entera al paciente por pasar la pistola:
-         * en un hospital se dispensan dos tabletas, no el envase. El
-         * escaneo dice QUÉ es; cuánto lo dice la persona.
+         * Poner 100 al escanear una caja de 100 tabletas sería cobrarle
+         * una caja entera al paciente por pasar la pistola. El escaneo
+         * dice QUÉ es; cuánto, y si es la caja o la tableta, lo dice la
+         * persona.
          */
         $set('cantidad', 1);
 
-        $unidad = $this->unidadDe($item);
+        $this->prepararLaLinea($id, $set);
+    }
 
-        Notification::make()
-            ->success()
-            ->title($item->nombre)
-            ->body(
-                ($presentacion instanceof ItemPresentacion
-                    ? 'Leído de «'.$presentacion->nombre.'». '
-                    : '')
-                .($unidad === null
-                    ? 'Escribí la cantidad y presioná Agregar.'
-                    /*
-                     * Se avisa que quedó en la unidad suelta, no en la
-                     * caja. El default nunca cobra de más: si de verdad
-                     * se vende el envase entero, hay que decirlo.
-                     */
-                    : 'Se cobra por '.$unidad.'. Si vendés el envase entero, elegí ese renglón en '
-                        .'«¿Qué se le agrega?»: el mismo producto está una vez por cada envase.')
-            )
-            ->send();
+    private function soltarLoElegido(Set $set): void
+    {
+        $set('item_id', null);
+        $set('unidad_cobro', null);
+        $set('almacen_id', null);
     }
 
     /**
@@ -5914,257 +5759,203 @@ class CuentasAbiertas extends Page
      */
     private function resolverGaveta(string $codigo, Set $set): void
     {
+        $this->soltarLoElegido($set);
+
         $principio = PrincipioActivo::query()
-            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
+            ->whereRaw('upper(codigo) = ?', [mb_strtoupper($codigo)])
             ->first();
 
         if (! $principio instanceof PrincipioActivo) {
-            Notification::make()
-                ->warning()
-                ->title('Esa etiqueta no está en el catálogo')
-                ->body(
-                    'El código arranca con «'.PrincipioActivo::PREFIJO.'», así que es una etiqueta de '
-                    .'gaveta, pero ningún principio activo la tiene. Puede ser de una gaveta vieja: '
-                    .'reimprimí la etiqueta desde Farmacia → Principios activos.'
-                )
-                ->persistent()
-                ->send();
+            $this->avisoDelBuscador = 'Ningún principio activo tiene la etiqueta «'.$codigo.'». Si es de una '
+                .'gaveta vieja, reimprimila desde Farmacia → Principios activos.';
 
             return;
         }
 
-        $productos = $this->productosVigentesDe($principio);
+        $productos = $principio->productosVigentes();
 
-        if ($productos === []) {
-            Notification::make()
-                ->warning()
-                ->title('Nada vigente con '.$principio->nombre)
-                ->body(
-                    'La gaveta está etiquetada pero hoy ningún producto del catálogo lo lleva. Se '
-                    .'vincula desde la ficha del producto, en «Principios activos».'
-                )
-                ->persistent()
-                ->send();
+        if ($productos->isEmpty()) {
+            $this->avisoDelBuscador = 'La gaveta de '.$principio->nombre.' está etiquetada, pero hoy ningún '
+                .'producto lo lleva. Se vincula desde la ficha del producto, en «Principios activos».';
+
+            return;
+        }
+
+        /*
+         * Uno solo no es una elección: es el producto. Obligar a tocar un
+         * botón de una sola opción es un clic que no decide nada.
+         */
+        if ($productos->count() === 1) {
+            $this->elegir((int) $productos->firstOrFail()->getKey(), $set);
 
             return;
         }
 
         $this->principioEscaneado = (int) $principio->getKey();
-        $set('cantidad', 1);
-
-        /*
-         * Uno solo no es una elección: es el producto. Obligar a abrir un
-         * desplegable de un renglón es un clic que no decide nada.
-         */
-        if (count($productos) === 1) {
-            $valor = array_key_first($productos);
-
-            $set('item_id', $valor);
-            $this->prepararLaLinea($valor, $set);
-
-            Notification::make()
-                ->success()
-                ->title($principio->nombre)
-                ->body(
-                    'El único vigente que lo lleva: '.reset($productos)
-                    .'. Escribí la cantidad y presioná Agregar.'
-                )
-                ->send();
-
-            return;
-        }
-
-        $set('item_id', null);
-
-        /*
-         * ⚠️ Se cuentan PRODUCTOS, no renglones. Desde que el selector se
-         * abre por envase, un jarabe con tres frascos son tres renglones
-         * y un solo producto: decir «3 productos» mandaba a buscar dos
-         * que no existen.
-         */
-        $cuantos = count(array_unique(array_map(
-            static fn (int|string $clave): ?int => self::idDelItem($clave),
-            array_keys($productos),
-        )));
-
-        Notification::make()
-            ->success()
-            ->title($principio->nombre.' · '.$cuantos.' '.($cuantos === 1 ? 'producto' : 'productos'))
-            ->body(
-                'Abrí «¿Qué se le agrega?» y elegí en qué forma se le dio. La lista quedó acotada a '
-                .'los que llevan este principio activo.'
-            )
-            ->send();
     }
 
-    /**
-     * Los productos vigentes que llevan ese principio activo, ya
-     * rotulados para el desplegable y abiertos por forma de entrega.
-     *
-     * ⚠️ Las llaves son `int|string` por lo mismo que en
-     * `opcionesDelSelector()`: el producto de una sola forma viaja con el
-     * id pelado —que PHP convierte solo a entero— y el que tiene envases
-     * viaja como «705|presentacion:12».
-     *
-     * La consulta vive en el modelo —`PrincipioActivo::productosVigentes()`—
-     * y no acá: es una pregunta del negocio, se hace desde más de una
-     * pantalla, y en un método privado de una página de Filament no hay
-     * forma de probarla.
-     *
-     * @return array<int|string, string>
-     */
-    private function productosVigentesDe(PrincipioActivo $principio): array
-    {
-        $id = (int) $principio->getKey();
-
-        if (array_key_exists($id, $this->productosPorPrincipio)) {
-            return $this->productosPorPrincipio[$id];
-        }
-
-        $productos = $this->filasDelSelector($principio->productosVigentes());
-
-        return $this->productosPorPrincipio[$id] = $productos;
-    }
-
-    /**
-     * Las opciones que ve el desplegable: los del principio escaneado, o
-     * ninguna cuando no hay gaveta de por medio —ahí manda la búsqueda—.
-     *
-     * @return array<int|string, string>
-     */
-    private function productosDelPrincipioEscaneado(): array
-    {
-        if ($this->principioEscaneado === null) {
-            return [];
-        }
-
-        $principio = PrincipioActivo::query()->find($this->principioEscaneado);
-
-        return $principio instanceof PrincipioActivo
-            ? $this->productosVigentesDe($principio)
-            : [];
-    }
-
-    private function nombreDelPrincipioEscaneado(): string
-    {
-        if ($this->principioEscaneado === null) {
-            return '';
-        }
-
-        $principio = PrincipioActivo::query()->find($this->principioEscaneado);
-
-        return $principio instanceof PrincipioActivo ? $principio->nombre : '';
-    }
-
-    /**
-     * Lo que devuelve el buscador del selector.
-     *
-     * Con una gaveta escaneada busca DENTRO de esos productos y no en
-     * todo el catálogo: si la lista dice «solo lo que lleva
-     * ACETAMINOFÉN», teclear tiene que seguir respetando eso. Un filtro
-     * que se rompe al escribir es peor que no tenerlo.
-     *
-     * @return array<int|string, string>
-     */
     /**
      * Lo escrito no era un código: se busca en el catálogo.
      *
      *   · Un solo resultado → se elige solo. Escribir «hemogr» y apretar
      *     Enter carga el hemograma sin tocar el mouse.
-     *   · Varios            → el selector de abajo se abre con esos, sin
-     *     volver a teclear.
+     *   · Varios            → aparecen debajo del campo, para tocar uno.
      *   · Ninguno           → se dice que no hay, y por qué puede ser.
      */
     private function buscarPorNombre(string $texto, Set $set): void
     {
-        $termino = trim($texto);
+        $this->soltarLoElegido($set);
 
-        $encontrados = Item::buscar($termino, soloVigentes: true, soloDelRol: true)
-            ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12));
+        /*
+         * Con menos de tres letras no se busca: «ac» trae medio catálogo
+         * y nadie lo va a leer. Tres letras es lo que pide el texto del
+         * campo.
+         */
+        if (mb_strlen($texto) < 3) {
+            return;
+        }
 
-        if ($encontrados->isEmpty()) {
-            $this->busquedaEscrita = null;
+        $encontrados = $this->buscarEnElCatalogo($texto);
 
-            Notification::make()
-                ->warning()
-                ->title('No hay nada con «'.$termino.'»')
-                ->body(
-                    'Ni como código ni como nombre. Ojo: el código de barras se registra en la '
-                    .'PRESENTACIÓN —la caja, el frasco, el blíster—, no en el ítem; si el producto existe '
-                    .'pero nunca se le cargó su presentación, la pistola no lo va a encontrar.'
-                )
-                ->persistent()
-                ->send();
+        if ($encontrados === []) {
+            $this->avisoDelBuscador = 'No hay nada con «'.$texto.'», ni como código ni como nombre. Ojo: el '
+                .'código de barras se registra en la PRESENTACIÓN —la caja, el frasco, el blíster—; si el '
+                .'producto existe pero no tiene su presentación cargada, la pistola no lo encuentra.';
 
             return;
         }
 
-        if ($encontrados->count() === 1) {
-            /*
-             * `firstOrFail` y no `first`: devuelve el ítem sin `null`,
-             * así no hace falta un `instanceof` que en este punto ya es
-             * siempre verdadero.
-             */
-            $primero = $encontrados->firstOrFail();
-
-            $this->busquedaEscrita = null;
-
-            $valor = $this->valorDelSelector($primero);
-
-            $set('item_id', $valor);
-            $set('cantidad', 1);
-            $this->prepararLaLinea($valor, $set);
-
-            Notification::make()
-                ->success()
-                ->title($primero->nombre)
-                ->body('Escribí la cantidad y presioná Agregar.')
-                ->send();
+        if (count($encontrados) === 1) {
+            $this->elegir((int) array_key_first($encontrados), $set);
 
             return;
         }
 
-        $this->busquedaEscrita = $termino;
-
-        Notification::make()
-            ->info()
-            ->title($encontrados->count().' resultados con «'.$termino.'»')
-            ->body('Abrí «¿Qué se le agrega?» y elegí: la lista ya viene con esos.')
-            ->send();
+        $this->busquedaEscrita = $texto;
     }
 
     /**
-     * Con qué se abre el selector cuando nadie ha escrito nada en él.
+     * Lo que se ofrece debajo del campo: los productos de la gaveta
+     * escaneada, o los que encontró lo escrito.
      *
-     * Primero manda la gaveta escaneada —es el filtro más específico— y
-     * después lo que se escribió arriba. Sin ninguno de los dos, vacío:
-     * el catálogo entero en un desplegable no se navega, se busca.
-     *
-     * ⚠️ Las llaves son `int|string` porque PHP convierte solo a entero
-     * cualquier llave numérica: `['5' => …]` termina siendo `[5 => …]`.
-     * Declararlo `array<string, string>` era mentirle al analizador.
-     *
-     * @return array<int|string, string>
+     * @return array<int, string>
      */
-    private function opcionesDelSelector(): array
+    private function resultadosDelBuscador(): array
     {
         if ($this->principioEscaneado !== null) {
-            return $this->productosDelPrincipioEscaneado();
+            $clave = 'p:'.$this->principioEscaneado;
+
+            if (! array_key_exists($clave, $this->resultadosDelBuscador)) {
+                $principio = PrincipioActivo::query()->find($this->principioEscaneado);
+
+                $this->resultadosDelBuscador[$clave] = $principio instanceof PrincipioActivo
+                    ? $principio->productosVigentes()
+                        ->mapWithKeys(fn (Item $item): array => [$item->id => $item->nombre])
+                        ->all()
+                    : [];
+            }
+
+            return $this->resultadosDelBuscador[$clave];
         }
 
-        if ($this->busquedaEscrita === null) {
-            return [];
-        }
-
-        return $this->filasDelSelector(
-            Item::buscar($this->busquedaEscrita, soloVigentes: true, soloDelRol: true)
-                ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
-        );
+        return $this->busquedaEscrita === null
+            ? []
+            : $this->buscarEnElCatalogo($this->busquedaEscrita);
     }
 
     /**
-     * «ACETAMINOFÉN TABLETA · se cobra por TABLETA» — lo que quedó
-     * elegido, fijo debajo del campo de escaneo.
+     * Productos vigentes y del área de quien cobra, por nombre o código.
+     *
+     * @return array<int, string>
+     */
+    private function buscarEnElCatalogo(string $texto): array
+    {
+        $clave = 't:'.$texto;
+
+        if (array_key_exists($clave, $this->resultadosDelBuscador)) {
+            return $this->resultadosDelBuscador[$clave];
+        }
+
+        return $this->resultadosDelBuscador[$clave] = Item::buscar(
+            $texto,
+            limite: self::resultadosALaVista(),
+            soloVigentes: true,
+            soloDelRol: true,
+        )
+            ->mapWithKeys(fn (Item $item): array => [$item->id => $item->nombre])
+            ->all();
+    }
+
+    /**
+     * Un botón por resultado. El elegido va marcado, y los demás siguen
+     * ahí para cambiar de idea sin volver a escribir.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * ⚠️ CASILLEROS FIJOS, NO UNA LISTA QUE SE ARMA CON LO ESCRITO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Filament guarda en memoria los hijos de un componente durante la
+     * petición. Con la lista armada a partir de lo escrito, los botones
+     * se calculaban ANTES de que corriera la búsqueda —al ubicar el campo
+     * que cambió— y la pantalla mostraba los resultados de la tecla
+     * anterior.
+     *
+     * Así son siempre los mismos casilleros, y lo que cambia —el rótulo,
+     * si se ve, si es el elegido— se pregunta al pintar, cuando la
+     * búsqueda ya corrió.
+     *
+     * @return list<Action>
+     */
+    private function botonesDelBuscador(): array
+    {
+        $botones = [];
+
+        for ($casillero = 0; $casillero < self::resultadosALaVista(); $casillero++) {
+            $botones[] = Action::make('elegir_resultado_'.$casillero)
+                ->label(fn (): string => $this->resultadoEn($casillero)['nombre'] ?? '')
+                ->visible(fn (): bool => $this->resultadoEn($casillero) !== null)
+                ->size(Size::Small)
+                ->color(fn (Get $get): string => $this->esElElegido($casillero, $get) ? 'primary' : 'gray')
+                ->outlined(fn (Get $get): bool => ! $this->esElElegido($casillero, $get))
+                ->icon(fn (Get $get): ?Heroicon => $this->esElElegido($casillero, $get) ? Heroicon::CheckCircle : null)
+                ->action(function (Set $set) use ($casillero): void {
+                    $resultado = $this->resultadoEn($casillero);
+
+                    if ($resultado !== null) {
+                        $this->elegir($resultado['id'], $set);
+                    }
+                });
+        }
+
+        return $botones;
+    }
+
+    private static function resultadosALaVista(): int
+    {
+        return max(1, (int) config('sihla.facturacion.resultados_de_busqueda', 12));
+    }
+
+    /**
+     * @return array{id: int, nombre: string}|null
+     */
+    private function resultadoEn(int $casillero): ?array
+    {
+        $resultados = $this->resultadosDelBuscador();
+        $id = array_keys($resultados)[$casillero] ?? null;
+
+        return $id === null ? null : ['id' => $id, 'nombre' => $resultados[$id]];
+    }
+
+    private function esElElegido(int $casillero, Get $get): bool
+    {
+        $resultado = $this->resultadoEn($casillero);
+
+        return $resultado !== null && $resultado['id'] === self::idDelItem($get('item_id'));
+    }
+
+    /**
+     * «ACETAMINOFEN 500 MG TABLETA · leído de CAJA X 100 TABLETAS ·
+     * MED-0801» — lo que quedó elegido, fijo debajo del buscador.
      */
     private function resumenDeLoElegido(Get $get): HtmlString
     {
@@ -6176,18 +5967,22 @@ class CuentasAbiertas extends Page
 
         $partes = ['<strong>'.e($item->nombre).'</strong>'];
 
-        /*
-         * 🔴 Dice cómo se cobra DE VERDAD, no la unidad del kardex.
-         *
-         * Un jarabe que no se fracciona se cobra por frasco, y el
-         * encabezado seguía anunciando «se cobra por MILILITRO (ml)»
-         * mientras el selector de abajo solo ofrecía frascos. Dos
-         * afirmaciones contradictorias a diez centímetros de distancia.
-         */
-        $comoSeCobra = $this->unidadesDeCobro($item)[$this->formaEnUso($get)] ?? null;
+        $leida = $this->presentacionDe($item, $this->presentacionEscaneada);
 
-        if (is_string($comoSeCobra)) {
-            $partes[] = 'se cobra por '.e(mb_strstr($comoSeCobra, ' —', true) ?: $comoSeCobra);
+        if ($leida instanceof ItemPresentacion) {
+            $partes[] = 'leído de '.e(self::envaseCorto($leida));
+        }
+
+        /*
+         * Cómo se cobra, solo cuando no hay que preguntarlo. Con la
+         * tableta y la caja la respuesta está en los botones de abajo, y
+         * escribir una acá antes de que la persona elija sería afirmar
+         * algo que todavía no se decidió.
+         */
+        $unica = $this->formaUnicaDe($item);
+
+        if ($unica !== null) {
+            $partes[] = e($this->rotuloDeLaForma($item, $unica));
         }
 
         if ($item->codigo !== '') {
@@ -6202,17 +5997,13 @@ class CuentasAbiertas extends Page
     /**
      * La cantidad de la línea, leída en envases: «1 BLISTER X 10 + 5 TAB».
      *
-     * La cantidad siempre está en la unidad de venta, así que esto se
-     * puede decir siempre: es la traducción de un número a lo que la
-     * persona tiene enfrente en el estante.
+     * Es la traducción de un número a lo que la persona tiene enfrente en
+     * el estante, y por eso recibe la cantidad YA convertida a la unidad
+     * del kardex.
      */
-    private function enEnvases(Item $item, mixed $cantidad): ?string
+    private function enEnvases(Item $item, Decimal $cantidad): ?string
     {
-        $pedida = NumeroDeFormulario::aDecimal($cantidad);
-
-        return $pedida instanceof Decimal
-            ? app(LecturaEnEnvases::class)->de($item, $pedida)
-            : null;
+        return app(LecturaEnEnvases::class)->de($item, $cantidad);
     }
 
     /**
@@ -6222,25 +6013,48 @@ class CuentasAbiertas extends Page
      * detiene cuando ya cubrió lo pedido, así que una cantidad que abarca
      * dos lotes los nombra a los dos: es exactamente lo que la persona
      * tiene que ir a buscar al estante.
+     *
+     * ⚠️ Con la cantidad CONVERTIDA. Una caja de 100 sin abrir son 100
+     * tabletas, y con el «1» tecleado el texto decía de qué lote sale UNA
+     * tableta.
      */
-    private function deQueLoteSale(Item $item, Get $get, ?string $unidadDeCobro): ?string
+    private function deQueLoteSale(Item $item, Get $get, string $forma): ?string
     {
-        $almacen = $this->almacenElegido($get, $item, $unidadDeCobro);
+        $almacen = $this->almacenElegido($get, $item, $forma);
 
         if (! $almacen instanceof Almacen) {
             return null;
         }
 
-        $pedida = $this->loPedido($get('cantidad'));
+        $pedida = $this->loPedidoEnDispensacion($item, $forma, $get('cantidad'));
 
         if (! $pedida instanceof Decimal) {
             return null;
         }
 
+        $lotes = app(ConsultorDeExistencias::class)->enOrdenFefo($item, $almacen);
+
+        /*
+         * El envase sin abrir sale solo de lotes de ese envase, igual que
+         * en `RegistradorDeCargo`: si acá se nombraran los de cualquier
+         * envase, la pantalla mandaría a buscar la caja a un lote de
+         * blísteres.
+         */
+        $sinAbrir = app(FormasDeCobro::class)->esEnvaseEntero($forma, $this->presentacionesDe($item))
+            ? $this->presentacionDeLaUnidad($item, $forma)
+            : null;
+
+        if ($sinAbrir instanceof ItemPresentacion) {
+            $lotes = $lotes->filter(
+                fn (Existencia $saldo): bool => $saldo->lote_id !== null
+                    && $saldo->lote->item_presentacion_id === $sinAbrir->id,
+            );
+        }
+
         $nombres = [];
         $restante = $pedida;
 
-        foreach (app(ConsultorDeExistencias::class)->enOrdenFefo($item, $almacen) as $saldo) {
+        foreach ($lotes as $saldo) {
             if (! $restante->mayorQue('0')) {
                 break;
             }
@@ -6293,20 +6107,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Lo pedido, en la unidad del kardex.
-     *
-     * Es una lectura del campo y nada más: la cantidad ya viene en la
-     * unidad de venta —la que dice «se dispensa en»— y esa ES la del
-     * kardex. No hay conversión que hacer.
-     */
-    private function loPedido(mixed $cantidad): ?Decimal
-    {
-        $pedida = NumeroDeFormulario::aDecimal($cantidad);
-
-        return $pedida instanceof Decimal && $pedida->mayorQue('0') ? $pedida : null;
-    }
-
-    /**
      * Lo que hay que leer antes de apretar Agregar: la equivalencia, la
      * cantidad leída en envases, y de qué lote hay que sacarlo.
      *
@@ -6316,16 +6116,15 @@ class CuentasAbiertas extends Page
     private function comoQuedaLaLinea(Get $get): HtmlString
     {
         $item = $this->itemDe($get('item_id'));
+        $forma = $this->formaEnUso($get);
 
-        if (! $item instanceof Item) {
+        if (! $item instanceof Item || $forma === null) {
             return new HtmlString('&nbsp;');
         }
 
-        $unidadCobro = $this->formaEnUso($get);
-
         $partes = [];
 
-        $equivalencia = $this->equivalencia($item, $unidadCobro, $get('cantidad'));
+        $equivalencia = $this->equivalencia($item, $forma, $get('cantidad'));
 
         if (is_string($equivalencia) && trim($equivalencia) !== '') {
             $partes[] = '<strong>'.e(rtrim($equivalencia, '.')).'</strong>';
@@ -6338,23 +6137,29 @@ class CuentasAbiertas extends Page
          *
          * «15 TAB» no le dice nada a quien está frente al estante;
          * «1 BLISTER X 10 + 5 TAB» sí. Es una LECTURA y no un saldo: el
-         * kardex sigue en la unidad mínima y la existencia sigue sin
-         * partirse por presentación, porque un saldo por envase exige que
-         * alguien teclee de qué caja física sacó cada tableta — y con
-         * varias personas despachando eso no pasa nunca.
+         * kardex sigue en la unidad mínima.
+         *
+         * Sobra cuando lo que se vende ES el envase sin abrir: «1 CAJA X
+         * 100 = 100 TAB · 1 CAJA X 100» dice dos veces lo mismo.
          */
-        $enEnvases = $this->enEnvases($item, $get('cantidad'));
+        $pedida = $this->loPedidoEnDispensacion($item, $forma, $get('cantidad'));
 
-        if (is_string($enEnvases)) {
-            $partes[] = e($enEnvases);
+        if ($pedida instanceof Decimal
+            && ! app(FormasDeCobro::class)->esEnvaseEntero($forma, $this->presentacionesDe($item))
+        ) {
+            $enEnvases = $this->enEnvases($item, $pedida);
+
+            if (is_string($enEnvases)) {
+                $partes[] = e($enEnvases);
+            }
         }
 
         if ($item->mueveInventario()) {
-            if ($this->estantesConLoQueHay($item, $unidadCobro) === []) {
+            if ($this->estantesConLoQueHay($item, $forma) === []) {
                 return new HtmlString(
                     '<span style="font-size:.8125rem;color:rgb(248 113 113)">'
                     .'No hay existencia de este producto en ningún almacén. '
-                    .'Recibilo, trasladalo, o registrá abajo que se pidió prestado.'
+                    .'Recibilo, trasladalo, o registrá arriba que se pidió prestado.'
                     .'</span>'
                 );
             }
@@ -6364,17 +6169,14 @@ class CuentasAbiertas extends Page
              * DE QUÉ LOTE HAY QUE SACARLO, CON NOMBRE Y VENCIMIENTO
              * ─────────────────────────────────────────────────────────
              *
-             * Antes decía «sale por FEFO: primero el lote que vence
-             * antes», que es la REGLA y no la RESPUESTA. Quien está por
-             * caminar al estante no necesita que le expliquen el criterio:
-             * necesita saber cuál caja agarrar.
-             *
-             * El sistema ya eligió —`enOrdenFefo()` lo resuelve antes de
-             * guardar—, así que decirlo no cuesta una consulta nueva de
-             * más y evita el error que sí cuesta: sacar del lote
-             * equivocado y dejar venciendo el que había que gastar.
+             * La RESPUESTA y no la regla: quien está por caminar al
+             * estante no necesita que le expliquen FEFO, necesita saber
+             * cuál caja agarrar. El sistema ya eligió —`enOrdenFefo()` lo
+             * resuelve antes de guardar—, así que decirlo evita el error
+             * que sí cuesta: sacar del lote equivocado y dejar venciendo
+             * el que había que gastar.
              */
-            $delLote = $this->deQueLoteSale($item, $get, $unidadCobro);
+            $delLote = $this->deQueLoteSale($item, $get, $forma);
 
             $partes[] = $delLote ?? 'sale por FEFO: primero el lote que vence antes';
         }
@@ -6385,27 +6187,6 @@ class CuentasAbiertas extends Page
 
         return new HtmlString(
             '<span style="font-size:.8125rem">'.implode(' · ', $partes).'</span>'
-        );
-    }
-
-    private function resultadosDeBusqueda(string $search): array
-    {
-        if ($this->principioEscaneado === null) {
-            return $this->filasDelSelector(
-                Item::buscar($search, soloVigentes: true, soloDelRol: true)
-                    ->take((int) config('sihla.facturacion.resultados_de_busqueda', 12))
-            );
-        }
-
-        $clave = NormalizadorDeTexto::clave($search);
-
-        if ($clave === '') {
-            return $this->productosDelPrincipioEscaneado();
-        }
-
-        return array_filter(
-            $this->productosDelPrincipioEscaneado(),
-            fn (string $etiqueta): bool => str_contains(NormalizadorDeTexto::clave($etiqueta), $clave),
         );
     }
 

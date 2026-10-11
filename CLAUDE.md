@@ -785,6 +785,9 @@ Las reglas marcadas 🔴 son aquellas cuya violación produce **daño irreversib
 2. *(17-ago-2026)* `maatwebsite/excel ^3.1` resuelve en Laravel 13 pero arrastra PhpSpreadsheet 1.x (rama solo-CVE). Fijar `^4.0` (§6.2-2).
 3. *(17-ago-2026)* Livewire 4 SFC no se usan: Pint no formatea el PHP embebido.
 4. *(17-ago-2026)* Los servicios médicos y los medicamentos son **exentos de ISV** en Honduras (Art. 15 b y d de la Ley del ISV). Diseñar el impuesto como flag de empresa habría sido un error estructural (§8.6.1).
+5. *(10-oct-2026)* **Con `pest --parallel`, todo ayudante que usen dos archivos de test va en `tests/Pest.php`.** Cada proceso carga solo sus archivos: definido en uno, el otro revienta con `Call to undefined function` según cómo caiga el reparto. Los ayudantes de un solo archivo llevan nombre propio (son funciones globales).
+6. *(10-oct-2026)* **Eager load con columnas nombradas: la columna que no está en la lista llega `null` sin error.** Faltaba `convenios.base_descuento_legal` y `/cuentas` dio 500. Toda columna nueva que lea una tarjeta se agrega a la consulta, y hay un test que pasa por esa misma consulta (`TarjetaDeCuentaTest`).
+7. *(10-oct-2026)* **Filament guarda en memoria los hijos de un componente durante la petición.** Un `Actions::make(fn () => …)` armado con lo que cambia un `afterStateUpdated` puede pintarse con el estado de antes. Para listas que dependen de lo escrito: casilleros fijos y el rótulo/visibilidad en closures, que se evalúan al pintar (`CuentasAbiertas::botonesDelBuscador()`).
 
 ---
 

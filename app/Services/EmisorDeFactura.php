@@ -11,6 +11,7 @@ use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDocumentoDeVenta;
+use App\Domain\Enums\TipoIdentificador;
 use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
@@ -134,6 +135,8 @@ final class EmisorDeFactura
             $desglosar ??= (bool) ($bloqueada->convenio->desglosa_paquetes ?? false);
 
             $renglones = $this->renglonesDelPapel($cargos, $desglosar);
+
+            $cliente = $this->conElRtnDelPagador($bloqueada, $cliente);
 
             $this->exigirDocumentoSiCorresponde($cliente, $totales['total']);
 
@@ -792,6 +795,50 @@ final class EmisorDeFactura
         if ($total->mayorQue($umbral)) {
             throw FacturaException::faltaElDocumento($umbral->redondeado(2));
         }
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 CON SEGURO, LA FACTURA SALE CON EL RTN DEL SEGURO. SIEMPRE.
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Regla del hospital (10-oct-2026). La aseguradora —o el Militar, o
+     * el IHSS— es quien paga y quien reembolsa, y su RTN es el que va en
+     * el papel. Antes, sin RTN cargado en el convenio, la pantalla
+     * proponía la identidad del paciente, y la factura salía a nombre
+     * del seguro con el documento de otra persona.
+     *
+     * Se decide ACÁ y no en la pantalla: el número sale del convenio y
+     * lo que haya llegado en el formulario no cuenta. Si el convenio no
+     * lo tiene, no se emite — se carga una vez en Seguros y convenios y
+     * no vuelve a faltar. El nombre, la dirección y la póliza sí quedan
+     * como vinieron.
+     */
+    private function conElRtnDelPagador(Cuenta $cuenta, ClienteDeFactura $cliente): ClienteDeFactura
+    {
+        $convenio = $cuenta->convenio;
+
+        if (! $convenio->tipo->pagaUnTercero()) {
+            return $cliente;
+        }
+
+        $rtn = trim((string) $convenio->rtn);
+
+        if ($rtn === '') {
+            throw FacturaException::faltaElRtnDelPagador($convenio->nombre);
+        }
+
+        return new ClienteDeFactura(
+            nombre: $cliente->nombre,
+            documento: $rtn,
+            tipoDocumento: TipoIdentificador::Rtn,
+            direccion: $cliente->direccion,
+            telefono: $cliente->telefono,
+            codigo: $cliente->codigo,
+            ordenExenta: $cliente->ordenExenta,
+            constanciaExonerado: $cliente->constanciaExonerado,
+            registroSag: $cliente->registroSag,
+        );
     }
 
     /**

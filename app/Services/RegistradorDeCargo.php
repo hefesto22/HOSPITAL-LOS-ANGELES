@@ -19,6 +19,7 @@ use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Almacen;
 use App\Models\Cargo;
 use App\Models\Cuenta;
+use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
@@ -165,6 +166,7 @@ final class RegistradorDeCargo
             }
 
             $repartos = $this->repartirPorLote($linea);
+            $envasesPorFila = $this->envasesPorFila($linea, $repartos);
 
             /** @var Collection<int, Cargo> $cargos */
             $cargos = new Collection;
@@ -194,6 +196,7 @@ final class RegistradorDeCargo
                      */
                     conDescuento: $indice === 0,
                     ocurridoEn: $ocurridoEn,
+                    envases: $envasesPorFila[$indice] ?? null,
                 ));
 
                 /*
@@ -242,6 +245,7 @@ final class RegistradorDeCargo
         int $indice,
         bool $conDescuento,
         CarbonInterface $ocurridoEn,
+        ?Decimal $envases = null,
     ): Cargo {
         $item = $linea->item;
         $encuentro = $cuenta->encuentro;
@@ -352,7 +356,7 @@ final class RegistradorDeCargo
              * lo puede ver.
              */
             'item_presentacion_id'  => $this->presentacionDelCargo($item, $linea)?->id,
-            'cantidad_presentacion' => $this->envaseDelCargo($item, $linea)?->redondeado(4),
+            'cantidad_presentacion' => $envases?->redondeado(4),
             'ocurrido_en'           => $ocurridoEn,
             'registrado_en'         => now(),
             'cantidad'              => $cantidad->redondeado(4),
@@ -390,6 +394,52 @@ final class RegistradorDeCargo
     }
 
     /**
+     * Cuántos envases le tocan a cada fila del reparto por lote.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 UNA CAJA PARTIDA EN DOS LOTES SIGUE SIENDO UNA CAJA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Si las 100 tabletas de una caja salen 60 de un lote y 40 de otro,
+     * se asientan dos filas. Con los envases copiados enteros a cada una,
+     * el renglón —que los suma— diría «2 CAJA» por 100 tabletas: una
+     * cantidad que nadie entregó, en la factura que el paciente lee.
+     *
+     * Se reparten en la proporción de lo que salió de cada lote, y el
+     * residuo del redondeo va a la última fila, para que la suma dé
+     * exactamente lo vendido. Una parte que redondea a cero queda sin
+     * envases: la base prohíbe el cero, y la fila igual dice de qué
+     * presentación salió.
+     *
+     * @param list<array{lote: Lote|null, cantidad: Decimal}> $repartos
+     *
+     * @return list<Decimal|null>
+     */
+    private function envasesPorFila(LineaDeCargo $linea, array $repartos): array
+    {
+        $envases = $this->envaseDelCargo($linea->item, $linea);
+
+        if (! $envases instanceof Decimal || count($repartos) <= 1) {
+            return array_map(static fn (array $reparto): ?Decimal => $envases, $repartos);
+        }
+
+        $filas = [];
+        $asignado = Decimal::cero();
+        $ultima = count($repartos) - 1;
+
+        foreach ($repartos as $indice => $reparto) {
+            $parte = $indice === $ultima
+                ? $envases->restar($asignado)
+                : Decimal::de($envases->por($reparto['cantidad'])->entre($linea->cantidad)->redondeado(4));
+
+            $asignado = $asignado->sumar($parte);
+            $filas[] = Decimal::de($parte->redondeado(4))->esCero() ? null : $parte;
+        }
+
+        return $filas;
+    }
+
+    /**
      * Cómo se reparte la cantidad entre lotes, en orden FEFO.
      *
      * Un solo elemento con lote `null` cuando el ítem no mueve
@@ -413,6 +463,32 @@ final class RegistradorDeCargo
         $almacen = $linea->almacen;
 
         $disponibles = $this->existencias->enOrdenFefo($linea->item, $almacen);
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 EL ENVASE SIN ABRIR SALE DE UN LOTE DE ESE ENVASE
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Una caja de 100 vendida sin abrir es una caja que estaba en el
+         * estante con su lote impreso. Si FEFO la armara con tabletas de
+         * un lote de blíster, el cargo diría que el paciente se llevó ese
+         * lote y la caja en la mano diría otro: ante un retiro de
+         * mercado, la trazabilidad lote → paciente (§9.F9) apuntaría al
+         * paciente equivocado.
+         *
+         * Solo para lo que se vende sin abrir. La tableta suelta sigue
+         * saliendo de donde FEFO diga, que es la regla de siempre.
+         */
+        $sinAbrir = $this->envaseDelCargo($linea->item, $linea) instanceof Decimal
+            ? $this->presentacionDelCargo($linea->item, $linea)
+            : null;
+
+        if ($sinAbrir instanceof ItemPresentacion) {
+            $disponibles = $disponibles->filter(
+                fn (Existencia $existencia): bool => $existencia->lote_id !== null
+                    && $existencia->lote->item_presentacion_id === $sinAbrir->id,
+            );
+        }
 
         $repartos = [];
         $pendiente = $linea->cantidad;

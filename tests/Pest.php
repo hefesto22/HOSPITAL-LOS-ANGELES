@@ -143,8 +143,15 @@ function unaCuentaCon(Convenio $convenio, int $edad = 40): Cuenta
 function unSeguroQueCubre(string $fraccion): Convenio
 {
     return Convenio::factory()->create([
-        'tipo'                  => TipoConvenio::AseguradoraPrivada,
-        'base_descuento_legal'  => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
+        'tipo'                 => TipoConvenio::AseguradoraPrivada,
+        'base_descuento_legal' => BaseDelDescuentoLegal::SobreLoQuePagaElPaciente,
+
+        /*
+         * Con RTN: con seguro, la factura sale con el RTN del convenio y
+         * sin él no se emite (10-oct-2026). Un seguro de prueba sin RTN
+         * no podría facturar nada.
+         */
+        'rtn'                   => '08019001234567',
         'cobertura_fraccion'    => $fraccion,
         'cubre_por_defecto'     => true,
         'requiere_autorizacion' => false,

@@ -95,6 +95,21 @@ Reglas que esto arrastra:
 - **El sobrante que se descarta es MERMA, no venta.** Debe salir del kardex con motivo, no desaparecer. Si no, el inventario "cuadra" porque nadie registró lo que se botó.
 - **El precio del ml no es el precio del frasco entre los ml.** Cuando se cobra por dosis casi siempre se pierde producto; el margen tiene que absorberlo o el hospital pierde en cada nebulización.
 
+### 3.1.1 La tableta o la caja sin abrir — DECIDIDO (10-oct-2026)
+
+> **Mauricio:** «Cuando son tabletas debería poderse poner si se dispensa en tableta o caja. La unidad de envase está bien porque es donde viene envasado, y a veces el envase es un frasco que trae 100. Pero debería poderse manejar el envase y cómo se dispensa.»
+
+| Decisión | Resolución |
+|---|---|
+| Dónde se configura | **En cada presentación**: interruptor «También se vende sin abrir» (`item_presentaciones.se_vende_entera`, apagado por defecto). La caja de 100 puede venderse entera y el blíster de 10 del mismo producto no |
+| Al cobrar | «¿Cómo se le agrega?» ofrece la unidad suelta y cada envase marcado. **Sin nada preseleccionado** cuando hay más de una forma: lo elige quien cobra y el formulario no deja seguir sin respuesta |
+| Qué significa vender el envase | **Multiplica la cantidad, no cambia el precio**: 1 CAJA X 100 = 100 TAB que salen del kardex, al precio de 100 tabletas. El renglón de la cuenta se lee «1 CAJA» (`cargos.cantidad_presentacion`) |
+| Envase sin la marca | Sigue siendo solo el **origen** (regla del 3-sep-2026): dice de qué envase se sacó y no multiplica |
+| De qué lote sale la caja sin abrir | Solo de lotes recibidos **en esa presentación**. Una caja no se arma con tabletas de un lote de blíster (§9.F9) |
+| Caja partida por FEFO entre dos lotes | Los envases se reparten en proporción a lo que salió de cada lote y el residuo va a la última fila: la suma da exactamente lo vendido |
+
+La regla vive en `App\Services\FormasDeCobro` y la prueba `tests/Feature/Cuentas/CajaSinAbrirTest.php`.
+
 ### 3.2 Otros atributos del producto
 
 Código de barras propio e **impresión de etiquetas** para producto (ZPL — ver pendiente #7 de `dominio.md`), tipo de medicamento, presentación, principio activo (ATC), registro sanitario ARSA, si es controlado, y lote + vencimiento obligatorios.
@@ -270,6 +285,7 @@ Va como pregunta **#16** en `dominio.md`.
 - **"Sobre el total" es línea por línea**, cada una con el porcentaje del Art. 30 de su categoría (laboratorio 30 %, medicamento 25 %, hospitalario 25 % en la tercera edad). La suma es el descuento sobre la factura. Nunca un porcentaje parejo sobre el total: eso regalaría descuento en lo que la ley rebaja menos.
 - **Se configura por convenio** en Seguros y convenios → «¿Este pagador acepta el descuento de tercera y cuarta edad?». Una aseguradora nueva declara la suya al darse de alta; no hay default.
 - **El adulto mayor no queda peor que el joven del mismo seguro.** Con un pagador que no aplica el Art. 30, el tope del descuento del hospital suma lo que la ley no le dio: en medicamentos, la tercera edad puede llegar a **35 %** y la cuarta a **40 %**, contra **30 %** de un joven. Es descuento del hospital —con motivo escrito—, no se aplica solo. Ver `PoliticaDeDescuentoComercial::topeParaLaLinea()`.
+- **Con seguro, la factura sale siempre con el RTN del convenio** (10-oct-2026), no con el documento del paciente. Si el convenio no tiene RTN cargado, la factura **no se emite** hasta cargarlo en Seguros y convenios. Ver `EmisorDeFactura::conElRtnDelPagador()`.
 - ⚠️ **Riesgo que se asume a sabiendas:** lo de §5.1 sigue en pie —el Art. 30 obliga al prestador, no al pagador—. El adulto mayor asegurado paga su coaseguro sin descuento de ley. La defensa ante un reclamo al 115 es el fundamento escrito en el convenio, con fecha y autor. La consulta al contador del 9-sep-2026 sigue sin respuesta.
 
 ---
