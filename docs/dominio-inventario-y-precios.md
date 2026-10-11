@@ -114,6 +114,8 @@ La regla vive en `App\Services\FormasDeCobro` y la prueba `tests/Feature/Cuentas
 
 **Código de barras del producto (10-oct-2026):** se carga una vez en la ficha, en Identificación —el de la caja del fabricante, distinto por marca— y lo **heredan todas sus presentaciones**: escanearlo encuentra el producto en cualquiera de sus envases, en el cobro, la recepción, el conteo, el ajuste y el presupuesto. No se copia a cada presentación (la recepción no sabría si entraron 100 o 10); un envase lleva código propio solo si trae uno distinto. Un mismo código no puede estar en dos productos ni en un producto y un envase.
 
+**Sin código de fábrica (11-oct-2026):** con el campo vacío, la ficha ofrece **«Asignar el del hospital»**, que le pone como código de barras su código interno (`MED-101`): ya es único, el escáner lo encuentra y es el que se dicta por teléfono. Recién con ese código asignado aparece **«Imprimir etiquetas»**. Si el producto tiene un código de fábrica, no se ofrece ninguna de las dos: la caja ya lo trae impreso.
+
 Código de barras propio e **impresión de etiquetas** para producto (ZPL — ver pendiente #7 de `dominio.md`), tipo de medicamento, presentación, principio activo (ATC), registro sanitario ARSA, si es controlado, y lote + vencimiento obligatorios.
 
 ---

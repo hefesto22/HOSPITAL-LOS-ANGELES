@@ -29,6 +29,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\ToggleButtons;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
@@ -1351,35 +1352,110 @@ final class ItemForm
                 },
             ])
             /*
-             * Lo que hacía «Generar el del hospital» en cada presentación,
-             * ahora en un solo lugar: para lo que llega sin código legible
-             * se imprime el código interno del producto —`MED-101`—, que
-             * el escáner también encuentra. Arriba, como acción del rótulo:
-             * la vista de `BarcodeInput` ocupa el sufijo con la cámara.
-             *
-             * El rótulo es corto porque el campo ocupa un tercio de la
-             * fila; el «para qué» va en el tooltip.
+             * La vista de `BarcodeInput` ocupa el sufijo con la cámara, así
+             * que las acciones van arriba, en el rótulo.
              */
-            ->hintAction(
+            ->live(onBlur: true)
+            ->hintActions([
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL DEL HOSPITAL SE ASIGNA, Y RECIÉN AHÍ SE IMPRIME
+                 * (11-oct-2026)
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Regla de Mauricio: «imprimir el del hospital» al lado
+                 * de un campo vacío ofrecía imprimir algo que el producto
+                 * no tenía. Ahora son dos pasos que se ven:
+                 *
+                 *   · Campo vacío → «Asignar el del hospital»: le pone
+                 *     su código interno —`MED-101`— como código de
+                 *     barras. Es para lo que llega sin código de fábrica.
+                 *   · Campo con el del hospital → «Imprimir etiquetas».
+                 *   · Campo con un código de fábrica → nada: la caja ya
+                 *     lo trae impreso.
+                 *
+                 * Se usa el código interno y no uno inventado aparte
+                 * porque ya es único, ya lo encuentra el escáner
+                 * (`Item::porCodigo()` mira las dos columnas) y es el que
+                 * la gente se dicta por teléfono. Un tercer número no
+                 * resolvería nada que estos dos no resuelvan.
+                 *
+                 * Solo en la edición: en el alta el código interno
+                 * todavía no existe —se asigna al guardar—, y guardar ya
+                 * lleva a la ficha, donde el botón aparece.
+                 */
+                Action::make('asignar_el_del_hospital')
+                    ->label('Asignar el del hospital')
+                    ->tooltip(fn (?Item $record): string => 'Para lo que llega sin código de fábrica: le pone '
+                        .'su código interno'.($record instanceof Item ? " ({$record->codigo})" : '')
+                        .' para imprimirlo en etiquetas.')
+                    ->icon('heroicon-o-tag')
+                    ->color('gray')
+                    ->visible(fn (?Item $record, mixed $state): bool => $record instanceof Item
+                        && $record->exists
+                        && self::estaVacio($state))
+                    /*
+                     * ⚠️ Se vuelve a mirar el campo al ejecutar, no solo
+                     * al dibujar el botón: si alguien escribió un código
+                     * de fábrica y tocó el botón sin salir del campo, el
+                     * botón seguía en pantalla y lo habría pisado.
+                     */
+                    ->action(function (?Item $record, mixed $state, Set $set): void {
+                        if (! $record instanceof Item || ! $record->exists || ! self::estaVacio($state)) {
+                            return;
+                        }
+
+                        $set('codigo_barras', $record->codigo);
+
+                        /*
+                         * El campo cambia en pantalla, pero en la base
+                         * todavía no: hasta guardar, la presentación lo
+                         * sigue marcando como no escaneable.
+                         */
+                        Notification::make()
+                            ->success()
+                            ->title("Se le asignó {$record->codigo}")
+                            ->body('Guardá los cambios para que quede. Después ya podés imprimir las etiquetas.')
+                            ->send();
+                    }),
+
                 Action::make('etiqueta_del_hospital')
-                    ->label('Imprimir el del hospital')
-                    ->tooltip(
-                        'Para lo que llega sin código de fábrica: imprime el código interno, que el '
-                        .'escáner también encuentra.'
-                    )
+                    ->label('Imprimir etiquetas')
                     ->icon('heroicon-o-printer')
                     ->color('gray')
-                    ->visible(fn (?Item $record): bool => $record instanceof Item && $record->exists)
+                    ->visible(fn (?Item $record, mixed $state): bool => self::tieneElDelHospital($record, $state))
                     ->url(fn (?Item $record): ?string => $record instanceof Item && $record->exists
                         ? route('etiquetas.item', ['item' => $record->getKey(), 'formato' => 'hoja', 'copias' => 30])
                         : null)
                     ->openUrlInNewTab(),
-            )
+            ])
             ->hintIcon(
                 'heroicon-o-information-circle',
-                'El de la caja del fabricante; cada marca tiene el suyo. Vale para todas las '
-                .'presentaciones del producto.',
+                'El de la caja del fabricante; cada marca tiene el suyo. Si no trae, se le asigna el del '
+                .'hospital. Vale para todas las presentaciones del producto.',
             );
+    }
+
+    private static function estaVacio(mixed $state): bool
+    {
+        return ! is_string($state) || trim($state) === '';
+    }
+
+    /**
+     * ¿El código de barras del campo es el interno del producto?
+     *
+     * Se compara sin distinguir mayúsculas: el escáner lo lee igual, y
+     * alguien que lo tecleó en minúsculas no tiene otro código.
+     */
+    private static function tieneElDelHospital(?Item $record, mixed $state): bool
+    {
+        if (! $record instanceof Item || ! $record->exists || ! is_string($state)) {
+            return false;
+        }
+
+        $leido = trim($state);
+
+        return $leido !== '' && mb_strtoupper($leido) === mb_strtoupper($record->codigo);
     }
 
     /**
