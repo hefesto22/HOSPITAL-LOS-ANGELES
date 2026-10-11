@@ -21,7 +21,6 @@ declare(strict_types=1);
 
 use App\Models\Factura;
 use App\Models\Item;
-use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
 use App\Models\Sede;
 use App\Support\NumeroEnLetras;
@@ -99,49 +98,6 @@ Route::middleware(['web', 'auth'])->group(function (): void {
                 : route($ruta, [...$parametros, 'formato' => 'media']),
         ]);
     };
-
-    /*
-     * ─────────────────────────────────────────────────────────────────
-     * LA ETIQUETA DE LA CAJA
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * Para lo que llega sin código legible o para lo que el hospital
-     * reenvasa. El código lo propone el formulario de presentaciones
-     * —`MED-0708-01`— y se imprime acá.
-     *
-     * El subtítulo es la equivalencia: «1 CAJA = 100 TABLETA». En el
-     * estante eso vale más que cualquier otra cosa que se pueda escribir
-     * en una etiqueta chica.
-     */
-    Route::get('/etiquetas/presentacion/{presentacion}', function (
-        ItemPresentacion $presentacion,
-    ) use ($hoja) {
-        $duenio = $presentacion->item;
-
-        abort_unless(
-            $duenio instanceof Item && (auth()->user()?->can('view', $duenio) ?? false),
-            403,
-        );
-
-        $codigo = $presentacion->codigo_barras;
-
-        /*
-         * Sin código no hay etiqueta que imprimir. Devolver una hoja en
-         * blanco sería peor: alguien la manda a la impresora, salen
-         * treinta rectángulos vacíos y recién ahí se entiende.
-         */
-        if ($codigo === null) {
-            abort(404);
-        }
-
-        return $hoja(
-            'etiquetas.presentacion',
-            ['presentacion' => $presentacion->getKey()],
-            $codigo,
-            $presentacion->nombre,
-            $presentacion->comoSeLee(),
-        );
-    })->name('etiquetas.presentacion');
 
     /*
      * La etiqueta del ÍTEM, con su código interno. Es la del catálogo:

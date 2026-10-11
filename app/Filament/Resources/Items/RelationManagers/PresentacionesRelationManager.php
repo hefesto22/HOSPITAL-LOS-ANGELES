@@ -56,9 +56,16 @@ use Illuminate\Support\HtmlString;
  * nunca trae código propio, quedaba marcado como «no se puede
  * escanear».
  *
- * Los códigos que ya tenían las presentaciones se quedan guardados:
- * siguen encontrándose al escanear y sus etiquetas se siguen
- * imprimiendo desde la tabla.
+ * Y desde el 11-oct-2026 tampoco se MUESTRA ni se IMPRIME acá: la
+ * tabla tenía el código propio de cada envase debajo del nombre, una
+ * columna «Escaneable» y dos botones de etiqueta por fila, y todo eso
+ * contradecía la regla —un código por producto— cada vez que alguien
+ * abría la ficha. La etiqueta del hospital se asigna e imprime desde
+ * el campo de código de barras de la ficha.
+ *
+ * Los códigos que ya tenían algunas presentaciones (`MED-101-01`)
+ * siguen guardados y siguen encontrándose al escanear, para que una
+ * etiqueta ya pegada no deje de leerse.
  *
  * La etiqueta del ESTANTE es otra cosa y ya tiene su lugar: es la del
  * principio activo, y al escanearla salen todos los productos que lo
@@ -277,8 +284,7 @@ class PresentacionesRelationManager extends RelationManager
                     ->wrap()
                     ->state(fn (ItemPresentacion $record): string => $this->seAlmacena()
                         ? $record->nombreCompleto()
-                        : $record->nombre)
-                    ->description(fn (ItemPresentacion $record): ?string => $record->codigo_barras),
+                        : $record->nombre),
 
                 TextColumn::make('unidad.codigo')
                     ->label('Envase')
@@ -300,34 +306,6 @@ class PresentacionesRelationManager extends RelationManager
                     ->trueColor('warning')
                     ->falseColor('gray')
                     ->tooltip('La que propone el formulario de compra.'),
-
-                /*
-                 * Se ve de un vistazo cuáles quedaron sin código: son las
-                 * que no se pueden escanear al recibir ni al dispensar, y
-                 * un hueco visible es lo único que hace que alguien lo
-                 * llene.
-                 */
-                IconColumn::make('codigo_barras')
-                    ->label('Escaneable')
-                    ->alignCenter()
-                    ->visible(fn (): bool => $this->seAlmacena())
-                    ->boolean()
-                    /*
-                     * Escaneable también por herencia: si el producto
-                     * tiene su código de fábrica en la ficha, escanearlo
-                     * encuentra este envase igual. El triángulo queda
-                     * solo para lo que de verdad no se puede escanear.
-                     */
-                    ->getStateUsing(fn (ItemPresentacion $record): bool => $record->codigo_barras !== null
-                        || $this->codigoDelProducto() !== null)
-                    ->trueIcon('heroicon-o-qr-code')
-                    ->falseIcon('heroicon-o-exclamation-triangle')
-                    ->trueColor('success')
-                    ->falseColor('warning')
-                    ->tooltip(fn (ItemPresentacion $record): string => $record->codigo_barras
-                        ?? ($this->codigoDelProducto() !== null
-                            ? 'Por el código del producto: '.$this->codigoDelProducto()
-                            : 'Sin código: cargá el del producto en la ficha, en Identificación.')),
 
                 TextColumn::make('vigencia_hasta')
                     ->label('Vigencia')
@@ -378,60 +356,6 @@ class PresentacionesRelationManager extends RelationManager
                         $record->update(['es_predeterminada' => true]);
                     }),
 
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * LOS DOS FORMATOS, CADA UNO A UN CLIC
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * No son la misma etiqueta en dos tamaños: resuelven dos
-                 * problemas distintos y quien imprime ya sabe cuál
-                 * necesita antes de abrir nada.
-                 *
-                 *   · LA GRANDE va en la gaveta o en el estante, y se
-                 *     escanea de lejos sin agacharse.
-                 *   · LA HOJA DE 30 va en el frasco, el blíster y la
-                 *     caja, de a una por envase.
-                 *
-                 * Van como dos acciones sueltas y no como un menú
-                 * desplegable. El §9.A1 ya dejó escrito lo que pasa
-                 * cuando una acción que necesita `$record` se mete
-                 * adentro de un `ActionGroup`: se queda sin registro y
-                 * desaparece sin que nada dé error. Acá el contexto es
-                 * otro —una fila de tabla sí lo recibe— pero dos enlaces
-                 * planos no tienen forma de fallar en silencio, y este no
-                 * es el lugar para averiguarlo.
-                 *
-                 * Se abren en pestaña nueva y se mandan solas a la
-                 * impresora: imprimir es abrir una página y apretar
-                 * Ctrl+P, y un modal con JavaScript que arma otra ventana
-                 * se lo come el bloqueador de pop-ups justo el día que
-                 * hay que usarlo.
-                 */
-                Action::make('etiqueta_grande')
-                    ->label('Etiqueta grande')
-                    ->icon('heroicon-o-printer')
-                    ->color('gray')
-                    ->tooltip('Una sola, en media hoja A4. Para la gaveta o el estante.')
-                    ->visible(fn (ItemPresentacion $record): bool => $this->sePuedeEtiquetar($record))
-                    ->url(fn (ItemPresentacion $record): string => route('etiquetas.presentacion', [
-                        'presentacion' => $record->getKey(),
-                        'formato'      => 'media',
-                    ]))
-                    ->openUrlInNewTab(),
-
-                Action::make('etiqueta_hoja')
-                    ->label('Hoja de 30')
-                    ->icon('heroicon-o-squares-2x2')
-                    ->color('gray')
-                    ->tooltip('Treinta chicas en una A4. Para el frasco, el blíster y la caja.')
-                    ->visible(fn (ItemPresentacion $record): bool => $this->sePuedeEtiquetar($record))
-                    ->url(fn (ItemPresentacion $record): string => route('etiquetas.presentacion', [
-                        'presentacion' => $record->getKey(),
-                        'formato'      => 'hoja',
-                        'copias'       => 30,
-                    ]))
-                    ->openUrlInNewTab(),
-
                 EditAction::make()
                     ->modalHeading(fn (): string => $this->seAlmacena()
                         ? 'Editar presentación'
@@ -445,7 +369,7 @@ class PresentacionesRelationManager extends RelationManager
             ->emptyStateDescription(
                 'Una presentación es una variante de este mismo ítem: la caja de 100 frente a la '
                 .'ampolla suelta, el tubo de 5 mm frente al de 10, el honorario del Dr. Carlos '
-                .'frente al del Dr. Miguel. Cada una lleva su código de barras.'
+                .'frente al del Dr. Miguel.'
             );
     }
 
@@ -471,21 +395,6 @@ class PresentacionesRelationManager extends RelationManager
     public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
     {
         return $ownerRecord instanceof Item;
-    }
-
-    // ── El código de barras ───────────────────────────────────────────
-
-    /**
-     * ¿Hay algo que imprimir?
-     *
-     * Sin código de barras la etiqueta saldría en blanco, y la ruta
-     * responde 404 a propósito. Esconder los dos botones es decirlo
-     * antes: un botón que lleva a un error no es un botón, es una
-     * trampa.
-     */
-    private function sePuedeEtiquetar(ItemPresentacion $presentacion): bool
-    {
-        return $this->seAlmacena() && $presentacion->codigo_barras !== null;
     }
 
     // ── Textos que dependen del ítem ──────────────────────────────────
@@ -614,16 +523,6 @@ class PresentacionesRelationManager extends RelationManager
             ? 'El inventario se lleva siempre en '.$this->codigoDeDispensacion().', nunca en cajas.'
             : 'Uno. Una variante que no se almacena no es un envase que contenga otra cosa: es la '
               .'misma prestación con otro precio.';
-    }
-
-    /**
-     * El código de barras de la ficha, el que heredan los envases.
-     */
-    private function codigoDelProducto(): ?string
-    {
-        $duenio = $this->getOwnerRecord();
-
-        return $duenio instanceof Item ? $duenio->codigo_barras : null;
     }
 
     /**

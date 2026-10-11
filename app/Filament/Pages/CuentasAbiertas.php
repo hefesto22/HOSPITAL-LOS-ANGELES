@@ -769,6 +769,24 @@ class CuentasAbiertas extends Page
             ->modalDescription('Cada ítem entra con el precio que le corresponde a este pagador hoy.')
             ->modalWidth('5xl')
             ->modalSubmitActionLabel('Agregar')
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 «AGREGAR» SIEMPRE A LA VISTA (11-oct-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * El botón vivía al pie del modal, DEBAJO de la cuenta en
+             * curso: cada línea agregada lo empujaba un renglón más abajo,
+             * y a la quinta había que bajar a buscarlo con el paciente
+             * esperando. Pegado al borde de la pantalla queda en el mismo
+             * lugar con la primera línea y con la vigésima.
+             *
+             * El otro botón dice «Listo» y no «Cancelar»: cada línea se
+             * asienta al apretar Agregar, así que cerrar no deshace nada,
+             * y «Cancelar» hacía dudar si lo cargado se perdía.
+             */
+            ->stickyModalFooter()
+            ->modalSubmitAction(fn (Action $action): Action => $action->icon(Heroicon::OutlinedPlus))
+            ->modalCancelActionLabel('Listo')
             ->closeModalByClickingAway(false)
             /*
              * 🔴 El permiso se verifica en los DOS lados.
@@ -875,11 +893,18 @@ class CuentasAbiertas extends Page
                          * Fijo y no en una notificación que se va sola a
                          * los pocos segundos: el nombre, de qué envase se
                          * leyó el código y el código del catálogo.
+                         *
+                         * ⚠️ Solo cuando NO hay botones de resultados —se
+                         * escaneó, o la búsqueda dio uno solo—. Con la
+                         * lista a la vista, el botón marcado ya dice qué
+                         * se eligió, y este renglón solo empujaba la
+                         * cantidad hacia abajo para repetir el código.
                          */
                         Placeholder::make('lo_encontrado')
                             ->hiddenLabel()
                             ->columnSpanFull()
-                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
+                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item
+                                && $this->resultadosDelBuscador() === [])
                             ->content(fn (Get $get): HtmlString => $this->resumenDeLoElegido($get)),
 
                         /*
@@ -912,11 +937,29 @@ class CuentasAbiertas extends Page
                              * que es. Sueltos parecían botones de acción.
                              */
                             ->grouped()
-                            ->columnSpanFull()
+                            /*
+                             * ─────────────────────────────────────────
+                             * CÓMO, CUÁNTO Y DE DÓNDE, EN UN RENGLÓN
+                             * ─────────────────────────────────────────
+                             *
+                             * Las tres preguntas de la línea, en el orden
+                             * en que se contestan y una al lado de la
+                             * otra (`laLineaVaEnUnaFila()`). Con cuatro
+                             * envases o más el control no cabe en media
+                             * fila y va solo arriba.
+                             *
+                             * Sin texto de ayuda debajo: que el envase va
+                             * cerrado lo dice el recuadro de abajo —«1
+                             * CAJA X 100 sin abrir = 100 TAB»—, que ya se
+                             * lee antes de apretar Agregar.
+                             */
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->laLineaVaEnUnaFila($get) ? 6 : 12,
+                            ])
                             ->live()
                             ->options(fn (Get $get): array => $this->unidadesDeCobro($this->itemDe($get('item_id'))))
                             ->icons(fn (Get $get): array => $this->iconosDeLasFormas($this->itemDe($get('item_id'))))
-                            ->helperText(fn (Get $get): ?string => $this->ayudaDeLasFormas($this->itemDe($get('item_id'))))
                             ->visible(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
                             ->required(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
                             ->validationMessages([
@@ -942,7 +985,10 @@ class CuentasAbiertas extends Page
                             ->default(1)
                             ->minValue(0.0001)
                             ->step('0.0001')
-                            ->columnSpan(4)
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->laLineaVaEnUnaFila($get) ? 2 : 4,
+                            ])
                             ->live(onBlur: true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
                             /*
@@ -1000,7 +1046,10 @@ class CuentasAbiertas extends Page
                         Select::make('almacen_id')
                             ->label('¿De dónde sale?')
                             ->native(false)
-                            ->columnSpan(8)
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->laLineaVaEnUnaFila($get) ? 4 : 8,
+                            ])
                             ->dehydratedWhenHidden()
                             ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
@@ -1164,9 +1213,17 @@ class CuentasAbiertas extends Page
                          */
                         Placeholder::make('como_queda')
                             ->hiddenLabel()
-                            ->columnSpanFull()
-                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item
-                                && $this->formaEnUso($get) !== null)
+                            /*
+                             * Cuando no hay existencia, el «Se pidió
+                             * prestado» va al lado del aviso y no en un
+                             * renglón propio debajo: el aviso dice el
+                             * problema y el botón, al alcance, la salida.
+                             */
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->sePuedePedirPrestado($get) ? 9 : 12,
+                            ])
+                            ->visible(fn (Get $get): bool => $this->hayLecturaDeLaLinea($get))
                             ->content(fn (Get $get): HtmlString => $this->comoQuedaLaLinea($get)),
 
                         /*
@@ -1194,7 +1251,12 @@ class CuentasAbiertas extends Page
                         Actions::make([
                             $this->accionDePedirPrestado(),
                         ])
-                            ->columnSpanFull()
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->hayLecturaDeLaLinea($get) ? 3 : 12,
+                            ])
+                            ->alignEnd(fn (Get $get): bool => $this->hayLecturaDeLaLinea($get))
+                            ->verticallyAlignCenter()
                             ->visible(fn (Get $get): bool => $this->sePuedePedirPrestado($get)),
                     ]),
             ])
@@ -2144,11 +2206,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Las opciones del desplegable, cada una diciendo cuánto hay.
-     *
-     * @return array<int, string>
-     */
-    /**
      * ¿Tiene sentido ofrecer «se pidió prestado» en esta línea?
      *
      * Las tres condiciones importan y ninguna sobra:
@@ -2171,17 +2228,35 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Registrar el préstamo sin salir de la línea que se está cobrando.
+     * ¿«Cómo se le agrega», la cantidad y el estante caben en UN renglón?
      *
-     * ⚠️ `fillForm` resuelve el ÍTEM REAL y no copia el valor del
-     * selector: acá arriba «705» y «705|presentacion:12» son el mismo
-     * producto, y el formulario del préstamo necesita el id del ítem, no
-     * la cadena compuesta.
-     *
-     * Al terminar deja `almacen_id` elegido en la línea de afuera. Sin
-     * eso, quien cobra registra el préstamo y vuelve a encontrarse el
-     * campo en blanco con el paciente esperando.
+     * Solo cuando hay que preguntar la forma (más de una) y son pocas:
+     * con cuatro envases o más, los botones agrupados no caben en media
+     * fila y se cortarían.
      */
+    private function laLineaVaEnUnaFila(Get $get): bool
+    {
+        $item = $this->itemDe($get('item_id'));
+
+        if (! $item instanceof Item || ! $item->mueveInventario()) {
+            return false;
+        }
+
+        $formas = count($this->unidadesDeCobro($item));
+
+        return $formas > 1 && $formas <= 3;
+    }
+
+    /**
+     * ¿Ya hay algo que decir de la línea? Hace falta el producto y saber
+     * cómo se cobra; antes de eso el recuadro estaría vacío.
+     */
+    private function hayLecturaDeLaLinea(Get $get): bool
+    {
+        return $this->itemDe($get('item_id')) instanceof Item
+            && $this->formaEnUso($get) !== null;
+    }
+
     /**
      * Los estantes donde puede quedar algo prestado, listos para el
      * desplegable.
@@ -2232,6 +2307,18 @@ class CuentasAbiertas extends Page
         return count($estantes) === 1 ? (int) array_key_first($estantes) : null;
     }
 
+    /**
+     * Registrar el préstamo sin salir de la línea que se está cobrando.
+     *
+     * ⚠️ `fillForm` resuelve el ÍTEM REAL y no copia el valor del
+     * selector: acá arriba «705» y «705|presentacion:12» son el mismo
+     * producto, y el formulario del préstamo necesita el id del ítem, no
+     * la cadena compuesta.
+     *
+     * Al terminar deja `almacen_id` elegido en la línea de afuera. Sin
+     * eso, quien cobra registra el préstamo y vuelve a encontrarse el
+     * campo en blanco con el paciente esperando.
+     */
     private function accionDePedirPrestado(): Action
     {
         return Action::make('pedirPrestado')
@@ -2465,6 +2552,11 @@ class CuentasAbiertas extends Page
         return is_string($valor) && trim($valor) !== '' ? trim($valor) : null;
     }
 
+    /**
+     * Las opciones del desplegable, cada una diciendo cuánto hay.
+     *
+     * @return array<int, string>
+     */
     private function estantesConLoQueHay(?Item $item, ?string $unidadDeCobro = null): array
     {
         if (! $item instanceof Item) {
@@ -5237,21 +5329,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Lo que «¿Cómo se le agrega?» necesita aclarar, una sola vez y no
-     * pegado a cada opción: que el envase va cerrado.
-     */
-    private function ayudaDeLasFormas(?Item $item): ?string
-    {
-        foreach (array_keys($this->unidadesDeCobro($item)) as $clave) {
-            if (str_starts_with($clave, self::POR_PRESENTACION)) {
-                return 'El envase se vende sin abrir: descuenta todo lo que trae.';
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * Lo que va pegado al número de la cantidad: TAB, CAJA, ML.
      */
     private function enQueSeCuenta(Get $get): ?string
@@ -5397,7 +5474,12 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * «2 CAJA X 100 TABLETAS = 200 TAB», para leerlo antes de apretar.
+     * «2 CAJA X 100 TABLETAS sin abrir = 200 TAB», para leerlo antes de
+     * apretar.
+     *
+     * El «sin abrir» vivía en un texto de ayuda debajo de «¿Cómo se le
+     * agrega?», y ocupaba un renglón entero para decir algo que solo
+     * importa al leer la cuenta. Acá va pegado a la cuenta.
      */
     private function equivalencia(Item $item, string $forma, mixed $cantidad): ?string
     {
@@ -5429,6 +5511,10 @@ class CuentasAbiertas extends Page
         $enQue = $presentacion instanceof ItemPresentacion
             ? self::envaseCorto($presentacion)
             : $item->unidadFraccion->codigo;
+
+        if (app(FormasDeCobro::class)->esEnvaseEntero($forma, $this->presentacionesDe($item))) {
+            $enQue .= ' sin abrir';
+        }
 
         return sprintf(
             '%s %s = %s %s',
@@ -6274,11 +6360,11 @@ class CuentasAbiertas extends Page
         if ($envase instanceof ItemPresentacion && $this->existenciaTotal($item)->mayorQue('0')) {
             return 'No hay '.e($this->rotuloDeLaForma($item, $forma)).' sin abrir en ningún almacén. '
                 .'Vendé por '.e($this->rotuloDeLaForma($item, self::POR_UNIDAD)).', recibí o trasladá '
-                .'envases, o registrá abajo que se pidió prestado.';
+                .'envases, o registrá que se pidió prestado.';
         }
 
         return 'No hay existencia de este producto en ningún almacén. Recibilo, trasladalo, o '
-            .'registrá abajo que se pidió prestado.';
+            .'registrá que se pidió prestado.';
     }
 
     /**
