@@ -29,6 +29,7 @@ use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\HtmlString;
+use Illuminate\Support\Js;
 use Illuminate\Support\Str;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 
@@ -240,16 +241,36 @@ final class RecepcionForm
                     ->columnSpanFull()
                     ->dehydrated(false)
                     /*
-                     * ⚠️ Con pausa de medio segundo. Sin ella, quien
-                     * escribía «MED-705» a mano disparaba la búsqueda en
-                     * «MED-» y en «MED-7», y cada pedazo dejaba un aviso
-                     * de «ese código no está en el catálogo» que se
-                     * quedaba pegado arriba. La pistola teclea el código
-                     * entero de un saque, así que no la frena.
+                     * ─────────────────────────────────────────────────
+                     * 🔴 SE BUSCA AL APRETAR ENTER, NO MIENTRAS SE ESCRIBE
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Mauricio (11-oct-2026): «no me deja escribir ahí».
+                     * El campo buscaba solo en cada pausa del teclado, y
+                     * la búsqueda lo limpia siempre —para que la pistola
+                     * pueda leer la caja siguiente sin borrar a mano—.
+                     * Quien escribía «MED-101» a mano y paraba en «MED-1»
+                     * se quedaba con el campo vacío y un aviso de «no
+                     * está en el catálogo». Con o sin pausa, el problema
+                     * era el mismo: buscar un código a medio escribir.
+                     *
+                     * Ahora el campo NO es `live()`: solo se manda al
+                     * apretar Enter. La pistola ya manda Enter sola al
+                     * final de cada lectura, y a mano es lo natural.
+                     *
+                     * ⚠️ El Enter se ataja con `.prevent`: sin eso,
+                     * además de buscar, mandaba a guardar la recepción
+                     * entera y abría el recuadro de confirmación con una
+                     * línea a medio llenar. `$wire.set` dispara igual el
+                     * `afterStateUpdated` de abajo, que no depende de
+                     * `live()`. La cámara del plugin hace lo mismo
+                     * (`$wire.set` al leer), así que sigue funcionando.
                      */
-                    ->live(debounce: 500)
+                    ->extraInputAttributes(fn (BarcodeInput $component): array => [
+                        'x-on:keydown.enter.prevent' => '$wire.set('.Js::from($component->getStatePath()).', $event.target.value)',
+                    ])
                     ->autofocus()
-                    ->placeholder('Disparale a la caja, o escribí el código')
+                    ->placeholder('Disparale a la caja, o escribí el código y apretá Enter')
                     ->helperText('Con la pistola o la cámara: cada lectura agrega una línea.')
                     ->afterStateUpdated(fn (mixed $state, Get $get, Set $set) => self::agregarLoEscaneado($state, $get, $set)),
 
