@@ -27,7 +27,9 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\ToggleButtons;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -130,348 +132,498 @@ final class ItemForm
         ]);
     }
 
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * LOS MISMOS CAMPOS, ACOMODADOS DISTINTO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Cada campo vive en un solo lugar —`campoTipo()`, `campoNombre()`,
+     * `campoCategoria()`…— y los dos lados del catálogo los usan. Lo que
+     * cambia por ámbito es cómo se acomodan:
+     *
+     *   · Farmacia, en tres renglones de una grilla de seis
+     *     (`identificacionDeProducto()`).
+     *   · Servicios, en la grilla de dos de siempre: son cuatro campos y
+     *     el precio.
+     */
     private static function identificacion(AmbitoCatalogo $ambito): Tab
     {
-        return Tab::make('Identificación')
-            ->icon('heroicon-o-rectangle-stack')
-            ->schema([
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EL CÓDIGO NO SE PIDE: LO PONE EL SISTEMA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Es un correlativo interno del hospital —HOS-013,
-                 * LAB-0042— y nadie de afuera lo audita. Pedirlo era
-                 * pedirle a quien carga el catálogo que resuelva algo
-                 * que el sistema sabe mejor: cuál es el siguiente libre
-                 * de esa categoría.
-                 *
-                 * Se genera al GUARDAR (`CreateItem`), no al elegir la
-                 * categoría: dos personas cargando a la vez veían el
-                 * mismo número propuesto y la segunda chocaba contra el
-                 * índice único al grabar.
-                 *
-                 * En edición sí se muestra, y apagado: es lo que la
-                 * gente se dicta por teléfono —«cargale el HOS-010»— y
-                 * cambiarlo rompería lo que ya está impreso en cuentas
-                 * viejas.
-                 */
-                CampoMayusculas::make('codigo')
-                    ->label('Código')
-                    ->maxLength(30)
-                    ->hiddenOn('create')
-                    ->disabledOn('edit')
-                    /*
-                     * ⚠️ La regla apunta a `Item` y NO al modelo del
-                     * Resource. Desde farmacia, `Producto` trae su global
-                     * scope y solo vería los almacenables: dejaría crear
-                     * un producto con el código de un servicio, y el
-                     * índice único de la base lo rechazaría después con
-                     * un error de SQL en la cara del usuario.
-                     */
-                    ->unique(Item::class, 'codigo', ignoreRecord: true)
-                    ->helperText('Lo asigna el sistema con el prefijo de la categoría. No se cambia.'),
+        $pestana = Tab::make('Identificación')
+            ->icon('heroicon-o-rectangle-stack');
 
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EN FARMACIA NO SE DIBUJA NINGÚN CÓDIGO ACÁ
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * «ACETAMINOFEN TABLETA 800 MG» es el nombre de un
-                 * medicamento: no es nada que se pueda agarrar con la
-                 * mano ni pegarle una etiqueta. Lo que existe en el
-                 * estante es la caja de 100 y el blíster de 12 — y el
-                 * código de barras va en ELLOS, en la presentación, que
-                 * es donde el formulario ahora lo pide y lo genera.
-                 *
-                 * Los dos trabajos que hacía esta etiqueta tienen cada
-                 * uno su lugar propio:
-                 *
-                 *   · el de la GAVETA es la etiqueta del PRINCIPIO
-                 *     ACTIVO — se escanea y salen todos los productos
-                 *     que lo llevan, en cualquier forma;
-                 *   · el del ENVASE es la de la PRESENTACIÓN.
-                 *
-                 * En el catálogo de servicios se queda: un hemograma no
-                 * viene en ninguna caja, y su código interno es lo único
-                 * que hay para identificarlo.
-                 *
-                 * ⚠️ Las dos condiciones van en UN solo closure. Un
-                 * `->visibleOn('edit')` seguido de un `->visible(...)` no
-                 * se suman: el segundo pisa al primero sin decir nada, y
-                 * la etiqueta volvería a aparecer en el alta mostrando un
-                 * código que todavía puede cambiar.
-                 */
-                Placeholder::make('etiqueta_de_barras')
-                    ->label('Código de barras del hospital')
-                    ->visible(fn (string $operation, Get $get): bool => $operation === 'edit'
-                        && ! self::esFisico($get))
-                    ->columnSpanFull()
-                    ->content(fn (?Item $record): HtmlString => self::etiqueta($record)),
+        if ($ambito === AmbitoCatalogo::Productos) {
+            return $pestana
+                ->schema(self::identificacionDeProducto())
+                ->columns(6);
+        }
 
-                Select::make('tipo')
-                    ->label('Tipo')
-                    /*
-                     * Solo los tipos de este lado del catálogo. Ofrecer
-                     * «Medicamento» en la pantalla de servicios es
-                     * ofrecer un camino que termina en un CHECK de la
-                     * base rechazando el guardado.
-                     */
-                    ->options(fn (): array => $ambito->opcionesDeTipo())
-                    ->required()
-                    ->native(false)
-                    ->live()
-                    /*
-                     * Al elegir el tipo se proponen los campos que se
-                     * derivan de él. Se PROPONEN: quien carga el catálogo
-                     * los puede cambiar.
-                     */
-                    ->afterStateUpdated(function (?string $state, string $operation, Get $get, Set $set) use ($ambito): void {
-                        self::alElegirElTipo($state, $operation, $get, $set, $ambito);
-                    })
-                    ->helperText('Propone cómo paga ISV, qué unidad usa y si su precio se deriva del costo.'),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * LA HOJA DEL TARIFARIO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Obligatoria acá aunque la columna sea nullable en la
-                 * base: nullable existe solo para poder correr la
-                 * migración sobre un catálogo ya cargado. Un ítem sin
-                 * categoría no aparece agrupado en ningún lado y no suma
-                 * en el reporte de ingresos por área — desaparece sin
-                 * dar error, que es la peor forma de faltar.
-                 *
-                 * Solo las vigentes: una categoría retirada sigue
-                 * explicando las facturas viejas, pero no debería poder
-                 * recibir ítems nuevos.
-                 */
-                Select::make('categoria_id')
-                    ->label('Categoría')
-                    ->required()
-                    ->native(false)
-                    ->searchable()
-                    ->preload()
-                    ->live()
-                    ->options(fn (): array => self::opcionesDeCategoria($ambito))
-                    /*
-                     * Elegir la categoría propone el código, porque el
-                     * prefijo SALE de ella: `MED-0027`, `LAB-0049`.
-                     *
-                     * Solo en el alta y solo si lo que hay es vacío o
-                     * tiene forma de autogenerado. Un `PARAC500` tecleado
-                     * a mano no se pisa nunca — quien lo escribió tenía
-                     * una razón, y perderlo de golpe al corregir la
-                     * categoría es la clase de sorpresa que hace que la
-                     * gente cargue el catálogo en un Excel aparte.
-                     */
-                    ->afterStateUpdated(function (mixed $state, string $operation, Get $get, Set $set): void {
-                        self::proponerCodigo($state, $operation, $get, $set);
-                    })
-                    ->helperText($ambito === AmbitoCatalogo::Productos
-                        ? 'Dónde se agrupa en farmacia: medicamentos, material de curación, descartables.'
-                        : 'La hoja del tarifario: hospitalización, equipo médico, rayos X, laboratorio, consulta externa.'),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * «SE ALMACENA» YA NO SE PREGUNTA: LO DICE LA PANTALLA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Era un interruptor en medio del formulario y de él
-                 * dependía media ficha. Ahora lo contesta la puerta por
-                 * la que entrás: si estás en Farmacia, se almacena.
-                 *
-                 * Va como Hidden y no como campo omitido porque el resto
-                 * del formulario lo lee con `$get('se_almacena')` para
-                 * decidir qué pestañas mostrar, y porque la base lo
-                 * necesita para el CHECK contra el ámbito de la
-                 * categoría.
-                 *
-                 * Mover un ítem de un lado al otro se hace con la acción
-                 * del listado, que cambia las tres columnas juntas.
-                 */
-                Hidden::make('se_almacena')
-                    ->default($ambito->seAlmacena()),
-
-                ...($ambito === AmbitoCatalogo::Productos ? [self::campoUnidadDelKardex()] : []),
-
-                CampoMayusculas::make('nombre')
-                    ->label('Nombre')
-                    ->required()
-                    ->maxLength(255)
-                    ->columnSpanFull()
-                    /*
-                     * ─────────────────────────────────────────────────
-                     * DÓNDE TERMINA EL NOMBRE Y DÓNDE EMPIEZA LA
-                     * PRESENTACIÓN
-                     * ─────────────────────────────────────────────────
-                     *
-                     * La línea no es de estilo, es de inventario:
-                     *
-                     *   · Al NOMBRE va lo que cambia qué ES una unidad.
-                     *     Una tableta de 500 mg no es una de 750: cambia
-                     *     la dosis y cambia el precio por unidad. Son dos
-                     *     productos con dos kardex.
-                     *   · A la PRESENTACIÓN va lo que solo cambia cuánto
-                     *     viene en el envase. Un frasco de 60 ml y uno de
-                     *     120 tienen el mismo jarabe: 1 ml es 1 ml en los
-                     *     dos, y los dos suman al mismo kardex.
-                     *
-                     * Poner el tamaño del envase en el nombre parte un
-                     * producto en tres y reparte su existencia entre los
-                     * tres — y ninguno cuadra contra el estante.
-                     */
-                    ->helperText($ambito === AmbitoCatalogo::Productos
-                        ? 'El principio activo, la forma y la concentración: ACETAMINOFEN JARABE, '
-                        .'ACETAMINOFEN 500 MG TABLETA. El TAMAÑO del envase NO va acá — 60 ml, 120 ml '
-                        .'y la caja de 100 son presentaciones del mismo producto.'
-                        : 'Como debe salir impreso en la cuenta del paciente.'),
-
-                ...($ambito === AmbitoCatalogo::Productos ? [self::campoCodigoDeBarras()] : []),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 LO QUE LLEVA ADENTRO, DEL CATÁLOGO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Antes era texto libre en la pestaña de Farmacia, y por
-                 * eso «ACETAMINOFEN», «Acetaminofén» y «acetaminofen »
-                 * eran tres cosas distintas que no se agrupaban entre
-                 * sí. Ahora sale del catálogo, así que la etiqueta del
-                 * estante puede listar todos los productos que lo llevan.
-                 *
-                 * Es una LISTA y no un desplegable porque un antigripal
-                 * lleva acetaminofén + clorfenamina + fenilefrina, y
-                 * amoxicilina viene con ácido clavulánico. Con uno solo,
-                 * el segundo queda invisible — y el día que alguien
-                 * pregunte «¿qué tengo con acetaminofén?» para no
-                 * duplicar dosis, la respuesta sale incompleta sin que se
-                 * note.
-                 */
-                Select::make('principiosActivos')
-                    ->label('Principios activos')
-                    ->relationship('principiosActivos', 'nombre')
-                    ->multiple()
-                    ->searchable()
-                    ->preload()
-                    ->native(false)
-                    ->columnSpanFull()
-                    ->visible(fn (Get $get): bool => self::esFisico($get))
-                    ->getOptionLabelFromRecordUsing(fn (PrincipioActivo $record): string => $record->etiqueta())
-                    /*
-                     * ─────────────────────────────────────────────────
-                     * 🔴 SI NO EXISTE, SE DA DE ALTA ACÁ MISMO
-                     * ─────────────────────────────────────────────────
-                     *
-                     * Antes, cargar un medicamento cuyo principio no
-                     * estuviera en el catálogo terminaba en un callejón:
-                     * «No se encontraron coincidencias» y nada que hacer
-                     * salvo abandonar el producto a medio cargar, ir a
-                     * Farmacia → Principios activos, darlo de alta y
-                     * volver a empezar. Nadie hace eso con la carga del
-                     * vademécum a medias: se deja el campo vacío, y un
-                     * producto sin principio no aparece cuando alguien
-                     * escanea la gaveta ni cuando se pregunta qué hay
-                     * con acetaminofén para no duplicar dosis.
-                     *
-                     * El «+» de la derecha abre el MISMO formulario que
-                     * la pantalla de principios —código correlativo
-                     * propuesto, sinónimos, ATC—, guarda, y lo deja
-                     * seleccionado. Queda dado de alta para siempre: la
-                     * próxima vez ya sale en la lista.
-                     *
-                     * Es el formulario completo a propósito y no una
-                     * versión recortada. Dos formularios que crean la
-                     * misma fila divergen, y el que queda pobre es el que
-                     * más se usa.
-                     */
-                    ->createOptionModalHeading('Nuevo principio activo')
-                    ->createOptionForm(fn (Schema $schema): Schema => PrincipioActivoForm::configure($schema))
-                    ->createOptionAction(fn (Action $action): Action => $action
-                        ->modalWidth('xl')
-                        ->modalDescription(
-                            'Se guarda en el catálogo del hospital, no solo en este producto: '
-                            .'la próxima vez ya aparece en la lista.'
-                        ))
-                    ->noSearchResultsMessage(
-                        'Todavía no está en el catálogo. Tocá el + de la derecha para darlo de alta '
-                        .'sin salir de acá.'
-                    )
-                    ->helperText(
-                        'Lo que de verdad cura. Si no está, se agrega con el + y queda dado de alta '
-                        .'para siempre. La búsqueda entiende sinónimos: escribir «paracetamol» '
-                        .'encuentra el acetaminofén.'
-                    ),
-
-                Textarea::make('descripcion')
-                    ->label('Descripción')
-                    ->rows(2)
-                    ->columnSpanFull()
-                    ->helperText('Opcional. Para aclarar qué incluye y qué no — se lee cuando alguien duda al cargar.'),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EL PRECIO SE PIDE ACÁ SOLO PARA LO QUE NO SE
-                 * ALMACENA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * La regla que abrió este campo sigue en pie y es esta:
-                 * un ítem sin precio existe, se puede buscar y se puede
-                 * elegir en una cuenta — y recién ahí, con el paciente
-                 * enfrente, aparece «este ítem no tiene precio para este
-                 * pagador». El hueco no lo abre el que se olvida: lo abre
-                 * un formulario que deja terminar sin preguntarlo.
-                 *
-                 * Por eso en el catálogo de SERVICIOS el campo sigue
-                 * siendo obligatorio: una cesárea no se «recibe» nunca, y
-                 * si nadie le pone precio acá no se lo pone nadie.
-                 *
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EN FARMACIA NO, Y NO ES POR COMODIDAD
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Un producto no tiene UN precio: tiene uno por
-                 * presentación. El frasco de 60 ml y el de 120 no valen
-                 * lo mismo ni por ml ni por frasco, y el precio de cada
-                 * uno se calcula al RECIBIR la compra, del costo por el
-                 * margen objetivo.
-                 *
-                 * Lo que escribía este campo era una fila de precio SIN
-                 * presentación — la de respaldo, la que se borró en la
-                 * migración `quitar_los_precios_de_respaldo_de_mas`. Y
-                 * esa fila no es inofensiva: el resolvedor cae en ella en
-                 * silencio cuando no encuentra la del envase, y cobra el
-                 * número equivocado sin avisar. L 45.83 en vez de L 91.67
-                 * el ml, y nadie se entera.
-                 *
-                 * El hueco que queda —un producto cargado y todavía sin
-                 * precio— lo cubre el contador de «sin precio» de Bases
-                 * de precios, que es donde se ve de un vistazo y donde se
-                 * arregla. No es un descuido: es el mismo control, movido
-                 * al lugar donde el precio de verdad se decide.
-                 *
-                 * ⚠️ Las dos condiciones van en UN solo closure, por lo
-                 * mismo que la etiqueta de barras de arriba: un
-                 * `->hiddenOn('edit')` seguido de un `->visible(...)` no
-                 * se suman, el segundo pisa al primero sin decir nada.
-                 */
-                TextInput::make('precio_de_lista')
-                    ->label('Precio de lista')
-                    ->numeric()
-                    ->minValue(0)
-                    ->step('0.0001')
-                    ->prefix('L')
-                    ->visible(fn (string $operation, Get $get): bool => $operation === 'create'
-                        && ! self::esFisico($get))
-                    ->columnSpanFull()
-                    ->required()
-                    ->helperText(
-                        'Es el precio del hospital, el que se le cobra al paciente particular. '
-                        .'Los seguros se cargan después desde Bases de precios.'
-                    ),
-            ])
+        return $pestana
+            ->schema(self::identificacionDeServicio())
             ->columns(2);
+    }
+
+    /**
+     * La pestaña de farmacia: tres renglones, sin secciones.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 TIENE QUE CABER SIN SCROLL (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Hubo una versión con tres secciones numeradas —«1 · ¿Qué es?»…—,
+     * cada una con su título, su descripción y su recuadro. Se leía bien,
+     * pero ocho campos pedían tres pantallas de scroll antes de llegar a
+     * las presentaciones, que es justo lo que se carga después. Mauricio:
+     * «demasiado espacio, hay que hacer mucho scroll».
+     *
+     * Quedan tres renglones:
+     *
+     *   Tipo                 | Categoría          | Código
+     *   Nombre               | Principios activos
+     *   Se dispensa en | Código de barras | Nota
+     *
+     * Lo que explicaban las descripciones de sección va en el ⓘ del
+     * rótulo de cada campo: se lee al pasar el mouse y no ocupa renglón.
+     * Debajo de los campos no va ningún texto de ayuda.
+     *
+     * El código solo existe en la edición. En el alta la categoría toma
+     * su lugar para que el primer renglón no quede con un hueco.
+     *
+     * @return list<Component>
+     */
+    private static function identificacionDeProducto(): array
+    {
+        return [
+            self::campoTipo(AmbitoCatalogo::Productos)
+                ->columnSpan(3),
+            self::campoCategoria(AmbitoCatalogo::Productos)
+                ->columnSpan(fn (string $operation): array => [
+                    'default' => 1,
+                    'lg'      => $operation === 'edit' ? 2 : 3,
+                ]),
+            self::campoCodigo(AmbitoCatalogo::Productos)
+                ->columnSpan(1),
+
+            self::campoNombre(AmbitoCatalogo::Productos)
+                ->columnSpan(3),
+            self::campoPrincipiosActivos()
+                ->columnSpan(3),
+
+            self::campoUnidadDelKardex()
+                ->columnSpan(2),
+            self::campoCodigoDeBarras()
+                ->columnSpan(2),
+            self::campoDescripcion(AmbitoCatalogo::Productos)
+                ->columnSpan(2),
+
+            self::campoSeAlmacena(AmbitoCatalogo::Productos),
+        ];
+    }
+
+    /**
+     * La pestaña del catálogo de servicios: la grilla de siempre.
+     *
+     * @return list<Component>
+     */
+    private static function identificacionDeServicio(): array
+    {
+        return [
+            self::campoCodigo(AmbitoCatalogo::Servicios),
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * LA ETIQUETA CON EL CÓDIGO INTERNO, SOLO EN SERVICIOS
+             * ─────────────────────────────────────────────────────────
+             *
+             * Un hemograma no viene en ninguna caja: su código interno es
+             * lo único que hay para identificarlo, y esta etiqueta es la
+             * que se imprime para escanearlo.
+             *
+             * En farmacia no se dibuja. Lo que se escanea ahí es el
+             * código de barras de la caja del fabricante, que se pide en
+             * la ficha; para lo que llega sin código legible, la etiqueta
+             * del hospital se imprime desde la acción de ese mismo campo.
+             *
+             * ⚠️ Las dos condiciones van en UN solo closure. Un
+             * `->visibleOn('edit')` seguido de un `->visible(...)` no se
+             * suman: el segundo pisa al primero sin decir nada, y la
+             * etiqueta volvería a aparecer en el alta mostrando un código
+             * que todavía puede cambiar.
+             */
+            Placeholder::make('etiqueta_de_barras')
+                ->label('Código de barras del hospital')
+                ->visible(fn (string $operation, Get $get): bool => $operation === 'edit'
+                    && ! self::esFisico($get))
+                ->columnSpanFull()
+                ->content(fn (?Item $record): HtmlString => self::etiqueta($record)),
+
+            self::campoTipo(AmbitoCatalogo::Servicios),
+            self::campoCategoria(AmbitoCatalogo::Servicios),
+            self::campoSeAlmacena(AmbitoCatalogo::Servicios),
+            self::campoNombre(AmbitoCatalogo::Servicios),
+            self::campoDescripcion(AmbitoCatalogo::Servicios),
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL PRECIO SE PIDE ACÁ SOLO PARA LO QUE NO SE ALMACENA
+             * ─────────────────────────────────────────────────────────
+             *
+             * La regla que abrió este campo sigue en pie y es esta: un
+             * ítem sin precio existe, se puede buscar y se puede elegir
+             * en una cuenta — y recién ahí, con el paciente enfrente,
+             * aparece «este ítem no tiene precio para este pagador». El
+             * hueco no lo abre el que se olvida: lo abre un formulario
+             * que deja terminar sin preguntarlo.
+             *
+             * Por eso en el catálogo de SERVICIOS el campo sigue siendo
+             * obligatorio: una cesárea no se «recibe» nunca, y si nadie
+             * le pone precio acá no se lo pone nadie.
+             *
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EN FARMACIA NO, Y NO ES POR COMODIDAD
+             * ─────────────────────────────────────────────────────────
+             *
+             * Un producto no tiene UN precio: tiene uno por presentación.
+             * El frasco de 60 ml y el de 120 no valen lo mismo ni por ml
+             * ni por frasco, y el precio de cada uno se calcula al RECIBIR
+             * la compra, del costo por el margen objetivo.
+             *
+             * Lo que escribía este campo era una fila de precio SIN
+             * presentación — la de respaldo, la que se borró en la
+             * migración `quitar_los_precios_de_respaldo_de_mas`. Y esa
+             * fila no es inofensiva: el resolvedor cae en ella en
+             * silencio cuando no encuentra la del envase, y cobra el
+             * número equivocado sin avisar. L 45.83 en vez de L 91.67 el
+             * ml, y nadie se entera.
+             *
+             * El hueco que queda —un producto cargado y todavía sin
+             * precio— lo cubre el contador de «sin precio» de Bases de
+             * precios, que es donde se ve de un vistazo y donde se
+             * arregla. No es un descuido: es el mismo control, movido al
+             * lugar donde el precio de verdad se decide.
+             *
+             * ⚠️ Las dos condiciones van en UN solo closure, por lo mismo
+             * que la etiqueta de barras de arriba: un `->hiddenOn('edit')`
+             * seguido de un `->visible(...)` no se suman, el segundo pisa
+             * al primero sin decir nada.
+             */
+            TextInput::make('precio_de_lista')
+                ->label('Precio de lista')
+                ->numeric()
+                ->minValue(0)
+                ->step('0.0001')
+                ->prefix('L')
+                ->visible(fn (string $operation, Get $get): bool => $operation === 'create'
+                    && ! self::esFisico($get))
+                ->columnSpanFull()
+                ->required()
+                ->helperText(
+                    'Es el precio del hospital, el que se le cobra al paciente particular. '
+                    .'Los seguros se cargan después desde Bases de precios.'
+                ),
+        ];
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL CÓDIGO NO SE PIDE: LO PONE EL SISTEMA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Es un correlativo interno del hospital —HOS-013, LAB-0042— y nadie
+     * de afuera lo audita. Pedirlo era pedirle a quien carga el catálogo
+     * que resuelva algo que el sistema sabe mejor: cuál es el siguiente
+     * libre de esa categoría.
+     *
+     * Se genera al GUARDAR (`CreateItem`), no al elegir la categoría: dos
+     * personas cargando a la vez veían el mismo número propuesto y la
+     * segunda chocaba contra el índice único al grabar.
+     *
+     * En edición sí se muestra, y apagado: es lo que la gente se dicta
+     * por teléfono —«cargale el HOS-010»— y cambiarlo rompería lo que ya
+     * está impreso en cuentas viejas.
+     *
+     * En farmacia la explicación va en el ⓘ del rótulo y no debajo: el
+     * campo ocupa un sexto de la fila y un párrafo abajo lo estiraría.
+     */
+    private static function campoCodigo(AmbitoCatalogo $ambito): TextInput
+    {
+        $campo = CampoMayusculas::make('codigo')
+            ->label('Código del sistema')
+            ->maxLength(30)
+            ->hiddenOn('create')
+            ->disabledOn('edit')
+            /*
+             * ⚠️ La regla apunta a `Item` y NO al modelo del Resource.
+             * Desde farmacia, `Producto` trae su global scope y solo
+             * vería los almacenables: dejaría crear un producto con el
+             * código de un servicio, y el índice único de la base lo
+             * rechazaría después con un error de SQL en la cara del
+             * usuario.
+             */
+            ->unique(Item::class, 'codigo', ignoreRecord: true);
+
+        $explicacion = 'Lo pone el sistema con el prefijo de la categoría. No se cambia: es el que '
+            .'sale impreso en cuentas y etiquetas.';
+
+        return $ambito === AmbitoCatalogo::Productos
+            ? $campo->hintIcon('heroicon-o-information-circle', $explicacion)
+            : $campo->helperText($explicacion);
+    }
+
+    /**
+     * El tipo: medicamento, insumo, laboratorio…
+     *
+     * En farmacia son tres y van como BOTONES: un clic, y se ve de
+     * entrada cuál está elegido. En servicios son siete y se quedan en el
+     * desplegable, que con siete botones partiría la fila en dos.
+     *
+     * Solo los tipos de este lado del catálogo. Ofrecer «Medicamento» en
+     * la pantalla de servicios es ofrecer un camino que termina en un
+     * CHECK de la base rechazando el guardado.
+     *
+     * Al elegirlo se PROPONEN los campos que se derivan de él —si exige
+     * lote, la categoría—. Se proponen: quien carga el catálogo los puede
+     * cambiar.
+     */
+    private static function campoTipo(AmbitoCatalogo $ambito): Select|ToggleButtons
+    {
+        $alElegir = function (?string $state, string $operation, Get $get, Set $set) use ($ambito): void {
+            self::alElegirElTipo($state, $operation, $get, $set, $ambito);
+        };
+
+        if ($ambito === AmbitoCatalogo::Productos) {
+            return ToggleButtons::make('tipo')
+                ->label('Tipo')
+                ->options(fn (): array => collect($ambito->tiposPermitidos())
+                    ->mapWithKeys(fn (TipoItem $tipo): array => [$tipo->value => $tipo->etiquetaCorta()])
+                    ->all())
+                ->icons(fn (): array => collect($ambito->tiposPermitidos())
+                    ->mapWithKeys(fn (TipoItem $tipo): array => [$tipo->value => $tipo->icono()])
+                    ->all())
+                /*
+                 * `inline()` y no `grouped()`: agrupados no se parten de
+                 * renglón, y a 360 px «Insumo o material» empuja el
+                 * tercero fuera de la pantalla.
+                 */
+                ->inline()
+                ->required()
+                ->live()
+                ->afterStateUpdated($alElegir);
+        }
+
+        return Select::make('tipo')
+            ->label('Tipo')
+            ->options(fn (): array => $ambito->opcionesDeTipo())
+            ->required()
+            ->native(false)
+            ->live()
+            ->afterStateUpdated($alElegir)
+            ->helperText('Propone cómo paga ISV, qué unidad usa y si su precio se deriva del costo.');
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * LA HOJA DEL TARIFARIO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Obligatoria acá aunque la columna sea nullable en la base: nullable
+     * existe solo para poder correr la migración sobre un catálogo ya
+     * cargado. Un ítem sin categoría no aparece agrupado en ningún lado y
+     * no suma en el reporte de ingresos por área — desaparece sin dar
+     * error, que es la peor forma de faltar.
+     *
+     * Solo las vigentes: una categoría retirada sigue explicando las
+     * facturas viejas, pero no debería poder recibir ítems nuevos.
+     */
+    private static function campoCategoria(AmbitoCatalogo $ambito): Select
+    {
+        $campo = Select::make('categoria_id')
+            ->label('Categoría')
+            ->required()
+            ->native(false)
+            ->searchable()
+            ->preload()
+            ->live()
+            ->options(fn (): array => self::opcionesDeCategoria($ambito))
+            /*
+             * Elegir la categoría propone el código, porque el prefijo
+             * SALE de ella: `MED-0027`, `LAB-0049`.
+             *
+             * Solo en el alta y solo si lo que hay es vacío o tiene forma
+             * de autogenerado. Un `PARAC500` tecleado a mano no se pisa
+             * nunca — quien lo escribió tenía una razón, y perderlo de
+             * golpe al corregir la categoría es la clase de sorpresa que
+             * hace que la gente cargue el catálogo en un Excel aparte.
+             */
+            ->afterStateUpdated(function (mixed $state, string $operation, Get $get, Set $set): void {
+                self::proponerCodigo($state, $operation, $get, $set);
+            });
+
+        return $ambito === AmbitoCatalogo::Productos
+            ? $campo->hintIcon('heroicon-o-information-circle', 'Se propone sola al elegir el tipo.')
+            : $campo->helperText(
+                'La hoja del tarifario: hospitalización, equipo médico, rayos X, laboratorio, consulta externa.'
+            );
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * «SE ALMACENA» YA NO SE PREGUNTA: LO DICE LA PANTALLA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Era un interruptor en medio del formulario y de él dependía media
+     * ficha. Ahora lo contesta la puerta por la que entrás: si estás en
+     * Farmacia, se almacena.
+     *
+     * Va como Hidden y no como campo omitido porque el resto del
+     * formulario lo lee con `$get('se_almacena')` para decidir qué
+     * pestañas mostrar, y porque la base lo necesita para el CHECK contra
+     * el ámbito de la categoría.
+     *
+     * Mover un ítem de un lado al otro se hace con la acción del listado,
+     * que cambia las tres columnas juntas.
+     */
+    private static function campoSeAlmacena(AmbitoCatalogo $ambito): Hidden
+    {
+        return Hidden::make('se_almacena')
+            ->default($ambito->seAlmacena());
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * DÓNDE TERMINA EL NOMBRE Y DÓNDE EMPIEZA LA PRESENTACIÓN
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La línea no es de estilo, es de inventario:
+     *
+     *   · Al NOMBRE va lo que cambia qué ES una unidad. Una tableta de
+     *     500 mg no es una de 750: cambia la dosis y cambia el precio por
+     *     unidad. Son dos productos con dos kardex.
+     *   · A la PRESENTACIÓN va lo que solo cambia cuánto viene en el
+     *     envase. Un frasco de 60 ml y uno de 120 tienen el mismo jarabe:
+     *     1 ml es 1 ml en los dos, y los dos suman al mismo kardex.
+     *
+     * Poner el tamaño del envase en el nombre parte un producto en tres y
+     * reparte su existencia entre los tres — y ninguno cuadra contra el
+     * estante.
+     *
+     * En farmacia esa regla va en el ⓘ del rótulo, y el campo lleva un
+     * ejemplo adentro: se lee de un vistazo y desaparece al empezar a
+     * escribir.
+     */
+    private static function campoNombre(AmbitoCatalogo $ambito): TextInput
+    {
+        $campo = CampoMayusculas::make('nombre')
+            ->label('Nombre')
+            ->required()
+            ->maxLength(255)
+            ->columnSpanFull();
+
+        return $ambito === AmbitoCatalogo::Productos
+            ? $campo
+                ->placeholder('ACETAMINOFEN 500 MG TABLETA')
+                ->hintIcon(
+                    'heroicon-o-information-circle',
+                    'Principio activo, concentración y forma. El tamaño del envase no va acá: la caja '
+                    .'de 100 y el frasco de 120 ml se cargan en Presentaciones.',
+                )
+            : $campo->helperText('Como debe salir impreso en la cuenta del paciente.');
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LO QUE LLEVA ADENTRO, DEL CATÁLOGO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Antes era texto libre en la pestaña de Farmacia, y por eso
+     * «ACETAMINOFEN», «Acetaminofén» y «acetaminofen » eran tres cosas
+     * distintas que no se agrupaban entre sí. Ahora sale del catálogo,
+     * así que la etiqueta del estante puede listar todos los productos
+     * que lo llevan.
+     *
+     * Es una LISTA y no un desplegable porque un antigripal lleva
+     * acetaminofén + clorfenamina + fenilefrina, y amoxicilina viene con
+     * ácido clavulánico. Con uno solo, el segundo queda invisible — y el
+     * día que alguien pregunte «¿qué tengo con acetaminofén?» para no
+     * duplicar dosis, la respuesta sale incompleta sin que se note.
+     *
+     * Solo en farmacia: un servicio no lleva principio activo.
+     */
+    private static function campoPrincipiosActivos(): Select
+    {
+        return Select::make('principiosActivos')
+            ->label('Principios activos')
+            ->relationship('principiosActivos', 'nombre')
+            ->multiple()
+            ->searchable()
+            ->preload()
+            ->native(false)
+            ->columnSpanFull()
+            ->getOptionLabelFromRecordUsing(fn (PrincipioActivo $record): string => $record->etiqueta())
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SI NO EXISTE, SE DA DE ALTA ACÁ MISMO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Antes, cargar un medicamento cuyo principio no estuviera en
+             * el catálogo terminaba en un callejón: «No se encontraron
+             * coincidencias» y nada que hacer salvo abandonar el producto
+             * a medio cargar, ir a Farmacia → Principios activos, darlo
+             * de alta y volver a empezar. Nadie hace eso con la carga del
+             * vademécum a medias: se deja el campo vacío, y un producto
+             * sin principio no aparece cuando alguien escanea la gaveta
+             * ni cuando se pregunta qué hay con acetaminofén para no
+             * duplicar dosis.
+             *
+             * El «+» de la derecha abre el MISMO formulario que la
+             * pantalla de principios —código correlativo propuesto,
+             * sinónimos, ATC—, guarda, y lo deja seleccionado. Queda dado
+             * de alta para siempre: la próxima vez ya sale en la lista.
+             *
+             * Es el formulario completo a propósito y no una versión
+             * recortada. Dos formularios que crean la misma fila
+             * divergen, y el que queda pobre es el que más se usa.
+             */
+            ->createOptionModalHeading('Nuevo principio activo')
+            ->createOptionForm(fn (Schema $schema): Schema => PrincipioActivoForm::configure($schema))
+            ->createOptionAction(fn (Action $action): Action => $action
+                ->modalWidth('xl')
+                ->modalDescription(
+                    'Se guarda en el catálogo del hospital, no solo en este producto: '
+                    .'la próxima vez ya aparece en la lista.'
+                ))
+            ->noSearchResultsMessage(
+                'Todavía no está en el catálogo. Tocá el + de la derecha para darlo de alta '
+                .'sin salir de acá.'
+            )
+            ->hintIcon(
+                'heroicon-o-information-circle',
+                'Si no está, tocá el + y queda dado de alta. Entiende sinónimos: «paracetamol» '
+                .'encuentra el acetaminofén.',
+            );
+    }
+
+    /**
+     * La nota libre del ítem. Opcional en los dos lados.
+     *
+     * En farmacia se llama «Nota», arranca de un renglón y crece al
+     * escribir: es lo que menos se llena, y no tiene que pesar como los
+     * campos obligatorios ni empujar la ficha hacia abajo.
+     */
+    private static function campoDescripcion(AmbitoCatalogo $ambito): Textarea
+    {
+        $campo = Textarea::make('descripcion')
+            ->columnSpanFull();
+
+        return $ambito === AmbitoCatalogo::Productos
+            ? $campo
+                ->label('Nota (opcional)')
+                ->rows(1)
+                ->autosize()
+                ->placeholder('En qué se diferencia de otro parecido')
+            : $campo
+                ->label('Descripción')
+                ->rows(2)
+                ->helperText('Opcional. Para aclarar qué incluye y qué no — se lee cuando alguien duda al cargar.');
     }
 
     private static function dineroYLey(AmbitoCatalogo $ambito): Tab
@@ -996,9 +1148,6 @@ final class ItemForm
     }
 
     /**
-     * @return array<int|string, string>
-     */
-    /**
      * El código dibujado, con los dos enlaces para mandarlo a imprimir.
      *
      * Devuelve `HtmlString` porque el SVG se inserta tal cual. No hay
@@ -1190,10 +1339,9 @@ final class ItemForm
     private static function campoCodigoDeBarras(): BarcodeInput
     {
         return BarcodeInput::make('codigo_barras')
-            ->label('Código de barras del producto')
-            ->columnSpanFull()
+            ->label('Código de barras')
             ->maxLength(50)
-            ->placeholder('Disparale con la pistola a la caja, o escribilo')
+            ->placeholder('Disparale a la caja o escribilo')
             ->dehydrateStateUsing(fn (mixed $state): ?string => is_string($state) && trim($state) !== ''
                 ? trim($state)
                 : null)
@@ -1202,10 +1350,35 @@ final class ItemForm
                     self::verificarQueElCodigoEsteLibre($record, $value, $fail);
                 },
             ])
-            ->helperText(
+            /*
+             * Lo que hacía «Generar el del hospital» en cada presentación,
+             * ahora en un solo lugar: para lo que llega sin código legible
+             * se imprime el código interno del producto —`MED-101`—, que
+             * el escáner también encuentra. Arriba, como acción del rótulo:
+             * la vista de `BarcodeInput` ocupa el sufijo con la cámara.
+             *
+             * El rótulo es corto porque el campo ocupa un tercio de la
+             * fila; el «para qué» va en el tooltip.
+             */
+            ->hintAction(
+                Action::make('etiqueta_del_hospital')
+                    ->label('Imprimir el del hospital')
+                    ->tooltip(
+                        'Para lo que llega sin código de fábrica: imprime el código interno, que el '
+                        .'escáner también encuentra.'
+                    )
+                    ->icon('heroicon-o-printer')
+                    ->color('gray')
+                    ->visible(fn (?Item $record): bool => $record instanceof Item && $record->exists)
+                    ->url(fn (?Item $record): ?string => $record instanceof Item && $record->exists
+                        ? route('etiquetas.item', ['item' => $record->getKey(), 'formato' => 'hoja', 'copias' => 30])
+                        : null)
+                    ->openUrlInNewTab(),
+            )
+            ->hintIcon(
+                'heroicon-o-information-circle',
                 'El de la caja del fabricante; cada marca tiene el suyo. Vale para todas las '
-                .'presentaciones: escanearlo encuentra este producto y al cobrar se elige tableta, '
-                .'blíster o caja.'
+                .'presentaciones del producto.',
             );
     }
 
@@ -1253,8 +1426,8 @@ final class ItemForm
      *
      * Vive en Identificación y no en una pestaña propia: es UN campo, y
      * uno que se contesta con el nombre del producto delante. La regla
-     * que hay detrás sigue siendo la misma y está en el texto de ayuda —
-     * la existencia se lleva SIEMPRE en la unidad mínima de dispensación,
+     * que hay detrás sigue siendo la misma y está en el ⓘ del rótulo —la
+     * existencia se lleva SIEMPRE en la unidad mínima de dispensación,
      * nunca en cajas—, porque de eso depende que el inventario cuadre.
      *
      * Obligatorio: el CHECK `items_unidad_obligatoria_si_se_almacena` lo
@@ -1268,9 +1441,11 @@ final class ItemForm
             ->searchable()
             ->native(false)
             ->required()
-            ->helperText(
-                'La unidad mínima en la que sale al paciente: TABLETA, ML, AMPOLLA. El inventario se '
-                .'lleva en esta unidad, nunca en cajas — cuántas trae la caja lo dice cada presentación.'
+            ->placeholder('TABLETA, ML, AMPOLLA…')
+            ->hintIcon(
+                'heroicon-o-information-circle',
+                'La unidad más chica en que sale al paciente. El inventario se lleva en esta unidad, '
+                .'nunca en cajas.',
             );
     }
 
@@ -1350,19 +1525,6 @@ final class ItemForm
     }
 
     /**
-     * ¿Este ítem se almacena?
-     *
-     * Se lee del FORMULARIO y no del modelo: en el alta todavía no hay
-     * modelo, y en la edición el usuario puede estar cambiando la
-     * respuesta justo ahora.
-     *
-     * ⚠️ Mientras el interruptor no se haya tocado, `$get` devuelve nulo
-     * —no falso—, y ahí se cae al tipo, que es lo que proponía antes de
-     * que la columna existiera. Tratar el nulo como «no se almacena»
-     * escondería la unidad de dispensación de un medicamento recién
-     * empezado a cargar.
-     */
-    /**
      * El tipo que el formulario tiene elegido ahora mismo.
      *
      * Se lee del formulario y no del modelo por la misma razón que
@@ -1376,6 +1538,19 @@ final class ItemForm
         return is_string($valor) ? TipoItem::tryFrom($valor) : null;
     }
 
+    /**
+     * ¿Este ítem se almacena?
+     *
+     * Se lee del FORMULARIO y no del modelo: en el alta todavía no hay
+     * modelo, y en la edición el usuario puede estar cambiando la
+     * respuesta justo ahora.
+     *
+     * ⚠️ Mientras el interruptor no se haya tocado, `$get` devuelve nulo
+     * —no falso—, y ahí se cae al tipo, que es lo que proponía antes de
+     * que la columna existiera. Tratar el nulo como «no se almacena»
+     * escondería la unidad de dispensación de un medicamento recién
+     * empezado a cargar.
+     */
     private static function esFisico(Get $get): bool
     {
         $almacena = $get('se_almacena');

@@ -223,4 +223,46 @@ enum TipoItem: string
             self::Otro               => 'Otro',
         };
     }
+
+    /**
+     * El nombre corto, para botones y columnas angostas.
+     *
+     * `etiqueta()` lleva ejemplos entre paréntesis porque se lee en un
+     * desplegable, donde sobra espacio. En un botón esos ejemplos parten
+     * la fila en dos y empujan el siguiente fuera de la pantalla.
+     */
+    public function etiquetaCorta(): string
+    {
+        return match ($this) {
+            self::Servicio           => 'Servicio',
+            self::Procedimiento      => 'Procedimiento',
+            self::Medicamento        => 'Medicamento',
+            self::Insumo             => 'Insumo o material',
+            self::EstudioLaboratorio => 'Laboratorio',
+            self::EstudioImagen      => 'Imagen',
+            self::Honorario          => 'Honorario',
+            self::Estancia           => 'Estancia',
+            self::Paquete            => 'Paquete',
+            self::Otro               => 'Otro',
+        };
+    }
+
+    /**
+     * El ícono que lo acompaña en los botones del formulario.
+     */
+    public function icono(): string
+    {
+        return match ($this) {
+            self::Servicio           => 'heroicon-o-hand-raised',
+            self::Procedimiento      => 'heroicon-o-scissors',
+            self::Medicamento        => 'heroicon-o-beaker',
+            self::Insumo             => 'heroicon-o-cube',
+            self::EstudioLaboratorio => 'heroicon-o-eye-dropper',
+            self::EstudioImagen      => 'heroicon-o-photo',
+            self::Honorario          => 'heroicon-o-user',
+            self::Estancia           => 'heroicon-o-home-modern',
+            self::Paquete            => 'heroicon-o-archive-box',
+            self::Otro               => 'heroicon-o-ellipsis-horizontal-circle',
+        };
+    }
 }

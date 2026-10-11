@@ -64,9 +64,8 @@ class CreateProducto extends CreateItem
             ->success()
             ->title('Producto creado — falta la presentación')
             ->body(
-                'Agregale abajo cómo viene envasado —la caja de 100, el blíster de 12— con su '
-                .'código de barras. Sin eso no se puede comprar ni escanear, y el precio se '
-                .'calcula al recibir la primera compra.'
+                'Agregale abajo cómo viene envasado: la caja de 100, el blíster de 12. Sin eso no '
+                .'se puede comprar, y el precio se calcula al recibir la primera compra.'
             );
     }
 

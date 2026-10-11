@@ -9,7 +9,6 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Unidad;
-use App\Support\CodigoDeBarras;
 use App\Support\NumeroDeFormulario;
 use Closure;
 use Filament\Actions\Action;
@@ -19,7 +18,6 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
@@ -29,7 +27,6 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\HtmlString;
-use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 
 /**
  * Presentaciones de compra de un ítem.
@@ -50,20 +47,18 @@ use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
  * más alto que nadie nota hasta el cierre.
  *
  * ─────────────────────────────────────────────────────────────────────
- * 🔴 EL CÓDIGO DE BARRAS VIVE ACÁ, Y NO EN LA FICHA DEL PRODUCTO
+ * 🔴 EL CÓDIGO DE BARRAS YA NO SE PIDE ACÁ (10-oct-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * «ACETAMINOFEN TABLETA 800 MG» es el nombre de un medicamento: no es
- * nada que se pueda agarrar con la mano ni pegarle una etiqueta. Lo que
- * existe en el estante es la caja de 100 y el blíster de 12, y son ellos
- * los que se escanean.
+ * Regla de Mauricio: se carga una vez en la ficha del producto —el de
+ * la caja del fabricante, distinto por marca— y lo heredan todos sus
+ * envases. Antes se pedía envase por envase, y el blíster, que casi
+ * nunca trae código propio, quedaba marcado como «no se puede
+ * escanear».
  *
- * Por eso el campo pide una de dos cosas, las dos válidas:
- *
- *   · El código del FABRICANTE, leído de la caja con la pistola. Sirve
- *     para recibir mercadería sin teclear nada.
- *   · O el del HOSPITAL, generado acá e impreso en la etiqueta, para lo
- *     que se reenvasa o viene sin código legible.
+ * Los códigos que ya tenían las presentaciones se quedan guardados:
+ * siguen encontrándose al escanear y sus etiquetas se siguen
+ * imprimiendo desde la tabla.
  *
  * La etiqueta del ESTANTE es otra cosa y ya tiene su lugar: es la del
  * principio activo, y al escanearla salen todos los productos que lo
@@ -106,78 +101,24 @@ class PresentacionesRelationManager extends RelationManager
             ->components([
                 /*
                  * ─────────────────────────────────────────────────────
-                 * 🔴 EL NOMBRE SE ESCRIBE SOLO, CON LO QUE YA SE
-                 * CONTESTÓ ABAJO
+                 * PRIMERO EL ENVASE Y CUÁNTO TRAE, DESPUÉS EL NOMBRE
                  * ─────────────────────────────────────────────────────
                  *
-                 * Antes el campo abría vacío y con el ejemplo «CAJA X 100
-                 * AMPOLLAS» de fondo, así que las presentaciones quedaban
-                 * cargadas como «CAJA X 100» a secas. Ese nombre es el
-                 * que después aparece SOLO —en el desplegable de la
-                 * compra, en la línea del lote, en la etiqueta— y ahí
-                 * «CAJA X 100» no dice de qué.
+                 * El nombre se escribe solo con esas dos respuestas, así
+                 * que van arriba: se contestan dos campos y el tercero
+                 * aparece lleno. Con el nombre primero, había que saltarlo
+                 * vacío para llenar lo de abajo y volver.
                  *
-                 * Ahora no hay que escribirlo: el nombre del producto ya
-                 * viene puesto, y al contestar el envase y el contenido
-                 * se completa solo con la pleca y la equivalencia.
+                 * El producto no es un campo: va en el encabezado del
+                 * modal. Como campo de solo lectura parecía algo que se
+                 * podía editar y no.
                  *
-                 *   ACETAMINOFEN 500 MG TABLETA / CAJA X 100 TABLETA
-                 *   PROMOFOL JARABE 100 MG / FRASCO X 120 ML
-                 *   DIAZEPAM 10 MG/2 ML / AMPOLLA
-                 *
-                 * ⚠️ Lleva el ENVASE y no solo la cantidad. «/ 100
-                 * TABLETA» no distingue la caja de 100 de la bolsa de
-                 * 100, y son dos filas distintas que se compran distinto:
-                 * dos presentaciones con el mismo nombre en el
-                 * desplegable de la compra es donde alguien elige la que
-                 * no era.
-                 *
-                 * ⚠️ Y no se impone: es texto normal, se puede pisar. Lo
-                 * que se reescribe al cambiar el envase o el contenido es
-                 * solo lo que escribió el sistema mismo —lo vacío, el
-                 * nombre del producto pelado, o algo que ya tiene esta
-                 * forma—. Un nombre tecleado a mano no se toca.
-                 *
-                 * ⚠️ Solo en lo que se almacena. En una variante el
-                 * nombre es lo que la DISTINGUE —«DR. CARLOS MEJÍA»— y
-                 * repetirle adelante el del honorario la haría más larga
-                 * y menos legible.
+                 * 🔴 Y el código de barras ya no se pide acá (10-oct-2026):
+                 * se carga una vez en la ficha del producto y lo heredan
+                 * todos sus envases. Los códigos que ya tenían las
+                 * presentaciones se quedan guardados y siguen
+                 * encontrándose al escanear.
                  */
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EL NOMBRE BASE NO SE TOCA DESDE ACÁ
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Regla de Mauricio (3-sep-2026): el nombre de la ficha
-                 * es la base y no se cambia; la presentación es lo que se
-                 * le agrega al final.
-                 *
-                 * Antes el campo guardaba «PRODUCTO / ENVASE» y se podía
-                 * editar entero, así que el nombre del producto quedaba
-                 * escrito DOS veces —en la ficha y en cada presentación— y
-                 * las dos copias se separaban al primer cambio de nombre.
-                 * El seeder, además, guardaba solo el envase: dos
-                 * convenciones para la misma columna.
-                 *
-                 * Ahora la presentación guarda SOLO el envase y la base se
-                 * lee del producto al mostrarla. Una sola copia, imposible
-                 * de desincronizar.
-                 */
-                Placeholder::make('nombre_base')
-                    ->label('Producto')
-                    ->columnSpanFull()
-                    ->visible(fn (): bool => $this->seAlmacena())
-                    ->content(fn (): string => $this->nombreBase() ?? '—')
-                    ->helperText('Sale de la ficha y no se edita acá. La presentación de abajo se le agrega al final.'),
-
-                CampoMayusculas::make('nombre')
-                    ->label(fn (): string => $this->seAlmacena() ? 'Presentación' : 'Nombre')
-                    ->required()
-                    ->maxLength(255)
-                    ->columnSpanFull()
-                    ->placeholder($this->ejemploDeNombre())
-                    ->helperText($this->ayudaDelNombre()),
-
                 Select::make('unidad_id')
                     ->label($this->etiquetaDeLaUnidad())
                     ->options(fn (): array => Unidad::query()
@@ -242,106 +183,50 @@ class PresentacionesRelationManager extends RelationManager
 
                 /*
                  * ─────────────────────────────────────────────────────
-                 * ESCANEAR EL DE LA CAJA, O GENERAR EL DEL HOSPITAL
+                 * 🔴 EL NOMBRE SE ESCRIBE SOLO, CON LO QUE YA SE
+                 * CONTESTÓ ARRIBA
                  * ─────────────────────────────────────────────────────
                  *
-                 * Tres formas de llenarlo, y ninguna excluye a las otras:
+                 * Antes el campo abría vacío y con el ejemplo «CAJA X 100
+                 * AMPOLLAS» de fondo, así que las presentaciones quedaban
+                 * cargadas como «CAJA X 100» a secas. Ese nombre es el
+                 * que después aparece SOLO —en el desplegable de la
+                 * compra, en la línea del lote, en la etiqueta— y ahí
+                 * «CAJA X 100» no dice de qué.
                  *
-                 *   · LA PISTOLA USB. Un lector de código de barras es un
-                 *     teclado: el campo está esperando, se apunta y se
-                 *     dispara. No hay nada que configurar.
-                 *   · LA CÁMARA DEL TELÉFONO, con el ícono de la derecha.
-                 *     Es la que se va a usar en el estante, donde no hay
-                 *     una computadora con pistola al lado.
-                 *   · A MANO, tecleando.
+                 * Ahora no hay que escribirlo: el nombre del producto ya
+                 * viene puesto, y al contestar el envase y el contenido
+                 * se completa solo con la pleca y la equivalencia.
                  *
-                 * Es `BarcodeInput` y no un `TextInput` justamente por la
-                 * segunda: hereda de TextInput, así que todo lo de abajo
-                 * —las reglas, el dibujo, el estado— funciona igual. Es
-                 * el mismo campo que ya usan recepción, conteos, ajustes
-                 * y el mostrador de cuentas.
+                 *   ACETAMINOFEN 500 MG TABLETA / CAJA X 100 TABLETA
+                 *   PROMOFOL JARABE 100 MG / FRASCO X 120 ML
+                 *   DIAZEPAM 10 MG/2 ML / AMPOLLA
                  *
-                 * ⚠️ La cámara exige HTTPS. En `http://` —y eso incluye
-                 * entrar por la IP de la red desde el teléfono— el
-                 * navegador no la ofrece y el ícono abre un recuadro
-                 * vacío. No es el campo: es una regla del navegador.
+                 * ⚠️ Lleva el ENVASE y no solo la cantidad. «/ 100
+                 * TABLETA» no distingue la caja de 100 de la bolsa de
+                 * 100, y son dos filas distintas que se compran distinto:
+                 * dos presentaciones con el mismo nombre en el
+                 * desplegable de la compra es donde alguien elige la que
+                 * no era.
                  *
-                 * Y aparte, «Generar» propone el del hospital para cuando
-                 * la caja no trae ninguno legible o el producto se
-                 * reenvasa. Ese código es el del ítem con un sufijo
-                 * —`MED-0708-01`— para que la etiqueta se pueda leer con
-                 * los ojos, sin escáner y sin sistema.
+                 * ⚠️ Y no se impone: es texto normal, se puede pisar. Lo
+                 * que se reescribe al cambiar el envase o el contenido es
+                 * solo lo que escribió el sistema mismo —lo vacío, el
+                 * nombre del producto pelado, o algo que ya tiene esta
+                 * forma—. Un nombre tecleado a mano no se toca.
                  *
-                 * ⚠️ «Generar» va como `hintAction` —arriba, al lado de
-                 * la etiqueta— y no como `suffixAction`. La vista de
-                 * `BarcodeInput` ocupa el sufijo con su propio botón de
-                 * cámara y NO dibuja las acciones de sufijo: puesto ahí,
-                 * el botón desaparecía sin dar ningún error.
-                 *
-                 * 🔴 Único en toda la tabla, incluidas las borradas. Dos
-                 * presentaciones con el mismo código hacen que el lector
-                 * devuelva la que el ORDER BY quiera; y reciclar el de
-                 * una presentación dada de baja haría que la caja que
-                 * todavía tiene esa etiqueta pegada escanee como otra
-                 * cosa.
+                 * ⚠️ Solo en lo que se almacena. En una variante el
+                 * nombre es lo que la DISTINGUE —«DR. CARLOS MEJÍA»— y
+                 * repetirle adelante el del honorario la haría más larga
+                 * y menos legible.
                  */
-                BarcodeInput::make('codigo_barras')
-                    ->label('Código de barras')
-                    ->visible(fn (): bool => $this->seAlmacena())
+                CampoMayusculas::make('nombre')
+                    ->label(fn (): string => $this->seAlmacena() ? 'Presentación' : 'Nombre')
+                    ->required()
+                    ->maxLength(255)
                     ->columnSpanFull()
-                    ->maxLength(64)
-                    ->live(onBlur: true)
-                    ->autocomplete(false)
-                    ->placeholder('Disparale con la pistola, tocá la cámara, o escribilo')
-                    ->dehydrateStateUsing(fn (mixed $state): ?string => self::codigoLimpio($state))
-                    /*
-                     * La unicidad se verifica acá y no con `->unique()`
-                     * de Filament a propósito: la regla de Laravel
-                     * descarta las filas borradas cuando el modelo usa
-                     * SoftDeletes, y acá hace falta lo contrario —una
-                     * etiqueta impresa sigue pegada en una caja aunque la
-                     * presentación se haya dado de baja—.
-                     */
-                    ->rules([
-                        fn (?ItemPresentacion $record): Closure => function (
-                            string $attribute,
-                            mixed $value,
-                            Closure $fail,
-                        ) use ($record): void {
-                            self::verificarQueSePuedaImprimir($value, $fail);
-                            self::verificarQueNoEsteTomado($record, $value, $fail);
-                        },
-                    ])
-                    ->hintAction(
-                        Action::make('generar_codigo')
-                            ->label('Generar el del hospital')
-                            ->icon('heroicon-o-sparkles')
-                            ->color('warning')
-                            ->action(function (Set $set): void {
-                                $this->generarElCodigo($set);
-                            }),
-                    )
-                    ->helperText(fn (): string => $this->codigoDelProducto() !== null
-                        ? 'Opcional: este envase ya se encuentra con el código del producto ('
-                            .$this->codigoDelProducto().'). Cargá uno acá solo si este envase trae un '
-                            .'código DISTINTO al de la ficha.'
-                        : 'El de este envase, si trae uno propio. Lo normal es cargar el de la caja en '
-                            .'la ficha del producto, en Identificación, y que lo hereden todos los envases. '
-                            .'Si no trae código legible, «Generar el del hospital» propone uno para imprimir.'),
-
-                /*
-                 * El dibujo de lo que se va a imprimir, mientras todavía
-                 * se puede corregir. No es adorno: Code 128-B no cubre
-                 * tildes ni ñ, y un código con una tilde adentro no se
-                 * imprime mal —no se imprime—, cosa que sin esto se
-                 * descubre recién en la impresora.
-                 */
-                Placeholder::make('dibujo_del_codigo')
-                    ->hiddenLabel()
-                    ->columnSpanFull()
-                    ->visible(fn (Get $get): bool => $this->seAlmacena()
-                        && self::codigoLimpio($get('codigo_barras')) !== null)
-                    ->content(fn (Get $get): HtmlString => self::dibujo($get('codigo_barras'))),
+                    ->placeholder($this->ejemploDeNombre())
+                    ->helperText($this->ayudaDelNombre()),
 
                 DatePicker::make('vigencia_desde')
                     ->label('Vigente desde')
@@ -442,7 +327,7 @@ class PresentacionesRelationManager extends RelationManager
                     ->tooltip(fn (ItemPresentacion $record): string => $record->codigo_barras
                         ?? ($this->codigoDelProducto() !== null
                             ? 'Por el código del producto: '.$this->codigoDelProducto()
-                            : 'Sin código: cargá el del producto en la ficha, o uno propio de este envase.')),
+                            : 'Sin código: cargá el del producto en la ficha, en Identificación.')),
 
                 TextColumn::make('vigencia_hasta')
                     ->label('Vigencia')
@@ -472,7 +357,7 @@ class PresentacionesRelationManager extends RelationManager
                      * Decirlo antes de empezar cuesta una línea.
                      */
                     ->modalDescription(fn (): ?string => $this->seAlmacena()
-                        ? 'Este producto se lleva en '.$this->unidadDeDispensacion()
+                        ? ($this->nombreBase() ?? 'Este producto').' se lleva en '.$this->unidadDeDispensacion()
                         .'. Todo lo que cargues acá se convierte a esa unidad: si el envase '
                         .'viene en otra —un frasco de jarabe, por ejemplo—, es OTRO producto.'
                         : null)
@@ -551,6 +436,7 @@ class PresentacionesRelationManager extends RelationManager
                     ->modalHeading(fn (): string => $this->seAlmacena()
                         ? 'Editar presentación'
                         : 'Editar variante')
+                    ->modalDescription(fn (): ?string => $this->seAlmacena() ? $this->nombreBase() : null)
                     ->modalWidth('2xl'),
             ])
             ->toolbarActions([])
@@ -602,183 +488,6 @@ class PresentacionesRelationManager extends RelationManager
         return $this->seAlmacena() && $presentacion->codigo_barras !== null;
     }
 
-    /**
-     * Escribe en el campo el código que el hospital propone.
-     *
-     * Avisa cuando no puede en vez de dejar el campo como estaba: un
-     * botón que a veces no hace nada enseña que el botón no sirve.
-     */
-    private function generarElCodigo(Set $set): void
-    {
-        $duenio = $this->getOwnerRecord();
-
-        if (! $duenio instanceof Item) {
-            return;
-        }
-
-        $codigo = ItemPresentacion::codigoSugeridoPara($duenio);
-
-        if ($codigo === null) {
-            Notification::make()
-                ->title('No se pudo proponer un código')
-                ->body(
-                    'El producto no tiene código propio, o ya usó los noventa y nueve sufijos. '
-                    .'Escribí el código a mano.'
-                )
-                ->warning()
-                ->send();
-
-            return;
-        }
-
-        $set('codigo_barras', $codigo);
-    }
-
-    /**
-     * El código tal cual lo va a leer el escáner, o null si no hay nada.
-     *
-     * ⚠️ Solo se le quitan los espacios de los extremos —que es lo que
-     * agrega la pistola al final de la lectura—. Ni mayúsculas ni
-     * acentos ni nada: algunos GS1 llevan minúsculas, y tocarlas hace
-     * que lo guardado deje de coincidir con lo que el lector manda.
-     */
-    private static function codigoLimpio(mixed $valor): ?string
-    {
-        if (! is_string($valor)) {
-            return null;
-        }
-
-        $limpio = trim($valor);
-
-        return $limpio === '' ? null : $limpio;
-    }
-
-    /**
-     * Un código que no se puede dibujar en Code 128-B no sirve para nada
-     * acá: la etiqueta saldría en blanco.
-     *
-     * Se rechaza al guardar y no al imprimir, porque al imprimir ya es
-     * tarde — la presentación quedó cargada, alguien la dio por buena y
-     * el problema aparece con la caja en la mano.
-     */
-    private static function verificarQueSePuedaImprimir(mixed $value, Closure $fail): void
-    {
-        $codigo = self::codigoLimpio($value);
-
-        if ($codigo === null) {
-            return;
-        }
-
-        if (CodigoDeBarras::codificable($codigo) === '') {
-            $fail(
-                'Ese código no se puede imprimir en barras: tiene tildes, eñes o algún carácter '
-                .'fuera del ASCII imprimible. Los códigos de barras solo llevan letras sin tilde, '
-                .'números y guiones.'
-            );
-        }
-    }
-
-    /**
-     * Dos presentaciones con el mismo código de barras hacen que el
-     * lector devuelva la que el ORDER BY quiera — silenciosamente y
-     * distinta cada vez.
-     *
-     * ⚠️ Mira también las BORRADAS, y por eso no se usa `->unique()` de
-     * Filament: esa regla las descarta cuando el modelo usa SoftDeletes.
-     * Acá hace falta lo contrario. Una presentación se da de baja del
-     * sistema, pero su etiqueta sigue pegada en una caja del estante: si
-     * el código se reasignara, esa caja pasaría a escanear como otra
-     * cosa.
-     *
-     * El índice único de la base es el que manda; esto existe para que
-     * el choque se explique en el formulario y no como un error de SQL.
-     */
-    private static function verificarQueNoEsteTomado(
-        ?ItemPresentacion $record,
-        mixed $value,
-        Closure $fail,
-    ): void {
-        $codigo = self::codigoLimpio($value);
-
-        if ($codigo === null) {
-            return;
-        }
-
-        /*
-         * Primero contra los PRODUCTOS: desde el 10-oct-2026 el código de
-         * la caja del fabricante se carga en la ficha y lo heredan todos
-         * los envases. Repetirlo acá haría que la pistola encontrara dos
-         * lugares para un mismo código.
-         */
-        $producto = Item::withTrashed()->where('codigo_barras', $codigo)->first();
-
-        if ($producto instanceof Item) {
-            $fail(
-                "Ese código ya es el de «{$producto->nombre}», en su ficha. Lo heredan todas sus "
-                .'presentaciones: no hace falta repetirlo acá.'
-            );
-
-            return;
-        }
-
-        $tomada = ItemPresentacion::withTrashed()
-            ->with('item')
-            ->where('codigo_barras', $codigo)
-            ->when(
-                $record instanceof ItemPresentacion,
-                fn ($query) => $query->whereKeyNot($record?->getKey()),
-            )
-            ->first();
-
-        if (! $tomada instanceof ItemPresentacion) {
-            return;
-        }
-
-        $duenio = $tomada->item;
-        $de = $duenio instanceof Item ? $duenio->nombre : 'otro producto';
-
-        $fail(
-            "Ese código de barras ya es de «{$tomada->nombre}», de {$de}. Dos presentaciones con "
-            .'el mismo código hacen que el lector devuelva cualquiera de las dos.'
-        );
-    }
-
-    /**
-     * El código dibujado, para verlo antes de imprimirlo.
-     *
-     * Devuelve `HtmlString` porque el SVG se inserta tal cual. No hay
-     * dato del usuario sin escapar acá adentro: el texto pasa por
-     * `CodigoDeBarras::codificable()`, que solo deja ASCII imprimible.
-     */
-    private static function dibujo(mixed $valor): HtmlString
-    {
-        $codigo = self::codigoLimpio($valor);
-
-        if ($codigo === null) {
-            return new HtmlString('');
-        }
-
-        $svg = CodigoDeBarras::svg($codigo, modulo: 2, alto: 44);
-
-        if ($svg === '') {
-            return new HtmlString(
-                '<span style="font-size:.875rem;color:#b45309">⚠️ Este código no se puede imprimir '
-                .'en barras: tiene caracteres fuera del ASCII imprimible.</span>'
-            );
-        }
-
-        /*
-         * ⚠️ Estilos EN LÍNEA y no clases de Tailwind: este HTML se
-         * inyecta como `HtmlString` y nunca pasa por el compilador de
-         * CSS, así que las clases no existen en la hoja final.
-         */
-        return new HtmlString(
-            '<div style="display:inline-block;background:#fff;color:#000;padding:.5rem;border-radius:.5rem">'
-            .$svg
-            .'</div>'
-        );
-    }
-
     // ── Textos que dependen del ítem ──────────────────────────────────
 
     /**
@@ -803,7 +512,7 @@ class PresentacionesRelationManager extends RelationManager
 
         if (! is_numeric($unidadId) || ! is_numeric($contenido)) {
             return new HtmlString(
-                '<span style="font-size:.875rem;color:#6b7280">Elegí el envase y cuánto trae, y acá '
+                '<span style="font-size:.8125rem;opacity:.7">Elegí el envase y cuánto trae, y acá '
                 .'se lee la equivalencia completa.</span>'
             );
         }
@@ -836,10 +545,19 @@ class PresentacionesRelationManager extends RelationManager
             )
             : sprintf('Al cobrar se vende por %s.', $unidad);
 
+        /*
+         * En un recuadro y no suelto: es la línea que hay que leer antes
+         * de guardar, y entre campos con ayuda se perdía como un texto
+         * más. Colores con transparencia: se ven igual en tema claro y
+         * oscuro, y el CSS del panel viene compilado (§9.A7).
+         */
         return new HtmlString(
-            '<span style="font-size:.9375rem;font-weight:600">'.e($frase).'</span>'
-            .'<span style="font-size:.875rem;color:#6b7280"> — así entra al kardex.</span>'
-            .'<br><span style="font-size:.875rem;color:#6b7280">'.e($alCobrar).'</span>'
+            '<div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.30);'
+            .'border-radius:.625rem;padding:.625rem .875rem;line-height:1.5">'
+            .'<div style="font-size:.9375rem;font-weight:600">'.e($frase)
+            .'<span style="font-weight:400;opacity:.7"> — así entra al kardex</span></div>'
+            .'<div style="font-size:.8125rem;opacity:.8">'.e($alCobrar).'</div>'
+            .'</div>'
         );
     }
 
@@ -893,8 +611,7 @@ class PresentacionesRelationManager extends RelationManager
     private function ayudaDelContenido(): string
     {
         return $this->seAlmacena()
-            ? 'Una caja de 100 ampollas lleva 100. El kardex se lleva SIEMPRE en la unidad de '
-              .'dispensación del ítem —acá '.$this->unidadDeDispensacion().'—, nunca en cajas.'
+            ? 'El inventario se lleva siempre en '.$this->codigoDeDispensacion().', nunca en cajas.'
             : 'Uno. Una variante que no se almacena no es un envase que contenga otra cosa: es la '
               .'misma prestación con otro precio.';
     }
@@ -1039,11 +756,8 @@ class PresentacionesRelationManager extends RelationManager
     private function ayudaDelNombre(): string
     {
         return $this->seAlmacena()
-            ? 'Solo el envase: «CAJA X 100 TABLETAS», «FRASCO X 120 ML». Se completa solo al '
-              .'contestar los dos campos de abajo, y se le agrega al nombre del producto de arriba. '
-              .'Si querés otro texto, escribilo encima y no se vuelve a tocar.'
-            : 'Qué distingue a esta variante de las otras: el médico, la medida, la marca. '
-              .'Se guarda en mayúsculas.';
+            ? 'Se completa solo con lo de arriba. Si querés otro texto, escribilo encima.'
+            : 'Qué distingue a esta variante de las otras: el médico, la medida, la marca.';
     }
 
     private function etiquetaDeLaUnidad(): string
@@ -1054,9 +768,7 @@ class PresentacionesRelationManager extends RelationManager
     private function ayudaDeLaUnidad(): string
     {
         return $this->seAlmacena()
-            ? 'Cómo viene: CAJA, FRASCO, BLÍSTER. Una caja de 100 tabletas se carga con envase CAJA '
-              .'y contenido 100. Al cobrar se puede vender por tableta o la caja sin abrir; el '
-              .'kardex la descuenta de a tableta igual.'
+            ? 'Cómo viene: CAJA, FRASCO, BLÍSTER.'
             : 'La misma en la que se cobra el ítem. Para una consulta o un honorario, UNIDAD.';
     }
 
