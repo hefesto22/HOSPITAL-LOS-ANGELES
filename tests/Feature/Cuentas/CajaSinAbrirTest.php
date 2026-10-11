@@ -33,12 +33,13 @@ use Illuminate\Support\Str;
  * 🔴 LA REGLA (Mauricio, 10-oct-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * «Cuando son tabletas debería poderse poner si se dispensa en tableta o
- * caja.» Cada presentación dice si también se vende sin abrir, y al
- * cobrar quien atiende elige. Lo que este archivo cuida:
+ * «Se puede dispensar en envase, caja o tableta» — sin meter datos que
+ * no hacen falta. «Se dispensa en» es lo menos que se entrega; cada
+ * presentación cargada es un envase que también se puede entregar sin
+ * abrir. Al cobrar, quien atiende elige. Lo que este archivo cuida:
  *
- *   · que la caja solo multiplique cuando el catálogo la marcó;
  *   · que con la tableta y la caja el sistema NO elija solo;
+ *   · que la caja multiplique y la tableta no;
  *   · que el renglón diga «1 CAJA» aunque FEFO la parta en dos filas;
  *   · que una caja sin abrir no se arme con tabletas de un blíster.
  *
@@ -59,7 +60,20 @@ function unaUnidadLlamada(string $codigo, MagnitudDeMedida $magnitud = MagnitudD
         : Unidad::factory()->de($magnitud)->create(['codigo' => $codigo, 'nombre' => $codigo]);
 }
 
-function unaTabletaEnCaja(bool $seVendeEntera): ItemPresentacion
+/**
+ * @param numeric-string $contenido
+ */
+function otroEnvaseDe(Item $item, string $envase, string $contenido, string $nombre): ItemPresentacion
+{
+    return ItemPresentacion::factory()
+        ->conContenido($contenido, $nombre)
+        ->create([
+            'item_id'   => $item->id,
+            'unidad_id' => unaUnidadLlamada($envase)->id,
+        ]);
+}
+
+function unaTabletaEnCaja(): ItemPresentacion
 {
     $item = Item::factory()->medicamento()->create([
         'regimen_isv'               => RegimenIsv::Exento,
@@ -69,29 +83,17 @@ function unaTabletaEnCaja(bool $seVendeEntera): ItemPresentacion
 
     Tarifario::factory()->delItem($item)->a('2.0000')->create();
 
-    return ItemPresentacion::factory()
-        ->conContenido('100.0000', 'CAJA X 100 TABLETAS')
-        ->create([
-            'item_id'         => $item->id,
-            'unidad_id'       => unaUnidadLlamada('CAJA')->id,
-            'se_vende_entera' => $seVendeEntera,
-        ]);
+    return otroEnvaseDe($item, 'CAJA', '100.0000', 'CAJA X 100 TABLETAS');
 }
 
-function unJarabeEnFrasco(bool $seVendeEntero): ItemPresentacion
+function unJarabeEnFrasco(): ItemPresentacion
 {
     $item = Item::factory()->medicamento()->create([
         'fraccionable'           => false,
         'unidad_dispensacion_id' => unaUnidadLlamada('ML', MagnitudDeMedida::Volumen)->id,
     ]);
 
-    return ItemPresentacion::factory()
-        ->conContenido('120.0000', 'FRASCO X 120 ML')
-        ->create([
-            'item_id'         => $item->id,
-            'unidad_id'       => unaUnidadLlamada('FRASCO')->id,
-            'se_vende_entera' => $seVendeEntero,
-        ]);
+    return otroEnvaseDe($item, 'FRASCO', '120.0000', 'FRASCO X 120 ML');
 }
 
 /**
@@ -159,25 +161,58 @@ function venderSinAbrir(
 |--------------------------------------------------------------------------
 */
 
-it('sin la marca la caja no se ofrece y la tableta se cobra sin preguntar', function (): void {
-    $caja = unaTabletaEnCaja(seVendeEntera: false);
-    $formas = app(FormasDeCobro::class);
-
-    expect($formas->de($caja->item, lasPresentacionesDe($caja->item)))->toBe([FormasDeCobro::SUELTA])
-        ->and($formas->unica($caja->item, lasPresentacionesDe($caja->item)))->toBe(FormasDeCobro::SUELTA);
-})->note('Apagada por defecto: una caja que nadie marcó no aparece como botón que multiplica por cien.');
-
-it('🔴 con la marca se elige entre la tableta y la caja, y el sistema no elige solo', function (): void {
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+it('🔴 la tableta y la caja se ofrecen sin marcar nada, y el sistema no elige solo', function (): void {
+    $caja = unaTabletaEnCaja();
     $formas = app(FormasDeCobro::class);
 
     expect($formas->de($caja->item, lasPresentacionesDe($caja->item)))
         ->toBe([FormasDeCobro::SUELTA, FormasDeCobro::ENVASE.$caja->id])
         ->and($formas->unica($caja->item, lasPresentacionesDe($caja->item)))->toBeNull();
-})->note('🔴 «Escoge cómo se le va a agregar, si la caja o tabletas»: sin forma única, la pantalla pregunta y no deja seguir sin respuesta.');
+})->note('🔴 «Escoge cómo se le va a agregar, si la caja o tabletas»: con dos formas, la pantalla pregunta y no deja seguir sin respuesta. Y no hay que configurar nada: la caja ya está cargada en la ficha.');
+
+it('con la caja y el blister se ofrecen los tres', function (): void {
+    $caja = unaTabletaEnCaja();
+    $blister = otroEnvaseDe($caja->item, 'BLISTER', '10.0000', 'BLISTER X 10 TABLETAS');
+
+    expect(app(FormasDeCobro::class)->de($caja->item, lasPresentacionesDe($caja->item)))
+        ->toEqualCanonicalizing([
+            FormasDeCobro::SUELTA,
+            FormasDeCobro::ENVASE.$caja->id,
+            FormasDeCobro::ENVASE.$blister->id,
+        ]);
+});
+
+it('sin envases cargados solo queda la unidad y no hay nada que preguntar', function (): void {
+    $sinEnvases = Item::factory()->medicamento()->create([
+        'unidad_dispensacion_id' => unaUnidadLlamada('TAB')->id,
+    ]);
+
+    expect(app(FormasDeCobro::class)->unica($sinEnvases, lasPresentacionesDe($sinEnvases)))
+        ->toBe(FormasDeCobro::SUELTA);
+});
+
+it('el envase de una sola unidad no se ofrece: es lo mismo que la unidad', function (): void {
+    $ampolla = Item::factory()->medicamento()->create([
+        'unidad_dispensacion_id' => unaUnidadLlamada('AMP')->id,
+    ]);
+
+    otroEnvaseDe($ampolla, 'AMP', '1.0000', 'AMPOLLA');
+
+    expect(app(FormasDeCobro::class)->de($ampolla, lasPresentacionesDe($ampolla)))
+        ->toBe([FormasDeCobro::SUELTA]);
+})->note('«AMPOLLA» sin abrir y «Por AMP» cobran igual: dos botones para lo mismo es pedirle a quien cobra que elija entre nada.');
+
+it('lo que no se almacena no ofrece envases', function (): void {
+    $servicio = unServicioDe('100.0000');
+
+    otroEnvaseDe($servicio, 'SESION', '4.0000', 'PAQUETE DE 4 SESIONES');
+
+    expect(app(FormasDeCobro::class)->de($servicio, lasPresentacionesDe($servicio)))
+        ->toBe([FormasDeCobro::SUELTA]);
+})->note('En un honorario o un servicio las presentaciones son variantes, no cajas en un estante.');
 
 it('🔴 dos cajas sin abrir son doscientas tabletas y dos envases', function (): void {
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
     $formas = app(FormasDeCobro::class);
     $presentaciones = lasPresentacionesDe($caja->item);
     $clave = FormasDeCobro::ENVASE.$caja->id;
@@ -190,33 +225,22 @@ it('🔴 dos cajas sin abrir son doscientas tabletas y dos envases', function ()
         ->and($formas->envasesEnteros(FormasDeCobro::SUELTA, Decimal::de('2'), $presentaciones))->toBeNull();
 })->note('El mismo «2» son dos tabletas o doscientas: por eso la forma la elige una persona y la conversión vive en un solo lugar.');
 
-it('el frasco sin la marca es solo el origen y no multiplica', function (): void {
-    $frasco = unJarabeEnFrasco(seVendeEntero: false);
+it('el jarabe se cobra por ML o por el frasco sin abrir', function (): void {
+    $frasco = unJarabeEnFrasco();
     $formas = app(FormasDeCobro::class);
     $presentaciones = lasPresentacionesDe($frasco->item);
     $clave = FormasDeCobro::ENVASE.$frasco->id;
 
-    expect($formas->de($frasco->item, $presentaciones))->toBe([$clave])
-        ->and($formas->aUnidadesDeDispensacion($frasco->item, $clave, Decimal::de('5'), $presentaciones)?->redondeado(4))
+    expect($formas->de($frasco->item, $presentaciones))->toBe([FormasDeCobro::SUELTA, $clave])
+        ->and($formas->aUnidadesDeDispensacion($frasco->item, FormasDeCobro::SUELTA, Decimal::de('5'), $presentaciones)?->redondeado(4))
         ->toBe('5.0000')
-        ->and($formas->envasesEnteros($clave, Decimal::de('5'), $presentaciones))->toBeNull();
-})->note('Regla del 3-sep-2026 intacta: «5 del frasco de 120» son 5 ML. Multiplicar era cobrar 600.');
-
-it('con la marca el frasco se vende entero', function (): void {
-    $frasco = unJarabeEnFrasco(seVendeEntero: true);
-    $presentaciones = lasPresentacionesDe($frasco->item);
-
-    expect(app(FormasDeCobro::class)->aUnidadesDeDispensacion(
-        $frasco->item,
-        FormasDeCobro::ENVASE.$frasco->id,
-        Decimal::de('1'),
-        $presentaciones,
-    )?->redondeado(4))->toBe('120.0000');
-});
+        ->and($formas->aUnidadesDeDispensacion($frasco->item, $clave, Decimal::de('1'), $presentaciones)?->redondeado(4))
+        ->toBe('120.0000');
+})->note('Regla del 3-sep-2026 intacta: se vende en lo que dice «Se dispensa en». El frasco cerrado es la otra forma, y la elige quien cobra.');
 
 it('una forma que no es de este producto no convierte nada', function (): void {
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
-    $otra = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
+    $otra = unaTabletaEnCaja();
     $formas = app(FormasDeCobro::class);
     $presentaciones = lasPresentacionesDe($caja->item);
 
@@ -226,15 +250,14 @@ it('una forma que no es de este producto no convierte nada', function (): void {
         ->toBeNull();
 })->note('Nulo y no cero: el cero es una cantidad legal, y confundirlos sería cobrar la nada.');
 
-it('en pantalla la caja que multiplica dice sin abrir y la tableta dice por tableta', function (): void {
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+it('en pantalla la caja dice sin abrir y la tableta dice por tableta', function (): void {
+    $caja = unaTabletaEnCaja();
 
     $rotulos = app(CuentasAbiertas::class)->unidadesDeCobro($caja->item);
 
     expect($rotulos[FormasDeCobro::SUELTA])->toBe('Por TAB')
-        ->and($rotulos[FormasDeCobro::ENVASE.$caja->id])->toContain('CAJA X 100')
-        ->and($rotulos[FormasDeCobro::ENVASE.$caja->id])->toContain('sin abrir');
-})->note('El envase que multiplica y el que solo es origen se escriben distinto: escribirlos igual es cobrar una caja creyendo que se cobró una tableta.');
+        ->and($rotulos[FormasDeCobro::ENVASE.$caja->id])->toBe('CAJA X 100 TABLETAS · sin abrir');
+})->note('Con el mismo «1» escrito, una es una tableta y la otra son cien: el rótulo lo dice antes de apretar.');
 
 /*
 |--------------------------------------------------------------------------
@@ -245,7 +268,7 @@ it('en pantalla la caja que multiplica dice sin abrir y la tableta dice por tabl
 it('🔴 la caja sin abrir descuenta las cien y el cargo dice una caja', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
     $almacen = Almacen::factory()->create();
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
 
     recibirLoteDe($almacen, $caja, '3', '100', 'L-CAJA', 12);
 
@@ -260,7 +283,7 @@ it('🔴 la caja sin abrir descuenta las cien y el cargo dice una caja', functio
 it('🔴 una caja que FEFO parte en dos lotes sigue sumando una caja', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
     $almacen = Almacen::factory()->create();
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
 
     recibirLoteDe($almacen, $caja, '1', '100', 'VENCE-PRIMERO', 2);
     recibirLoteDe($almacen, $caja, '1', '100', 'VENCE-DESPUES', 12);
@@ -292,14 +315,9 @@ it('🔴 una caja que FEFO parte en dos lotes sigue sumando una caja', function 
 it('🔴 la caja sin abrir no sale de un lote de blister aunque venza antes', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
     $almacen = Almacen::factory()->create();
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
 
-    $blister = ItemPresentacion::factory()
-        ->conContenido('10.0000', 'BLISTER X 10 TABLETAS')
-        ->create([
-            'item_id'   => $caja->item_id,
-            'unidad_id' => unaUnidadLlamada('BLISTER')->id,
-        ]);
+    $blister = otroEnvaseDe($caja->item, 'BLISTER', '10.0000', 'BLISTER X 10 TABLETAS');
 
     recibirLoteDe($almacen, $blister, '10', '10', 'BLISTER-VENCE-ANTES', 2);
     recibirLoteDe($almacen, $caja, '1', '100', 'CAJA-VENCE-DESPUES', 12);
@@ -313,14 +331,9 @@ it('🔴 la caja sin abrir no sale de un lote de blister aunque venza antes', fu
 it('sin cajas en el estante la caja sin abrir no se arma con blisteres', function (): void {
     $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
     $almacen = Almacen::factory()->create();
-    $caja = unaTabletaEnCaja(seVendeEntera: true);
+    $caja = unaTabletaEnCaja();
 
-    $blister = ItemPresentacion::factory()
-        ->conContenido('10.0000', 'BLISTER X 10 TABLETAS')
-        ->create([
-            'item_id'   => $caja->item_id,
-            'unidad_id' => unaUnidadLlamada('BLISTER')->id,
-        ]);
+    $blister = otroEnvaseDe($caja->item, 'BLISTER', '10.0000', 'BLISTER X 10 TABLETAS');
 
     recibirLoteDe($almacen, $blister, '10', '10', 'SOLO-BLISTER', 6);
 

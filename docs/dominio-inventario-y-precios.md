@@ -101,10 +101,10 @@ Reglas que esto arrastra:
 
 | Decisión | Resolución |
 |---|---|
-| Dónde se configura | **En cada presentación**: interruptor «También se vende sin abrir» (`item_presentaciones.se_vende_entera`, apagado por defecto). La caja de 100 puede venderse entera y el blíster de 10 del mismo producto no |
-| Al cobrar | «¿Cómo se le agrega?» ofrece la unidad suelta y cada envase marcado. **Sin nada preseleccionado** cuando hay más de una forma: lo elige quien cobra y el formulario no deja seguir sin respuesta |
+| Qué hay que configurar | **Nada nuevo.** «Se dispensa en» ya dice lo menos que se entrega (y es la unidad del kardex y del precio); cada presentación cargada ya es un envase que se puede entregar cerrado. Un interruptor por presentación («también se vende sin abrir») se probó y se sacó el mismo día: pedía contestar algo que la ficha ya dice |
+| Al cobrar | «¿Cómo se le agrega?» ofrece la unidad de «Se dispensa en» y cada envase **sin abrir**. Con más de una forma, **nada viene marcado**: lo elige quien cobra y el formulario no deja seguir sin respuesta |
 | Qué significa vender el envase | **Multiplica la cantidad, no cambia el precio**: 1 CAJA X 100 = 100 TAB que salen del kardex, al precio de 100 tabletas. El renglón de la cuenta se lee «1 CAJA» (`cargos.cantidad_presentacion`) |
-| Envase sin la marca | Sigue siendo solo el **origen** (regla del 3-sep-2026): dice de qué envase se sacó y no multiplica |
+| Qué envases NO se ofrecen | Los de una sola unidad («AMPOLLA X 1» es lo mismo que una ampolla) y los de lo que no se almacena (en un honorario las presentaciones son variantes, no cajas) |
 | De qué lote sale la caja sin abrir | Solo de lotes recibidos **en esa presentación**. Una caja no se arma con tabletas de un lote de blíster (§9.F9) |
 | Caja partida por FEFO entre dos lotes | Los envases se reparten en proporción a lo que salió de cada lote y el residuo va a la última fila: la suma da exactamente lo vendido |
 

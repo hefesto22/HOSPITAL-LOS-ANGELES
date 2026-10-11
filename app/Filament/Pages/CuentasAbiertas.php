@@ -891,8 +891,8 @@ class CuentasAbiertas extends Page
                          * agregar, si la caja o tabletas».
                          *
                          * Solo aparece cuando hay algo que elegir: la
-                         * tableta suelta y, al lado, cada envase que el
-                         * catálogo marcó «también se vende sin abrir».
+                         * unidad de «Se dispensa en» y, al lado, cada
+                         * envase cargado en la ficha, vendido sin abrir.
                          * Con una sola forma no hay pregunta.
                          *
                          * ⚠️ SIN NADA MARCADO. Venir con «TABLETA» puesta
@@ -1607,8 +1607,6 @@ class CuentasAbiertas extends Page
                      *
                      *   · la CAJA vendida sin abrir viaja con cuántas
                      *     —«1 CAJA»—, y el renglón se lee así y no «100»;
-                     *   · el envase que solo es origen viaja sin
-                     *     cantidad: dice de cuál frasco se sirvió;
                      *   · la tableta suelta lleva como origen la caja de
                      *     la que se leyó el código, si se escaneó una.
                      */
@@ -2586,14 +2584,11 @@ class CuentasAbiertas extends Page
          * caja o la tableta, así que el estante se sugiere con la forma
          * ya resuelta y no con la que quedó del producto anterior.
          *
-         * La forma queda puesta solo cuando no hay nada que preguntar:
-         * una sola, o el frasco del que se leyó el código cuando ese
-         * frasco es solo el origen —no multiplica nada, así que dejarlo
-         * marcado no puede cobrar de más—. La caja sin abrir NUNCA viene
-         * marcada sola: pasar la pistola por una caja de cien no es
-         * venderla.
+         * La forma queda puesta solo cuando hay una sola. La caja sin
+         * abrir NUNCA viene marcada sola: pasar la pistola por una caja
+         * de cien no es venderla.
          */
-        $forma = $item instanceof Item ? $this->formaInicial($item) : null;
+        $forma = $item instanceof Item ? $this->formaUnicaDe($item) : null;
 
         $set('unidad_cobro', $forma);
         $set('almacen_id', $this->estanteSugerido($item, $forma)?->id);
@@ -5186,18 +5181,12 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * «Por TABLETA», «CAJA X 100 TABLETAS · sin abrir», «Del FRASCO X 120
-     * ML, por ML».
+     * «Por TAB», «Por ML (120 por FRASCO)», «CAJA X 100 TABLETAS · sin
+     * abrir».
      *
-     * ─────────────────────────────────────────────────────────────────
-     * 🔴 EL ENVASE QUE MULTIPLICA Y EL QUE NO SE ESCRIBEN DISTINTO
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * «CAJA X 100 TABLETAS» puede significar dos cosas: la caja vendida
-     * sin abrir —descuenta las cien— o la caja de la que se sacaron unas
-     * tabletas. Escribirlas igual es como se cobra una caja entera
-     * creyendo que se cobró una tableta, así que la que multiplica dice
-     * «sin abrir» y la que no dice «del … por …».
+     * El envase dice «sin abrir» porque esa es la diferencia que importa
+     * al cobrar: con el mismo «1» escrito, una cosa es una tableta y la
+     * otra son cien.
      */
     private function rotuloDeLaForma(Item $item, string $clave): string
     {
@@ -5233,9 +5222,7 @@ class CuentasAbiertas extends Page
             return $clave;
         }
 
-        return $presentacion->se_vende_entera
-            ? self::envaseCorto($presentacion).' · sin abrir'
-            : 'Del '.self::envaseCorto($presentacion).', por '.$codigo;
+        return self::envaseCorto($presentacion).' · sin abrir';
     }
 
     /**
@@ -5263,30 +5250,6 @@ class CuentasAbiertas extends Page
     private function formaUnicaDe(Item $item): ?string
     {
         return app(FormasDeCobro::class)->unica($item, $this->presentacionesDe($item));
-    }
-
-    /**
-     * Con qué forma viene marcado «¿Cómo se le agrega?» al elegir el
-     * producto: la única, o el envase del que se leyó el código cuando
-     * ese envase es solo el origen. Nunca el envase sin abrir.
-     */
-    private function formaInicial(Item $item): ?string
-    {
-        $unica = $this->formaUnicaDe($item);
-
-        if ($unica !== null) {
-            return $unica;
-        }
-
-        $leida = $this->presentacionDe($item, $this->presentacionEscaneada);
-
-        if (! $leida instanceof ItemPresentacion || $leida->se_vende_entera) {
-            return null;
-        }
-
-        $clave = self::POR_PRESENTACION.$leida->id;
-
-        return isset($this->unidadesDeCobro($item)[$clave]) ? $clave : null;
     }
 
     /**
@@ -5357,7 +5320,7 @@ class CuentasAbiertas extends Page
 
     /**
      * Lo tecleado, llevado a unidades de dispensación. La regla vive en
-     * `FormasDeCobro`: solo el envase marcado «sin abrir» multiplica.
+     * `FormasDeCobro`: el envase sin abrir multiplica por lo que trae.
      */
     private function aUnidadesDeDispensacion(Item $item, string $forma, Decimal $cantidad): ?Decimal
     {
@@ -5411,15 +5374,6 @@ class CuentasAbiertas extends Page
 
         $numero = ItemPresentacion::sinCerosDeMas($tecleada->redondeado(4));
         $presentacion = $this->presentacionDeLaUnidad($item, $forma);
-
-        /*
-         * El envase que solo es origen no convierte nada: la cantidad ya
-         * está en la unidad del kardex. Lo útil es decir de dónde sale,
-         * que es lo que la persona tiene que ir a buscar.
-         */
-        if ($presentacion instanceof ItemPresentacion && ! $presentacion->se_vende_entera) {
-            return sprintf('%s %s, del %s.', $numero, $codigo, self::envaseCorto($presentacion));
-        }
 
         $enQue = $presentacion instanceof ItemPresentacion
             ? self::envaseCorto($presentacion)

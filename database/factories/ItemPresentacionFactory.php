@@ -28,7 +28,6 @@ class ItemPresentacionFactory extends Factory
             'unidades_por_presentacion' => '100.0000',
             'codigo_barras'             => null,
             'es_predeterminada'         => false,
-            'se_vende_entera'           => false,
             'vigencia_desde'            => now()->subYear()->toDateString(),
             'vigencia_hasta'            => null,
         ];
@@ -37,15 +36,6 @@ class ItemPresentacionFactory extends Factory
     public function predeterminada(): self
     {
         return $this->state(fn (): array => ['es_predeterminada' => true]);
-    }
-
-    /**
-     * El envase que también se vende entero: la caja de 100 que sale
-     * como «1 CAJA» y descuenta las cien del estante.
-     */
-    public function seVendeEntera(): self
-    {
-        return $this->state(fn (): array => ['se_vende_entera' => true]);
     }
 
     public function conContenido(string $unidades, string $nombre): self

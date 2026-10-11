@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Domain\Enums\MagnitudDeMedida;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
@@ -14,29 +13,37 @@ use Illuminate\Support\Collection;
  * «¿Cómo se le agrega?» — las formas en que un producto entra a la cuenta.
  *
  * ─────────────────────────────────────────────────────────────────────
- * 🔴 LA REGLA (Mauricio, 10-oct-2026)
+ * 🔴 LA REGLA SALE DE LO QUE YA ESTÁ CARGADO (Mauricio, 10-oct-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * «Cuando son tabletas debería poderse poner si se dispensa en tableta o
- * caja. La unidad de envase está bien, porque es donde viene envasado, y
- * a veces el envase es un frasco que trae 100. Pero debería poderse
- * manejar el envase y cómo se dispensa.»
+ * «Se puede dispensar en envase, caja o tableta» — y sin meter datos
+ * que no hacen falta. La ficha ya tiene las dos respuestas:
  *
- * Y se decide EN CADA PRESENTACIÓN —«también se vende entera»—, no en el
- * producto: la caja de 100 de acetaminofén se vende entera, el blíster
- * de 10 del mismo producto no. Al cobrar, quien atiende elige entre lo
- * que el catálogo permite; el sistema no elige por él.
+ *   · «Se dispensa en» es la unidad MÍNIMA: lo menos que se le puede
+ *     entregar a un paciente. Es también la unidad del kardex y del
+ *     precio, así que no es opcional ni repetida.
+ *   · Cada presentación es un envase que existe en el estante. Un envase
+ *     cerrado SIEMPRE se puede entregar cerrado: la caja de 100 que se
+ *     vende sin abrir son 100 tabletas que salen del kardex.
  *
- * Tres formas, y ninguna más:
+ * Así que las formas son:
  *
- *   · SUELTA — en la unidad de dispensación: la tableta, la ampolla.
- *     Solo para lo que se entrega suelto (`seEntregaSuelta()`).
- *   · FRACCIÓN — el mililitro de lo que el catálogo declara fraccionable.
- *   · ENVASE — una presentación. Con «se vende entera» MULTIPLICA: una
- *     caja de 100 son 100 tabletas que salen del estante. Sin la marca es
- *     solo el ORIGEN —«de qué frasco se sirvió»— y la cantidad sigue en la
- *     unidad de dispensación, que es la regla del 3-sep-2026 para lo que
- *     no se entrega suelto.
+ *   · SUELTA — en «Se dispensa en»: la tableta, el ML, la ampolla.
+ *   · FRACCIÓN — la parte de la unidad, solo si el catálogo la declara.
+ *   · ENVASE — cada presentación con más de una unidad adentro, vendida
+ *     sin abrir. MULTIPLICA: 1 CAJA X 100 = 100 TAB.
+ *
+ * Un interruptor por presentación para decir «esta sí se vende cerrada»
+ * se probó y se sacó el mismo día: pedía contestar algo que la ficha ya
+ * dice, y el envase sin marcar quedaba sin forma de venderse cerrado.
+ *
+ * ⚠️ El envase de UNA unidad no se ofrece: «AMPOLLA X 1» sin abrir es
+ * lo mismo que una ampolla, y ofrecer dos botones que cobran igual es
+ * pedirle a quien cobra que elija entre lo mismo.
+ *
+ * ⚠️ Solo lo que se almacena tiene envases que vender. En un honorario
+ * las «presentaciones» son variantes —el Dr. Carlos, el Dr. Miguel—, no
+ * cajas en un estante.
  *
  * ─────────────────────────────────────────────────────────────────────
  * POR QUÉ ESTO ES UNA CONVERSIÓN Y NO UN PRECIO DISTINTO
@@ -62,8 +69,7 @@ final class FormasDeCobro
 
     /**
      * Las claves de las formas que admite el producto, en el orden en
-     * que se ofrecen. Nunca vacío: un producto sin ninguna forma no se
-     * podría cobrar, y eso es peor que cobrarlo en su unidad mínima.
+     * que se ofrecen. Nunca vacío: la unidad suelta está siempre.
      *
      * @param Collection<int, ItemPresentacion> $presentaciones las del ítem
      *
@@ -71,32 +77,23 @@ final class FormasDeCobro
      */
     public function de(Item $item, Collection $presentaciones): array
     {
-        $suelta = $this->seEntregaSuelta($item, $presentaciones);
-
-        $claves = [];
-
-        if ($suelta) {
-            $claves[] = self::SUELTA;
-        }
+        $claves = [self::SUELTA];
 
         if ($this->seFracciona($item)) {
             $claves[] = self::FRACCION;
         }
 
+        if (! $item->mueveInventario()) {
+            return $claves;
+        }
+
         foreach ($presentaciones as $presentacion) {
-            /*
-             * Lo que se entrega suelto NO ofrece el envase como origen:
-             * «5 TAB de la caja» y «5 TAB» son la misma venta, y ofrecer
-             * las dos es pedirle a quien cobra que elija entre dos
-             * botones que dicen lo mismo. El envase aparece solo cuando
-             * se puede vender entero, que es una venta distinta.
-             */
-            if ($presentacion->se_vende_entera || ! $suelta) {
+            if ($this->traeMasDeUna($presentacion)) {
                 $claves[] = self::ENVASE.$presentacion->id;
             }
         }
 
-        return $claves === [] ? [self::SUELTA] : $claves;
+        return $claves;
     }
 
     /**
@@ -112,36 +109,8 @@ final class FormasDeCobro
     }
 
     /**
-     * ¿Este producto se entrega suelto, sin envase?
-     *
-     * Una TABLETA o una AMPOLLA sí: son unidades de conteo, se sacan del
-     * blíster y se entregan. Un jarabe medido en ML no, salvo que el
-     * hospital lo fraccione —y eso es una decisión declarada en el
-     * catálogo, no algo que se deduzca del producto—.
-     *
-     * Sin presentaciones cargadas también devuelve true: no hay envase
-     * que ofrecer, así que la unidad suelta es lo único que hay.
-     *
-     * @param Collection<int, ItemPresentacion> $presentaciones
-     */
-    public function seEntregaSuelta(Item $item, Collection $presentaciones): bool
-    {
-        if ($item->fraccionable) {
-            return true;
-        }
-
-        $magnitud = $item->unidadDispensacion?->magnitud;
-
-        if ($magnitud === null || $magnitud === MagnitudDeMedida::Conteo) {
-            return true;
-        }
-
-        return $presentaciones->isEmpty();
-    }
-
-    /**
      * La presentación detrás de una clave de envase, o nulo cuando la
-     * clave no es un envase o el envase no es de este producto.
+     * clave no es un envase o el envase no está entre los del producto.
      *
      * @param Collection<int, ItemPresentacion> $presentaciones
      */
@@ -159,13 +128,13 @@ final class FormasDeCobro
     }
 
     /**
-     * ¿Esta forma vende el envase entero?
+     * ¿Esta forma vende el envase sin abrir?
      *
      * @param Collection<int, ItemPresentacion> $presentaciones
      */
     public function esEnvaseEntero(?string $clave, Collection $presentaciones): bool
     {
-        return $this->presentacionDe($clave, $presentaciones)?->se_vende_entera === true;
+        return $this->presentacionDe($clave, $presentaciones) instanceof ItemPresentacion;
     }
 
     /**
@@ -175,11 +144,6 @@ final class FormasDeCobro
      * producto —una presentación de otro ítem, una fracción en algo que
      * no se fracciona, una clave que no es de la lista—. Nunca un cero:
      * el cero es una cantidad legal y confundirlos sería cobrar la nada.
-     *
-     * 🔴 Solo multiplica el envase marcado «se vende entera». Un envase
-     * sin la marca es el origen y no toca la cantidad: «5 del frasco de
-     * 120» son 5 ML. Multiplicar ahí era cobrar 600 y descontar 600 del
-     * estante con 5 ML en la jeringa (regla del 3-sep-2026).
      *
      * @param Collection<int, ItemPresentacion> $presentaciones
      */
@@ -209,13 +173,11 @@ final class FormasDeCobro
             return null;
         }
 
-        return $presentacion->se_vende_entera
-            ? $cantidad->por($presentacion->unidades_por_presentacion)
-            : $cantidad;
+        return $cantidad->por($presentacion->unidades_por_presentacion);
     }
 
     /**
-     * Cuántos envases enteros se están vendiendo, o nulo cuando no se
+     * Cuántos envases sin abrir se están vendiendo, o nulo cuando no se
      * vende por envase. Es lo que hace que el renglón se lea «1 CAJA» y
      * no «100».
      *
@@ -231,5 +193,12 @@ final class FormasDeCobro
         return $item->fraccionable
             && $item->unidad_fraccion_id !== null
             && $item->fracciones_por_unidad !== null;
+    }
+
+    private function traeMasDeUna(ItemPresentacion $presentacion): bool
+    {
+        $contenido = $presentacion->unidades_por_presentacion;
+
+        return is_numeric($contenido) && Decimal::de($contenido)->mayorQue('1');
     }
 }
