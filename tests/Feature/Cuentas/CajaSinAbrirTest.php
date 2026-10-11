@@ -250,14 +250,14 @@ it('una forma que no es de este producto no convierte nada', function (): void {
         ->toBeNull();
 })->note('Nulo y no cero: el cero es una cantidad legal, y confundirlos sería cobrar la nada.');
 
-it('en pantalla la caja dice sin abrir y la tableta dice por tableta', function (): void {
+it('en pantalla cada forma dice en que se cuenta', function (): void {
     $caja = unaTabletaEnCaja();
 
     $rotulos = app(CuentasAbiertas::class)->unidadesDeCobro($caja->item);
 
-    expect($rotulos[FormasDeCobro::SUELTA])->toBe('Por TAB')
-        ->and($rotulos[FormasDeCobro::ENVASE.$caja->id])->toBe('CAJA X 100 TABLETAS · sin abrir');
-})->note('Con el mismo «1» escrito, una es una tableta y la otra son cien: el rótulo lo dice antes de apretar.');
+    expect($rotulos[FormasDeCobro::SUELTA])->toBe('TAB')
+        ->and($rotulos[FormasDeCobro::ENVASE.$caja->id])->toBe('CAJA X 100');
+})->note('Cortos para que entren uno al lado del otro: con el mismo «1» escrito, una es una tableta y la otra son cien, y el control lo dice antes de apretar.');
 
 /*
 |--------------------------------------------------------------------------

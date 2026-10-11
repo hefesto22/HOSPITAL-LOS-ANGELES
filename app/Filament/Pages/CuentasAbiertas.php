@@ -786,9 +786,10 @@ class CuentasAbiertas extends Page
             ->schema([
                 Section::make()
                     /*
-                     * Doce columnas: la cantidad, el estante y el
-                     * préstamo se reparten 3-5-4 en una sola fila, y lo
-                     * demás va a lo ancho.
+                     * Doce columnas: la cantidad y el estante se reparten
+                     * 4-8 en una sola fila —o la cantidad, el precio y el
+                     * médico 4-4-4 en un honorario—, y lo demás va a lo
+                     * ancho.
                      */
                     ->columns(12)
                     ->schema([
@@ -905,10 +906,17 @@ class CuentasAbiertas extends Page
                          */
                         ToggleButtons::make('unidad_cobro')
                             ->label('¿Cómo se le agrega?')
-                            ->inline()
+                            /*
+                             * Agrupados, como un solo control de varias
+                             * caras: se lee como «una de estas», que es lo
+                             * que es. Sueltos parecían botones de acción.
+                             */
+                            ->grouped()
                             ->columnSpanFull()
                             ->live()
                             ->options(fn (Get $get): array => $this->unidadesDeCobro($this->itemDe($get('item_id'))))
+                            ->icons(fn (Get $get): array => $this->iconosDeLasFormas($this->itemDe($get('item_id'))))
+                            ->helperText(fn (Get $get): ?string => $this->ayudaDeLasFormas($this->itemDe($get('item_id'))))
                             ->visible(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
                             ->required(fn (Get $get): bool => count($this->unidadesDeCobro($this->itemDe($get('item_id')))) > 1)
                             ->validationMessages([
@@ -934,7 +942,7 @@ class CuentasAbiertas extends Page
                             ->default(1)
                             ->minValue(0.0001)
                             ->step('0.0001')
-                            ->columnSpan(3)
+                            ->columnSpan(4)
                             ->live(onBlur: true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
                             /*
@@ -945,25 +953,17 @@ class CuentasAbiertas extends Page
                              */
                             ->dehydratedWhenHidden()
                             /*
-                             * 🔴 La equivalencia, a la vista y en vivo.
+                             * 🔴 EN QUÉ SE CUENTA, ADENTRO DEL CAMPO.
                              *
-                             * «1» escrito en una caja de cien tabletas y «1»
-                             * escrito en una tableta son el mismo carácter y
-                             * son L 900 de diferencia. Que la pantalla diga
-                             * «1 CAJA X 100 TABLETAS = 100 TAB» antes de
-                             * apretar Agregar es lo único que impide ese
-                             * error, porque después ya está cobrado.
+                             * «1» escrito en una caja de cien tabletas y
+                             * «1» escrito en una tableta son el mismo
+                             * carácter y son L 900 de diferencia. El
+                             * sufijo dice TAB o CAJA pegado al número, y
+                             * la cuenta completa —«1 CAJA X 100 = 100
+                             * TAB»— va en el recuadro de abajo, antes de
+                             * apretar Agregar.
                              */
-                            ->helperText(function (Get $get): ?string {
-                                $item = $this->itemDe($get('item_id'));
-                                $forma = $this->formaEnUso($get);
-
-                                if (! $item instanceof Item || $forma === null) {
-                                    return null;
-                                }
-
-                                return $this->equivalencia($item, $forma, $get('cantidad'));
-                            }),
+                            ->suffix(fn (Get $get): ?string => $this->enQueSeCuenta($get)),
 
                         /*
                          * ─────────────────────────────────────────────
@@ -986,7 +986,7 @@ class CuentasAbiertas extends Page
                          * el caso normal nadie toca este campo.
                          */
                         /*
-                         * ⚠️ CINCO COLUMNAS Y TEXTO DE UNA LÍNEA.
+                         * ⚠️ OCHO COLUMNAS Y TEXTO DE UNA LÍNEA.
                          *
                          * Con dos columnas y un párrafo de ayuda, el
                          * campo quedaba con el nombre partido en tres
@@ -1000,7 +1000,7 @@ class CuentasAbiertas extends Page
                         Select::make('almacen_id')
                             ->label('¿De dónde sale?')
                             ->native(false)
-                            ->columnSpan(5)
+                            ->columnSpan(8)
                             ->dehydratedWhenHidden()
                             ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)))
                             ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
@@ -1008,34 +1008,6 @@ class CuentasAbiertas extends Page
                             ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)) === []
                                 ? 'No hay en ningún almacén'
                                 : 'Elegí el estante'),
-
-                        /*
-                         * ─────────────────────────────────────────────
-                         * 🔴 «NO HAY» NO PUEDE SER UN CALLEJÓN SIN SALIDA
-                         * ─────────────────────────────────────────────
-                         *
-                         * Cuando el estante está vacío y el paciente
-                         * está enfrente, lo que pasa de verdad en el
-                         * hospital es que se le pide prestado a la
-                         * farmacia de la esquina. Hasta ahora el sistema
-                         * decía «recibilo o trasladalo» y ahí terminaba:
-                         * o alguien inventaba una recepción sin factura,
-                         * o cobraba por fuera.
-                         *
-                         * Este botón registra el préstamo —sube la
-                         * existencia y deja la deuda con quien prestó— y
-                         * DEJA EL ESTANTE ELEGIDO, así que quien cobra
-                         * sigue en la misma línea sin volver a empezar.
-                         *
-                         * Solo aparece cuando de verdad no hay nada: con
-                         * existencia, ofrecerlo sería enseñar a pedir
-                         * prestado lo que ya está en el estante.
-                         */
-                        Actions::make([
-                            $this->accionDePedirPrestado(),
-                        ])
-                            ->columnSpan(4)
-                            ->visible(fn (Get $get): bool => $this->sePuedePedirPrestado($get)),
 
                         /*
                          * ─────────────────────────────────────────────
@@ -1071,7 +1043,7 @@ class CuentasAbiertas extends Page
                             ->minValue(0)
                             ->step('0.01')
                             ->prefix('L')
-                            ->columnSpan(3)
+                            ->columnSpan(4)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
                             /*
                              * 🔴 El texto distingue los dos casos, porque
@@ -1196,6 +1168,34 @@ class CuentasAbiertas extends Page
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item
                                 && $this->formaEnUso($get) !== null)
                             ->content(fn (Get $get): HtmlString => $this->comoQuedaLaLinea($get)),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 «NO HAY» NO PUEDE SER UN CALLEJÓN SIN SALIDA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Cuando el estante está vacío y el paciente
+                         * está enfrente, lo que pasa de verdad en el
+                         * hospital es que se le pide prestado a la
+                         * farmacia de la esquina. Hasta ahora el sistema
+                         * decía «recibilo o trasladalo» y ahí terminaba:
+                         * o alguien inventaba una recepción sin factura,
+                         * o cobraba por fuera.
+                         *
+                         * Este botón registra el préstamo —sube la
+                         * existencia y deja la deuda con quien prestó— y
+                         * DEJA EL ESTANTE ELEGIDO, así que quien cobra
+                         * sigue en la misma línea sin volver a empezar.
+                         *
+                         * Solo aparece cuando de verdad no hay nada: con
+                         * existencia, ofrecerlo sería enseñar a pedir
+                         * prestado lo que ya está en el estante.
+                         */
+                        Actions::make([
+                            $this->accionDePedirPrestado(),
+                        ])
+                            ->columnSpanFull()
+                            ->visible(fn (Get $get): bool => $this->sePuedePedirPrestado($get)),
                     ]),
             ])
             ->action(function (array $data, array $arguments, Action $action): void {
@@ -2238,6 +2238,11 @@ class CuentasAbiertas extends Page
             ->label('Se pidió prestado')
             ->icon(Heroicon::OutlinedArrowDownTray)
             ->color('warning')
+            /*
+             * Contorneado y no lleno: es la salida de una excepción, y el
+             * botón lleno de la pantalla tiene que seguir siendo Agregar.
+             */
+            ->outlined()
             ->modalHeading('¿Quién nos lo prestó?')
             ->modalDescription(
                 'Sube la existencia en el acto y queda anotado a quién hay que devolvérselo. Lo que '
@@ -5181,39 +5186,28 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * «Por TAB», «Por ML (120 por FRASCO)», «CAJA X 100 TABLETAS · sin
-     * abrir».
+     * «TABLETA», «MILILITRO · 120 por FRASCO», «CAJA X 100».
      *
-     * El envase dice «sin abrir» porque esa es la diferencia que importa
-     * al cobrar: con el mismo «1» escrito, una cosa es una tableta y la
-     * otra son cien.
+     * Cortos a propósito: van uno al lado del otro en un control
+     * agrupado, y con «· sin abrir» repetido en cada envase el control
+     * se partía en dos renglones. Que el envase se vende cerrado lo dice
+     * una sola vez la ayuda de abajo, y la cuenta —«1 CAJA X 100 = 100
+     * TAB»— el recuadro antes de Agregar.
      */
     private function rotuloDeLaForma(Item $item, string $clave): string
     {
-        $codigo = self::codigoDeLaUnidad($item) ?? 'unidad';
-
         if ($clave === self::POR_UNIDAD) {
             /*
              * La columna y no `?->`: Larastan tipa la relación como no nula
              * aunque la FK sí lo sea (§9.B1).
              */
-            $rotulo = 'Por '.($item->unidad_dispensacion_id === null ? 'unidad' : $item->unidadDispensacion->nombre);
-
-            /*
-             * ⚠️ Y se DICE que el hueco existe. Un producto de farmacia
-             * que solo se ofrece en su unidad mínima es, casi siempre, un
-             * producto al que nadie le cargó las presentaciones. Con el
-             * rótulo, quien cobra sabe qué falta y dónde: en la ficha del
-             * producto, pestaña «Presentaciones de compra».
-             */
-            return $item->mueveInventario() && $this->presentacionesDe($item)->isEmpty()
-                ? $rotulo.' · sin envases cargados'
-                : $rotulo;
+            return $item->unidad_dispensacion_id === null ? 'UNIDAD' : $item->unidadDispensacion->nombre;
         }
 
         if ($clave === self::POR_FRACCION) {
-            return 'Por '.$item->unidadFraccion->nombre
-                .' ('.ItemPresentacion::sinCerosDeMas((string) $item->fracciones_por_unidad).' por '.$codigo.')';
+            return $item->unidadFraccion->nombre
+                .' · '.ItemPresentacion::sinCerosDeMas((string) $item->fracciones_por_unidad)
+                .' por '.(self::codigoDeLaUnidad($item) ?? 'unidad');
         }
 
         $presentacion = $this->presentacionDeLaUnidad($item, $clave);
@@ -5222,7 +5216,68 @@ class CuentasAbiertas extends Page
             return $clave;
         }
 
-        return self::envaseCorto($presentacion).' · sin abrir';
+        return $presentacion->unidad->codigo.' X '
+            .ItemPresentacion::sinCerosDeMas((string) $presentacion->unidades_por_presentacion);
+    }
+
+    /**
+     * Un dibujo por forma: el cuadrito suelto, el vaso de lo que se mide,
+     * la caja de lo que va cerrado. Se distinguen de un vistazo sin leer
+     * el rótulo entero.
+     *
+     * @return array<string, Heroicon>
+     */
+    private function iconosDeLasFormas(?Item $item): array
+    {
+        $iconos = [];
+
+        foreach (array_keys($this->unidadesDeCobro($item)) as $clave) {
+            $iconos[$clave] = match ($clave) {
+                self::POR_UNIDAD   => Heroicon::OutlinedStop,
+                self::POR_FRACCION => Heroicon::OutlinedBeaker,
+                default            => Heroicon::OutlinedArchiveBox,
+            };
+        }
+
+        return $iconos;
+    }
+
+    /**
+     * Lo que «¿Cómo se le agrega?» necesita aclarar, una sola vez y no
+     * pegado a cada opción: que el envase va cerrado.
+     */
+    private function ayudaDeLasFormas(?Item $item): ?string
+    {
+        foreach (array_keys($this->unidadesDeCobro($item)) as $clave) {
+            if (str_starts_with($clave, self::POR_PRESENTACION)) {
+                return 'El envase se vende sin abrir: descuenta todo lo que trae.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Lo que va pegado al número de la cantidad: TAB, CAJA, ML.
+     */
+    private function enQueSeCuenta(Get $get): ?string
+    {
+        $item = $this->itemDe($get('item_id'));
+        $forma = $this->formaEnUso($get);
+
+        if (! $item instanceof Item || $forma === null) {
+            return null;
+        }
+
+        if ($forma === self::POR_UNIDAD) {
+            return self::codigoDeLaUnidad($item);
+        }
+
+        if ($forma === self::POR_FRACCION) {
+            return $item->unidadFraccion->codigo;
+        }
+
+        return $this->presentacionDeLaUnidad($item, $forma)?->unidad->codigo;
     }
 
     /**
@@ -5354,10 +5409,12 @@ class CuentasAbiertas extends Page
     {
         $codigo = self::codigoDeLaUnidad($item) ?? $this->unidadDe($item) ?? 'unidades';
 
+        /*
+         * La unidad suelta no tiene cuenta que hacer: el sufijo del campo
+         * ya dice TAB, y «En TABLETA (tab).» era repetirlo.
+         */
         if ($forma === self::POR_UNIDAD) {
-            $enLaUnidad = $this->unidadDe($item);
-
-            return $enLaUnidad === null ? null : 'En '.$enLaUnidad.'.';
+            return null;
         }
 
         $tecleada = NumeroDeFormulario::aDecimal($cantidad);
@@ -5908,8 +5965,15 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * «ACETAMINOFEN 500 MG TABLETA · leído de CAJA X 100 TABLETAS ·
-     * MED-0801» — lo que quedó elegido, fijo debajo del buscador.
+     * La ficha corta de lo que quedó elegido, debajo del buscador:
+     * «MED-101 · leído de CAJA X 100 TABLETAS · hay 230 TAB».
+     *
+     * ⚠️ El nombre va solo cuando NO hay lista de resultados —se escaneó,
+     * o la búsqueda dio uno—. Con la lista a la vista, el nombre ya está
+     * en el botón marcado, y repetirlo abajo es leer lo mismo dos veces.
+     *
+     * ⚠️ Sin recuadro. Con borde, un renglón que decía solo «MED-101» se
+     * veía igual que un campo vacío, y daban ganas de escribirle encima.
      */
     private function resumenDeLoElegido(Get $get): HtmlString
     {
@@ -5919,32 +5983,92 @@ class CuentasAbiertas extends Page
             return new HtmlString('&nbsp;');
         }
 
-        $partes = ['<strong>'.e($item->nombre).'</strong>'];
+        $detalles = [];
+
+        if ($item->codigo !== '') {
+            $detalles[] = e($item->codigo);
+        }
 
         $leida = $this->presentacionDe($item, $this->presentacionEscaneada);
 
         if ($leida instanceof ItemPresentacion) {
-            $partes[] = 'leído de '.e(self::envaseCorto($leida));
+            $detalles[] = 'leído de '.e(self::envaseCorto($leida));
         }
 
         /*
          * Cómo se cobra, solo cuando no hay que preguntarlo. Con la
-         * tableta y la caja la respuesta está en los botones de abajo, y
+         * tableta y la caja la respuesta está en el control de abajo, y
          * escribir una acá antes de que la persona elija sería afirmar
          * algo que todavía no se decidió.
          */
         $unica = $this->formaUnicaDe($item);
 
         if ($unica !== null) {
-            $partes[] = e($this->rotuloDeLaForma($item, $unica));
+            $detalles[] = 'se cobra por '.e($this->rotuloDeLaForma($item, $unica));
         }
 
-        if ($item->codigo !== '') {
-            $partes[] = e($item->codigo);
+        if ($item->mueveInventario()) {
+            /*
+             * ⚠️ Se DICE que el hueco existe. Un producto de farmacia que
+             * solo se ofrece en su unidad mínima es, casi siempre, uno al
+             * que nadie le cargó las presentaciones.
+             */
+            if ($this->presentacionesDe($item)->isEmpty()) {
+                $detalles[] = '<span style="color:rgb(217 119 6)">sin envases cargados en la ficha</span>';
+            }
+
+            $hay = $this->existenciaTotal($item);
+
+            if ($hay->mayorQue('0')) {
+                $detalles[] = 'hay '.self::cifraCorta($hay).' '.e(self::codigoDeLaUnidad($item) ?? '');
+            }
         }
+
+        $nombre = $this->resultadosDelBuscador() === []
+            ? '<div style="font-weight:600;font-size:.9375rem;line-height:1.3">'.e($item->nombre).'</div>'
+            : '';
 
         return new HtmlString(
-            '<span style="font-size:.9rem">'.implode(' · ', $partes).'</span>'
+            '<div style="display:flex;flex-direction:column;gap:.125rem">'
+            .$nombre
+            .'<div style="font-size:.8125rem;opacity:.7">'.implode(' · ', $detalles).'</div>'
+            .'</div>'
+        );
+    }
+
+    /**
+     * Cuánto hay del producto en todos los estantes que esta persona
+     * puede usar, en la unidad del kardex. Sale de la misma memoria que el
+     * desplegable de estantes, así que no cuesta una consulta más.
+     */
+    private function existenciaTotal(Item $item): Decimal
+    {
+        $total = Decimal::cero();
+
+        foreach ($this->estantesDe($item) as $estante) {
+            $total = $total->sumar($estante['hay']);
+        }
+
+        return $total;
+    }
+
+    /**
+     * El recuadro de lo que hay que leer antes de apretar Agregar.
+     *
+     * Con estilos en línea porque el CSS del panel viene compilado y una
+     * clase de Tailwind nueva no existe ahí (§9.A7). Los colores son
+     * transparencias, así que se leen igual en el tema claro y en el
+     * oscuro.
+     */
+    private static function recuadro(string $contenido, bool $esAlerta = false): HtmlString
+    {
+        $colores = $esAlerta
+            ? 'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);color:rgb(239 68 68)'
+            : 'background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.30)';
+
+        return new HtmlString(
+            '<div style="'.$colores.';border-radius:.625rem;padding:.625rem .875rem;'
+            .'font-size:.8125rem;line-height:1.45">'.$contenido.'</div>'
         );
     }
 
@@ -6110,12 +6234,7 @@ class CuentasAbiertas extends Page
 
         if ($item->mueveInventario()) {
             if ($this->estantesConLoQueHay($item, $forma) === []) {
-                return new HtmlString(
-                    '<span style="font-size:.8125rem;color:rgb(248 113 113)">'
-                    .'No hay existencia de este producto en ningún almacén. '
-                    .'Recibilo, trasladalo, o registrá arriba que se pidió prestado.'
-                    .'</span>'
-                );
+                return self::recuadro($this->porQueNoHay($item, $forma), esAlerta: true);
             }
 
             /*
@@ -6139,9 +6258,34 @@ class CuentasAbiertas extends Page
             return new HtmlString('&nbsp;');
         }
 
-        return new HtmlString(
-            '<span style="font-size:.8125rem">'.implode(' · ', $partes).'</span>'
-        );
+        return self::recuadro(implode(' · ', $partes));
+    }
+
+    /**
+     * Qué decir cuando el estante no alcanza.
+     *
+     * ⚠️ Con el envase sin abrir el problema suele ser otro: hay
+     * tabletas, pero no hay CAJAS cerradas —se recibieron en blíster, o
+     * la caja ya se abrió—. Decir «no hay existencia de este producto»
+     * ahí manda a pedir prestado lo que está en el estante.
+     */
+    private function porQueNoHay(Item $item, string $forma): string
+    {
+        $envase = $this->presentacionDeLaUnidad($item, $forma);
+
+        /*
+         * Solo si hay tabletas sueltas tiene sentido mandar a venderlas.
+         * Con el estante vacío del todo, «vendé por TABLETA» manda a
+         * buscar lo que tampoco está.
+         */
+        if ($envase instanceof ItemPresentacion && $this->existenciaTotal($item)->mayorQue('0')) {
+            return 'No hay '.e($this->rotuloDeLaForma($item, $forma)).' sin abrir en ningún almacén. '
+                .'Vendé por '.e($this->rotuloDeLaForma($item, self::POR_UNIDAD)).', recibí o trasladá '
+                .'envases, o registrá abajo que se pidió prestado.';
+        }
+
+        return 'No hay existencia de este producto en ningún almacén. Recibilo, trasladalo, o '
+            .'registrá abajo que se pidió prestado.';
     }
 
     /**

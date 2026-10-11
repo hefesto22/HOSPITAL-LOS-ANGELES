@@ -13,6 +13,7 @@ use App\Models\ItemPresentacion;
 use App\Models\Sede;
 use App\Models\Tarifario;
 use App\Services\FijadorDePrecio;
+use App\Support\NumeroDeFormulario;
 use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
@@ -21,6 +22,8 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -86,24 +89,47 @@ class PreciosRelationManager extends RelationManager
     }
 
     /**
-     * De dónde sale la cifra de arriba: «antes del ISV · L 61.11 el ML».
+     * De dónde sale la cifra de arriba: «L 61.11 el ML», o «antes del ISV
+     * · L 61.11 el ML» en lo que sí lleva impuesto.
      *
      * El precio unitario no se esconde. Es el que se cobra cuando el
      * producto se fracciona, y es el que hay que mirar para comparar dos
      * envases del mismo jarabe.
      */
-    private static function comoSeCalcula(Tarifario $tarifario): string
+    private function comoSeCalcula(Tarifario $tarifario): ?string
     {
+        $isv = $this->llevaIsv() ? 'antes del ISV' : null;
         $presentacion = $tarifario->presentacion;
 
         if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
-            return 'antes del ISV';
+            return $isv;
         }
 
         $unidad = $tarifario->item?->unidadDispensacion?->codigo;
+        $unitario = $tarifario->monto()->formateado().($unidad === null ? ' por unidad' : ' el '.$unidad);
 
-        return 'antes del ISV · '.$tarifario->monto()->formateado()
-            .($unidad === null ? ' por unidad' : ' el '.$unidad);
+        return $isv === null ? $unitario : $isv.' · '.$unitario;
+    }
+
+    /**
+     * ¿A este ítem la factura le suma ISV?
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 «ANTES DEL ISV» SOLO DONDE HAY ISV (Mauricio, 10-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Los medicamentos, el laboratorio, la hospitalización y los demás
+     * servicios médicos son EXENTOS (Ley del ISV, Art. 15 b y d). En
+     * ellos «Precio antes del ISV» hacía pensar que al número escrito se
+     * le iba a sumar un 15 % en la factura, y quien carga el catálogo
+     * terminaba descontándolo a mano. Lo dice solo lo que sí va gravado:
+     * cafetería, estética, parqueo.
+     */
+    private function llevaIsv(): bool
+    {
+        $item = $this->getOwnerRecord();
+
+        return $item instanceof Item && $item->regimen_isv->esGravado();
     }
 
     public function table(Table $table): Table
@@ -182,7 +208,7 @@ class PreciosRelationManager extends RelationManager
                     ->weight('bold')
                     ->alignEnd()
                     ->formatStateUsing(fn (Tarifario $record): string => self::porEnvase($record)->formateado())
-                    ->description(fn (Tarifario $record): string => self::comoSeCalcula($record)),
+                    ->description(fn (Tarifario $record): ?string => $this->comoSeCalcula($record)),
 
                 TextColumn::make('vigencia_desde')
                     ->label('Desde')
@@ -233,90 +259,112 @@ class PreciosRelationManager extends RelationManager
             ->visible(fn (): bool => Gate::allows('update', $this->getOwnerRecord()))
             ->modalHeading('Fijar un precio nuevo')
             ->modalDescription(
-                'El precio vigente para ese mismo pagador y sede se cierra el día anterior, y este '
-                .'arranca en la fecha que elijas. Las facturas ya emitidas no cambian.'
+                'El precio vigente para ese pagador y sede se cierra el día anterior. Las facturas ya '
+                .'emitidas no cambian.'
             )
             ->modalSubmitActionLabel('Fijar')
-            ->modalWidth('lg')
+            ->modalWidth('2xl')
             ->schema([
-                Select::make('convenio_id')
-                    ->label('Para quién')
-                    ->options(fn (): array => Convenio::query()
-                        ->orderBy('nombre')
-                        ->pluck('nombre', 'id')
-                        ->all())
-                    ->placeholder('Precio de lista (todos los pagadores)')
-                    ->native(false)
-                    ->searchable()
-                    ->helperText(
-                        'Vacío = el precio que ve cualquiera. Elegí un pagador solo si con él se '
-                        .'negoció un precio distinto para este ítem.'
-                    ),
-
-                Select::make('item_presentacion_id')
-                    ->label('De qué envase')
-                    ->options(function (): array {
-                        $item = $this->getOwnerRecord();
-
-                        if (! $item instanceof Item) {
-                            return [];
-                        }
-
-                        return ItemPresentacion::query()
-                            ->where('item_id', $item->id)
+                /*
+                 * Dos columnas: arriba a quién y dónde, abajo cuánto y
+                 * desde cuándo. En una sola columna eran seis campos en
+                 * fila india, cada uno con su párrafo, y el modal no
+                 * entraba en la pantalla.
+                 */
+                Grid::make(['default' => 1, 'sm' => 2])->schema([
+                    Select::make('convenio_id')
+                        ->label('Para quién')
+                        ->options(fn (): array => Convenio::query()
                             ->orderBy('nombre')
-                            ->get()
-                            ->mapWithKeys(fn (ItemPresentacion $p): array => [$p->id => $p->nombre])
-                            ->all();
-                    })
-                    ->placeholder('Todo el producto')
-                    ->native(false)
-                    ->helperText(
-                        'Vacío = el precio de respaldo, el que se usa si el lote no declaró envase. '
-                        .'Elegí uno cuando ese frasco tenga su propio costo por unidad.'
-                    ),
+                            ->pluck('nombre', 'id')
+                            ->all())
+                        ->placeholder('Precio de lista')
+                        ->native(false)
+                        ->searchable()
+                        ->helperText('Vacío = el que paga cualquiera sin precio propio.'),
 
-                Select::make('sede_id')
-                    ->label('En qué sede')
-                    ->options(fn (): array => Sede::query()
-                        ->orderBy('nombre')
-                        ->pluck('nombre', 'id')
-                        ->all())
-                    ->placeholder('Todas las sedes')
-                    ->native(false),
+                    Select::make('sede_id')
+                        ->label('En qué sede')
+                        ->options(fn (): array => Sede::query()
+                            ->orderBy('nombre')
+                            ->pluck('nombre', 'id')
+                            ->all())
+                        ->placeholder('Todas las sedes')
+                        ->native(false)
+                        ->helperText('Vacío = vale en todas.'),
 
-                TextInput::make('precio')
-                    ->label('Precio antes del ISV')
-                    ->prefix('L')
-                    ->required()
+                    Select::make('item_presentacion_id')
+                        ->label('De qué envase')
+                        ->columnSpanFull()
+                        ->live()
+                        ->options(function (): array {
+                            $item = $this->getOwnerRecord();
+
+                            if (! $item instanceof Item) {
+                                return [];
+                            }
+
+                            return ItemPresentacion::query()
+                                ->where('item_id', $item->id)
+                                ->orderBy('nombre')
+                                ->get()
+                                ->mapWithKeys(fn (ItemPresentacion $p): array => [$p->id => $p->nombre])
+                                ->all();
+                        })
+                        ->placeholder('Todo el producto')
+                        ->native(false)
+                        ->helperText(
+                            'Vacío = vale para todo el producto. Elegí uno solo si ese envase tiene su '
+                            .'propio costo por unidad.'
+                        ),
+
                     /*
-                     * `regex` y no `numeric`: `numeric` acepta "1e3", que
-                     * entra a bcmath como cero y dejaría el producto
-                     * gratis con cara de precio cargado.
+                     * ─────────────────────────────────────────────────
+                     * 🔴 EL PRECIO ES POR UNIDAD, Y EL RÓTULO LO DICE
+                     * ─────────────────────────────────────────────────
+                     *
+                     * El tarifario guarda el precio por unidad de
+                     * dispensación: el de la TABLETA, no el del blíster.
+                     * Con el rótulo «Precio» a secas, quien elegía
+                     * «BLISTER X 10» escribía lo que cuesta el blíster, y
+                     * cada tableta quedaba diez veces más cara.
+                     *
+                     * Por eso dice «Precio por TAB», y debajo se lee en
+                     * vivo cuánto sale el envase elegido.
                      */
-                    ->rule('regex:/^\d{1,9}(\.\d{1,4})?$/')
-                    ->validationMessages([
-                        'regex' => 'Escribí solo el número, con punto decimal: 29.33.',
-                    ])
-                    ->helperText('El impuesto lo calcula la factura según el régimen del ítem.'),
+                    TextInput::make('precio')
+                        ->label(fn (): string => $this->rotuloDelPrecio())
+                        ->prefix('L')
+                        ->required()
+                        ->live(onBlur: true)
+                        /*
+                         * `regex` y no `numeric`: `numeric` acepta "1e3",
+                         * que entra a bcmath como cero y dejaría el
+                         * producto gratis con cara de precio cargado.
+                         */
+                        ->rule('regex:/^\d{1,9}(\.\d{1,4})?$/')
+                        ->validationMessages([
+                            'regex' => 'Escribí solo el número, con punto decimal: 29.33.',
+                        ])
+                        ->helperText(fn (Get $get): string => $this->ayudaDelPrecio($get)),
 
-                DatePicker::make('vigencia_desde')
-                    ->label('Vigente desde')
-                    ->required()
-                    ->default(now())
-                    ->native(false)
-                    ->displayFormat('d/m/Y')
-                    ->helperText('Tiene que ser posterior a todos los precios que ya existen para ese pagador.'),
+                    DatePicker::make('vigencia_desde')
+                        ->label('Vigente desde')
+                        ->required()
+                        ->default(now())
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->helperText('Posterior a los precios que ya hay para ese pagador.'),
 
-                Textarea::make('motivo')
-                    ->label('Por qué')
-                    ->required()
-                    ->minLength(10)
-                    ->rows(3)
-                    ->helperText(
-                        'Es lo que se lee cuando alguien pregunte, dentro de dos años, por qué '
-                        .'este producto se vendía a este precio.'
-                    ),
+                    Textarea::make('motivo')
+                        ->label('Por qué')
+                        ->columnSpanFull()
+                        ->required()
+                        ->minLength(10)
+                        ->rows(2)
+                        ->placeholder('Ej.: costo nuevo del proveedor, tarifa firmada con el seguro…')
+                        ->helperText('Es lo que se lee cuando alguien pregunte, dentro de dos años, por qué se vendía a este precio.'),
+                ]),
             ])
             ->action(function (array $data, Action $action, FijadorDePrecio $fijador): void {
                 $item = $this->getOwnerRecord();
@@ -368,6 +416,47 @@ class PreciosRelationManager extends RelationManager
                     ->body('Rige desde el '.$fila->vigencia_desde->format('d/m/Y').'.')
                     ->send();
             });
+    }
+
+    /**
+     * «Precio por TAB», o «Precio por TAB, antes del ISV» en lo que sí
+     * lleva impuesto. Sin unidad —un servicio—, «Precio» a secas.
+     */
+    private function rotuloDelPrecio(): string
+    {
+        $item = $this->getOwnerRecord();
+
+        $porUnidad = $item instanceof Item && $item->unidad_dispensacion_id !== null
+            ? 'Precio por '.$item->unidadDispensacion->codigo
+            : 'Precio';
+
+        return $this->llevaIsv() ? $porUnidad.', antes del ISV' : $porUnidad;
+    }
+
+    /**
+     * Debajo del precio: si lleva ISV o no, y cuánto sale el envase
+     * elegido —«El BLISTER X 10 TABLETAS sale a L 25.00»—, que es la
+     * cifra con la que se compara contra la factura del proveedor.
+     */
+    private function ayudaDelPrecio(Get $get): string
+    {
+        $isv = $this->llevaIsv()
+            ? 'La factura le suma el ISV de este ítem.'
+            : 'Exento de ISV: se cobra tal cual.';
+
+        $precio = NumeroDeFormulario::aDecimal($get('precio'));
+        $envase = self::presentacionDe($get('item_presentacion_id'));
+
+        if (! $precio instanceof Decimal
+            || ! $envase instanceof ItemPresentacion
+            || ! is_numeric($envase->unidades_por_presentacion)
+        ) {
+            return $isv;
+        }
+
+        $porEnvase = Monto::de($precio->por($envase->unidades_por_presentacion)->redondeado(2));
+
+        return $isv.' El '.$envase->envase().' sale a '.$porEnvase->formateado().'.';
     }
 
     private static function convenioDe(mixed $id): ?Convenio

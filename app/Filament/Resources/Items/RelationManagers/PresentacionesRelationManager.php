@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Items\RelationManagers;
 
+use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Unidad;
 use App\Support\CodigoDeBarras;
+use App\Support\NumeroDeFormulario;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
@@ -753,6 +755,17 @@ class PresentacionesRelationManager extends RelationManager
     /**
      * «1 CAJA = 100 TABLETA», armado con lo que hay escrito ahora mismo
      * en el formulario y no con lo guardado.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * Y DEBAJO, CÓMO SE VA A PODER COBRAR (10-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Que la caja se pueda vender cerrada no se configura en ningún
+     * lado: sale de lo que ya está escrito acá —el envase y cuánto
+     * trae— y de «Se dispensa en» en la ficha (`FormasDeCobro`). Como no
+     * hay un campo que lo diga, lo dice esta línea; si no, quien carga
+     * el catálogo busca dónde se marca «se vende por caja» y no lo
+     * encuentra.
      */
     private function comoSeLee(Get $get): HtmlString
     {
@@ -775,9 +788,29 @@ class PresentacionesRelationManager extends RelationManager
             $this->codigoDeDispensacion(),
         );
 
+        $unidad = $this->codigoDeDispensacion();
+        $codigoDelEnvase = $envase instanceof Unidad ? $envase->codigo : 'envase';
+
+        /*
+         * El envase de una sola unidad no se ofrece aparte al cobrar:
+         * «1 AMPOLLA = 1 AMPOLLA» sin abrir es lo mismo que una ampolla.
+         */
+        $trae = NumeroDeFormulario::aDecimal($contenido);
+
+        $alCobrar = $trae instanceof Decimal && $trae->mayorQue('1')
+            ? sprintf(
+                'Al cobrar se elige: por %s, o %s sin abrir (%s %s de una).',
+                $unidad,
+                $codigoDelEnvase,
+                ItemPresentacion::sinCerosDeMas((string) $contenido),
+                $unidad,
+            )
+            : sprintf('Al cobrar se vende por %s.', $unidad);
+
         return new HtmlString(
             '<span style="font-size:.9375rem;font-weight:600">'.e($frase).'</span>'
             .'<span style="font-size:.875rem;color:#6b7280"> — así entra al kardex.</span>'
+            .'<br><span style="font-size:.875rem;color:#6b7280">'.e($alCobrar).'</span>'
         );
     }
 
@@ -982,9 +1015,9 @@ class PresentacionesRelationManager extends RelationManager
     private function ayudaDeLaUnidad(): string
     {
         return $this->seAlmacena()
-            ? 'CÓMO VIENE, no cómo se vende: CAJA, FRASCO, BLÍSTER. Una caja de 100 tabletas se '
-              .'carga con envase CAJA y contenido 100 — el kardex la va a descontar de a tableta '
-              .'igual.'
+            ? 'Cómo viene: CAJA, FRASCO, BLÍSTER. Una caja de 100 tabletas se carga con envase CAJA '
+              .'y contenido 100. Al cobrar se puede vender por tableta o la caja sin abrir; el '
+              .'kardex la descuenta de a tableta igual.'
             : 'La misma en la que se cobra el ítem. Para una consulta o un honorario, UNIDAD.';
     }
 
