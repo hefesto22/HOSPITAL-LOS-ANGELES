@@ -36,6 +36,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  *
  * @property int $id
  * @property string $codigo
+ * @property string|null $codigo_barras
  * @property string $nombre
  * @property string|null $descripcion
  * @property string $nombre_busqueda
@@ -83,6 +84,7 @@ class Item extends Model
     /** @var list<string> */
     protected $fillable = [
         'codigo',
+        'codigo_barras',
         'nombre',
         'descripcion',
         'tipo',
@@ -162,6 +164,18 @@ class Item extends Model
     protected static function booted(): void
     {
         static::saving(function (Item $item): void {
+            /*
+             * Un código de barras vacío es NULL y no cadena vacía: con
+             * cadena vacía el índice único deja pasar uno solo y el
+             * segundo producto sin código explotaría con un error de SQL.
+             * Se recorta, pero NO se pasa a mayúsculas: tiene que
+             * coincidir carácter por carácter con lo que lee el escáner.
+             */
+            if (is_string($item->codigo_barras)) {
+                $limpio = trim($item->codigo_barras);
+                $item->codigo_barras = $limpio === '' ? null : $limpio;
+            }
+
             /*
              * ─────────────────────────────────────────────────────────
              * EL TIPO PROPONE, LA COLUMNA DECIDE
@@ -531,6 +545,8 @@ class Item extends Model
              * caracteres que el lector leyó bien.
              */
             if ($escaneado !== '') {
+                $sub->orWhere('codigo_barras', $escaneado);
+
                 $sub->orWhereHas(
                     'presentaciones',
                     fn (Builder $presentacion): Builder => $presentacion
@@ -538,6 +554,37 @@ class Item extends Model
                 );
             }
         });
+    }
+
+    /**
+     * El producto que corresponde a un código leído o tecleado: el de
+     * barras del producto —el de la caja del fabricante, exacto— o el
+     * interno del hospital —`MED-101`, sin importar mayúsculas—.
+     *
+     * Es UN lugar para todas las pantallas que escanean (cobro,
+     * recepción, conteo, ajuste, presupuesto): si cada una buscara a su
+     * manera, la pistola encontraría un producto en una y no en la otra.
+     *
+     * ⚠️ El código del envase se busca ANTES y aparte, en
+     * `item_presentaciones`, porque además del producto dice de qué
+     * envase se trata. Esto es para cuando el código no es de un envase.
+     */
+    public static function porCodigo(mixed $codigo): ?self
+    {
+        if (! is_string($codigo) || trim($codigo) === '') {
+            return null;
+        }
+
+        $leido = trim($codigo);
+
+        $item = static::query()
+            ->where(function (Builder $consulta) use ($leido): void {
+                $consulta->where('codigo_barras', $leido)
+                    ->orWhereRaw('upper(codigo) = ?', [mb_strtoupper($leido)]);
+            })
+            ->first();
+
+        return $item instanceof self ? $item : null;
     }
 
     /**

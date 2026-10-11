@@ -13,10 +13,12 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\CategoriaItem;
 use App\Models\Descuento;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
 use App\Models\Unidad;
 use App\Services\AsignadorDeCodigoDeItem;
 use App\Support\CodigoDeBarras;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
@@ -34,6 +36,7 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\HtmlString;
+use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 
 /**
  * Formulario del catálogo — patrón §10.
@@ -324,6 +327,8 @@ final class ItemForm
                         .'ACETAMINOFEN 500 MG TABLETA. El TAMAÑO del envase NO va acá — 60 ml, 120 ml '
                         .'y la caja de 100 son presentaciones del mismo producto.'
                         : 'Como debe salir impreso en la cuenta del paciente.'),
+
+                ...($ambito === AmbitoCatalogo::Productos ? [self::campoCodigoDeBarras()] : []),
 
                 /*
                  * ─────────────────────────────────────────────────────
@@ -1156,6 +1161,91 @@ final class ItemForm
         }
 
         $set('codigo', $asignador->siguiente($categoria));
+    }
+
+    /**
+     * El código de barras del producto: el de la caja del fabricante.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 UNO POR PRODUCTO, Y LO HEREDAN SUS ENVASES (10-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Regla de Mauricio: el código se pide acá, en la ficha, y vale para
+     * todas las presentaciones. El acetaminofén de la marca X y el de la
+     * marca Y son dos productos con dos códigos de fábrica distintos, y
+     * escanear la caja dice cuál de los dos se tiene en la mano.
+     *
+     * Heredar es que escanearlo encuentra este producto en cualquiera de
+     * sus envases —al cobrar se elige después tableta, blíster o caja—.
+     * NO se copia a cada presentación: el mismo código en la caja y en el
+     * blíster dejaría a la recepción sin saber si entraron 100 o 10. Una
+     * presentación lleva código propio solo si ese envase trae uno
+     * distinto.
+     *
+     * ⚠️ Único contra los productos Y contra los envases, incluidos los
+     * dados de baja: un código impreso en una caja es para siempre, y
+     * dos lugares con el mismo código hacen que la pistola devuelva el
+     * que el ORDER BY quiera.
+     */
+    private static function campoCodigoDeBarras(): BarcodeInput
+    {
+        return BarcodeInput::make('codigo_barras')
+            ->label('Código de barras del producto')
+            ->columnSpanFull()
+            ->maxLength(50)
+            ->placeholder('Disparale con la pistola a la caja, o escribilo')
+            ->dehydrateStateUsing(fn (mixed $state): ?string => is_string($state) && trim($state) !== ''
+                ? trim($state)
+                : null)
+            ->rules([
+                fn (?Item $record): Closure => function (string $attribute, mixed $value, Closure $fail) use ($record): void {
+                    self::verificarQueElCodigoEsteLibre($record, $value, $fail);
+                },
+            ])
+            ->helperText(
+                'El de la caja del fabricante; cada marca tiene el suyo. Vale para todas las '
+                .'presentaciones: escanearlo encuentra este producto y al cobrar se elige tableta, '
+                .'blíster o caja.'
+            );
+    }
+
+    /**
+     * Que el código no lo tenga otro producto ni ningún envase.
+     *
+     * Con el mensaje de quién lo tiene, para que se pueda ir a corregir
+     * sin adivinar. El índice único de la base es el que manda; esto
+     * existe para que el choque no llegue como un error de SQL.
+     */
+    private static function verificarQueElCodigoEsteLibre(?Item $record, mixed $value, Closure $fail): void
+    {
+        $codigo = is_string($value) ? trim($value) : '';
+
+        if ($codigo === '') {
+            return;
+        }
+
+        $otroProducto = Item::withTrashed()
+            ->where('codigo_barras', $codigo)
+            ->when($record instanceof Item, fn (Builder $consulta): Builder => $consulta->whereKeyNot($record?->getKey()))
+            ->first();
+
+        if ($otroProducto instanceof Item) {
+            $fail("Ese código de barras ya es de «{$otroProducto->nombre}». Cada producto tiene el suyo.");
+
+            return;
+        }
+
+        $envase = ItemPresentacion::withTrashed()
+            ->with('item')
+            ->where('codigo_barras', $codigo)
+            ->first();
+
+        if ($envase instanceof ItemPresentacion) {
+            $fail(
+                'Ese código ya lo tiene la presentación «'.$envase->nombreCompleto().'». Si es el de '
+                .'este producto, borralo de la presentación y dejalo acá: lo heredan todos sus envases.'
+            );
+        }
     }
 
     /**

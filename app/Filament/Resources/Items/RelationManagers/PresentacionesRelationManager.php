@@ -321,11 +321,13 @@ class PresentacionesRelationManager extends RelationManager
                                 $this->generarElCodigo($set);
                             }),
                     )
-                    ->helperText(
-                        'El de la caja del proveedor: disparale con la pistola, o tocá la cámara para '
-                        .'leerlo con el teléfono. Si no trae código legible, o si el producto se '
-                        .'reenvasa, «Generar el del hospital» propone uno para imprimir.'
-                    ),
+                    ->helperText(fn (): string => $this->codigoDelProducto() !== null
+                        ? 'Opcional: este envase ya se encuentra con el código del producto ('
+                            .$this->codigoDelProducto().'). Cargá uno acá solo si este envase trae un '
+                            .'código DISTINTO al de la ficha.'
+                        : 'El de este envase, si trae uno propio. Lo normal es cargar el de la caja en '
+                            .'la ficha del producto, en Identificación, y que lo hereden todos los envases. '
+                            .'Si no trae código legible, «Generar el del hospital» propone uno para imprimir.'),
 
                 /*
                  * El dibujo de lo que se va a imprimir, mientras todavía
@@ -425,12 +427,22 @@ class PresentacionesRelationManager extends RelationManager
                     ->alignCenter()
                     ->visible(fn (): bool => $this->seAlmacena())
                     ->boolean()
-                    ->getStateUsing(fn (ItemPresentacion $record): bool => $record->codigo_barras !== null)
+                    /*
+                     * Escaneable también por herencia: si el producto
+                     * tiene su código de fábrica en la ficha, escanearlo
+                     * encuentra este envase igual. El triángulo queda
+                     * solo para lo que de verdad no se puede escanear.
+                     */
+                    ->getStateUsing(fn (ItemPresentacion $record): bool => $record->codigo_barras !== null
+                        || $this->codigoDelProducto() !== null)
                     ->trueIcon('heroicon-o-qr-code')
                     ->falseIcon('heroicon-o-exclamation-triangle')
                     ->trueColor('success')
                     ->falseColor('warning')
-                    ->tooltip(fn (ItemPresentacion $record): string => $record->codigo_barras ?? 'Sin código: no se puede escanear.'),
+                    ->tooltip(fn (ItemPresentacion $record): string => $record->codigo_barras
+                        ?? ($this->codigoDelProducto() !== null
+                            ? 'Por el código del producto: '.$this->codigoDelProducto()
+                            : 'Sin código: cargá el del producto en la ficha, o uno propio de este envase.')),
 
                 TextColumn::make('vigencia_hasta')
                     ->label('Vigencia')
@@ -692,6 +704,23 @@ class PresentacionesRelationManager extends RelationManager
             return;
         }
 
+        /*
+         * Primero contra los PRODUCTOS: desde el 10-oct-2026 el código de
+         * la caja del fabricante se carga en la ficha y lo heredan todos
+         * los envases. Repetirlo acá haría que la pistola encontrara dos
+         * lugares para un mismo código.
+         */
+        $producto = Item::withTrashed()->where('codigo_barras', $codigo)->first();
+
+        if ($producto instanceof Item) {
+            $fail(
+                "Ese código ya es el de «{$producto->nombre}», en su ficha. Lo heredan todas sus "
+                .'presentaciones: no hace falta repetirlo acá.'
+            );
+
+            return;
+        }
+
         $tomada = ItemPresentacion::withTrashed()
             ->with('item')
             ->where('codigo_barras', $codigo)
@@ -868,6 +897,16 @@ class PresentacionesRelationManager extends RelationManager
               .'dispensación del ítem —acá '.$this->unidadDeDispensacion().'—, nunca en cajas.'
             : 'Uno. Una variante que no se almacena no es un envase que contenga otra cosa: es la '
               .'misma prestación con otro precio.';
+    }
+
+    /**
+     * El código de barras de la ficha, el que heredan los envases.
+     */
+    private function codigoDelProducto(): ?string
+    {
+        $duenio = $this->getOwnerRecord();
+
+        return $duenio instanceof Item ? $duenio->codigo_barras : null;
     }
 
     /**

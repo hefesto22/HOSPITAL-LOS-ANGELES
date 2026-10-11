@@ -333,7 +333,15 @@ final class AjusteForm
             ->where('codigo_barras', $codigo)
             ->first();
 
-        if (! $presentacion instanceof ItemPresentacion) {
+        /*
+         * El envase primero; si no es de un envase, el código del
+         * producto —el de fábrica, que heredan sus envases— o el interno.
+         */
+        $itemId = $presentacion instanceof ItemPresentacion
+            ? $presentacion->item_id
+            : Item::porCodigo($codigo)?->id;
+
+        if ($itemId === null) {
             Notification::make()
                 ->warning()
                 ->title('Ese código no está en el catálogo')
@@ -348,7 +356,7 @@ final class AjusteForm
         $lineas = is_array($get('lineas')) ? $get('lineas') : [];
 
         $lineas[(string) Str::uuid()] = [
-            'item_id'   => $presentacion->item_id,
+            'item_id'   => $itemId,
             'lote_id'   => null,
             'motivo'    => null,
             'direccion' => 'sale',

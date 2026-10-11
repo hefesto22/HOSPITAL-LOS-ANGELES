@@ -112,6 +112,8 @@ La regla vive en `App\Services\FormasDeCobro` y la prueba `tests/Feature/Cuentas
 
 ### 3.2 Otros atributos del producto
 
+**Código de barras del producto (10-oct-2026):** se carga una vez en la ficha, en Identificación —el de la caja del fabricante, distinto por marca— y lo **heredan todas sus presentaciones**: escanearlo encuentra el producto en cualquiera de sus envases, en el cobro, la recepción, el conteo, el ajuste y el presupuesto. No se copia a cada presentación (la recepción no sabría si entraron 100 o 10); un envase lleva código propio solo si trae uno distinto. Un mismo código no puede estar en dos productos ni en un producto y un envase.
+
 Código de barras propio e **impresión de etiquetas** para producto (ZPL — ver pendiente #7 de `dominio.md`), tipo de medicamento, presentación, principio activo (ATC), registro sanitario ARSA, si es controlado, y lote + vencimiento obligatorios.
 
 ---

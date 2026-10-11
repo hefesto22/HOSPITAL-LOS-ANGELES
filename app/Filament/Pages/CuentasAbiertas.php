@@ -5033,8 +5033,10 @@ class CuentasAbiertas extends Page
      * Así que se busca en dos lugares y en este orden:
      *
      *   1. el código de barras de una presentación — lo que lee la
-     *      pistola frente al estante;
-     *   2. el `codigo` del ítem — lo que teclea alguien que se lo sabe.
+     *      pistola frente a un envase que trae código propio;
+     *   2. el del producto —el de la caja del fabricante, que heredan
+     *      todos sus envases— o su `codigo` interno, que es lo que
+     *      teclea alguien que se lo sabe (`Item::porCodigo()`).
      *
      * ⚠️ El código de barras se compara TAL CUAL, sin pasar a mayúsculas:
      * algunos GS1 llevan minúsculas y tocarlas rompe la lectura (lo dice
@@ -5053,15 +5055,7 @@ class CuentasAbiertas extends Page
             return $presentacion->item;
         }
 
-        if (! is_string($codigo) || trim($codigo) === '') {
-            return null;
-        }
-
-        $item = Item::query()
-            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
-            ->first();
-
-        return $item instanceof Item ? $item : null;
+        return Item::porCodigo($codigo);
     }
 
     /**
@@ -5829,9 +5823,8 @@ class CuentasAbiertas extends Page
         $encontrados = $this->buscarEnElCatalogo($texto);
 
         if ($encontrados === []) {
-            $this->avisoDelBuscador = 'No hay nada con «'.$texto.'», ni como código ni como nombre. Ojo: el '
-                .'código de barras se registra en la PRESENTACIÓN —la caja, el frasco, el blíster—; si el '
-                .'producto existe pero no tiene su presentación cargada, la pistola no lo encuentra.';
+            $this->avisoDelBuscador = 'No hay nada con «'.$texto.'», ni como código ni como nombre. Si el '
+                .'producto existe, falta cargarle el código de barras en su ficha, en Identificación.';
 
             return;
         }

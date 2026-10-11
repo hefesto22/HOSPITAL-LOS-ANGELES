@@ -536,8 +536,8 @@ class RenglonesRelationManager extends RelationManager
      * El ítem detrás de un código escaneado.
      *
      * Primero por código de barras de la PRESENTACIÓN —es lo que trae el
-     * envase— y después por el código del ítem, que es lo que alguien
-     * teclea cuando no hay etiqueta.
+     * envase— y después por el del producto o su código interno
+     * (`Item::porCodigo()`).
      */
     private function itemPorCodigo(mixed $codigo): ?Item
     {
@@ -551,9 +551,7 @@ class RenglonesRelationManager extends RelationManager
             return $presentacion->item;
         }
 
-        return Item::query()
-            ->whereRaw('upper(codigo) = ?', [mb_strtoupper(trim($codigo))])
-            ->first();
+        return Item::porCodigo($codigo);
     }
 
     /**

@@ -620,7 +620,12 @@ final class RecepcionForm
      */
     private static function escaneoDeProducto(string $codigo, Get $get, Set $set): void
     {
-        $item = Item::query()->where('codigo', $codigo)->first();
+        /*
+         * El código del producto —el de la caja del fabricante, que
+         * heredan sus envases— o el interno. Dice QUÉ llegó, no en qué
+         * envase: eso se elige en la línea.
+         */
+        $item = Item::porCodigo($codigo);
 
         if (! $item instanceof Item) {
             Notification::make()
