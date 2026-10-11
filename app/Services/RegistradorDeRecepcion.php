@@ -52,6 +52,15 @@ use Illuminate\Support\Facades\DB;
  * queda en L 10,00. Ni una casilla de impuestos: el costo que se teclea
  * ya lo lleva adentro, porque los servicios de salud son exentos y ese
  * ISV no se acredita nunca.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * 🔴 Y SIN COSTO, QUE ES COMO RECIBE LA PANTALLA (11-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Regla de Mauricio: bodega registra lo que entró, sin costos. El precio
+ * de farmacia ya no sale del costo: se escribe como precio mínimo del
+ * envase. Una línea sin costo entra al kardex igual que cualquiera, pero
+ * no toca el promedio ni propone precio — ver `asentar()`.
  */
 final class RegistradorDeRecepcion
 {
@@ -139,25 +148,60 @@ final class RegistradorDeRecepcion
         $unidades = $linea->cantidadEnUnidades();
         $costoUnitario = $linea->costoUnitario();
 
-        /*
-         * El promedio se recalcula ANTES de asentar el movimiento para
-         * que la línea del kardex pueda guardar el promedio que quedó
-         * vigente. Es el mismo orden que `saldo_despues`: primero mover,
-         * después fotografiar.
-         */
-        $promedio = $this->costos->absorber($linea->item, $almacen, $unidades, $costoUnitario);
+        if ($costoUnitario instanceof Decimal) {
+            /*
+             * El promedio se recalcula ANTES de asentar el movimiento
+             * para que la línea del kardex pueda guardar el promedio que
+             * quedó vigente. Es el mismo orden que `saldo_despues`:
+             * primero mover, después fotografiar.
+             */
+            $promedio = $this->costos->absorber($linea->item, $almacen, $unidades, $costoUnitario);
 
-        $this->movimientos->registrar(
-            item: $linea->item,
-            lote: $lote,
-            almacen: $almacen,
-            tipo: TipoMovimiento::EntradaPorCompra,
-            cantidad: $unidades,
-            referencia: $recepcion->referencia,
-            ocurridoEn: $fecha,
-            costoUnitario: $costoUnitario,
-            costoPromedioDespues: $promedio,
-        );
+            $this->movimientos->registrar(
+                item: $linea->item,
+                lote: $lote,
+                almacen: $almacen,
+                tipo: TipoMovimiento::EntradaPorCompra,
+                cantidad: $unidades,
+                referencia: $recepcion->referencia,
+                ocurridoEn: $fecha,
+                costoUnitario: $costoUnitario,
+                costoPromedioDespues: $promedio,
+            );
+        } else {
+            /*
+             * ─────────────────────────────────────────────────────────
+             * SIN COSTO: SE VALORIZA AL PROMEDIO, IGUAL QUE UN AJUSTE
+             * ─────────────────────────────────────────────────────────
+             *
+             * No hay número que mezclar al promedio, y uno inventado
+             * —cero, el último— movería el costo de todo lo que ya
+             * estaba en el estante. Así que se hace lo mismo que
+             * `RegistradorDeAjuste`: la fila del costo se bloquea, el
+             * movimiento lleva el promedio vigente en sus dos columnas
+             * —que no cambia—, y después la cantidad base se pone al día
+             * contra la existencia real.
+             *
+             * ⚠️ `sincronizarCantidadBase()` DESPUÉS del movimiento:
+             * lee la existencia ya movida. Sin esto la cantidad base se
+             * queda corta y la próxima entrada con costo pesaría de más.
+             */
+            $vigente = $this->costos->vigenteBloqueado($linea->item, $almacen);
+
+            $this->movimientos->registrar(
+                item: $linea->item,
+                lote: $lote,
+                almacen: $almacen,
+                tipo: TipoMovimiento::EntradaPorCompra,
+                cantidad: $unidades,
+                referencia: $recepcion->referencia,
+                ocurridoEn: $fecha,
+                costoUnitario: $vigente,
+                costoPromedioDespues: $vigente,
+            );
+
+            $this->costos->sincronizarCantidadBase($linea->item, $almacen);
+        }
 
         RecepcionLinea::query()->create([
             'recepcion_id'         => $recepcion->id,
@@ -167,8 +211,8 @@ final class RegistradorDeRecepcion
 
             'cantidad_presentacion'     => $linea->cantidadPresentacion->paraBase(4),
             'unidades_por_presentacion' => $linea->unidadesPorPresentacion->paraBase(4),
-            'costo_por_presentacion'    => $linea->costoPorPresentacion->paraBase(4),
-            'costo_unitario'            => $costoUnitario->paraBase(6),
+            'costo_por_presentacion'    => $linea->costoPorPresentacion?->paraBase(4),
+            'costo_unitario'            => $costoUnitario?->paraBase(6),
 
             'numero_lote'       => $numero,
             'fecha_vencimiento' => $linea->vencimiento?->toDateString(),
@@ -224,6 +268,16 @@ final class RegistradorDeRecepcion
         }
 
         /*
+         * Sin costo no hay de dónde sacar un precio. El precio de lo que
+         * entró sin costo se fija a mano, en la ficha del producto.
+         */
+        $costo = $linea->costoUnitario();
+
+        if (! $costo instanceof Decimal) {
+            return;
+        }
+
+        /*
          * El costo es el de ESTA línea, no el promedio del almacén. El
          * frasco de 60 ML costó L 16.67 el mililitro y el de 80 ML costó
          * L 25.00: con el promedio, el margen del hospital dependería de
@@ -232,7 +286,7 @@ final class RegistradorDeRecepcion
         $this->sembrarSiFalta(
             $linea->item,
             $linea->presentacion,
-            $linea->costoUnitario(),
+            $costo,
             $fecha,
         );
     }

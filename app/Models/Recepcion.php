@@ -112,14 +112,29 @@ class Recepcion extends Model
      *
      * Se suma línea por línea con bcmath en vez de pedirle un `SUM()` a
      * la base: son unas pocas filas y el §8.6.2 vale también para leer.
+     *
+     * Las líneas recibidas sin costo no suman: no costaron cero, no se
+     * sabe cuánto costaron. Para saber si hay algo que sumar está
+     * `tieneCostos()`.
      */
     public function costoTotal(): Decimal
     {
         return $this->lineas
             ->reduce(
-                fn (Decimal $suma, RecepcionLinea $linea): Decimal => $suma->sumar($linea->costoDeLaLinea()),
+                fn (Decimal $suma, RecepcionLinea $linea): Decimal => $suma->sumar(
+                    $linea->costoDeLaLinea() ?? Decimal::cero(),
+                ),
                 Decimal::cero(),
             );
+    }
+
+    /**
+     * ¿Alguna línea vino con costo? Desde el 11-oct-2026 la pantalla
+     * recibe sin costo, así que solo las recepciones viejas lo tienen.
+     */
+    public function tieneCostos(): bool
+    {
+        return $this->lineas->contains(fn (RecepcionLinea $linea): bool => $linea->costo_unitario !== null);
     }
 
     /**

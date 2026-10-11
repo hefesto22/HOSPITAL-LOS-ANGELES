@@ -300,6 +300,12 @@ final class CalculadoraDeCostoPromedio
             ->where('recepcion_lineas.item_id', $item->id)
             ->where('recepciones.almacen_id', $almacen->id)
             ->whereNull('recepciones.deleted_at')
+            /*
+             * Las líneas recibidas sin costo (11-oct-2026) no entran a la
+             * cuenta: no aportan costo y tampoco pesan en la cantidad,
+             * igual que en `absorber()`, que nunca las ve.
+             */
+            ->whereNotNull('recepcion_lineas.costo_unitario')
             ->selectRaw('COALESCE(sum(recepcion_lineas.cantidad_dispensacion), 0) as cantidad')
             ->selectRaw(
                 'COALESCE(sum(recepcion_lineas.cantidad_dispensacion '

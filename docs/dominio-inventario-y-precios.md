@@ -64,6 +64,24 @@ El costo promedio se guarda con **más decimales que el dinero** (4, no 2). Redo
 
 - ¿El costo promedio se lleva también por **lote**, o solo por producto? El lote es obligatorio para farmacia por trazabilidad y vencimiento (ARSA), pero eso es distinto de costear por lote. **Recomendación: promedio por producto, lote solo para trazabilidad y FEFO.** Costear por lote obliga a decidir de qué lote salió cada unidad y complica la dispensación sin beneficio contable.
 
+### 2.7 🔴 La recepción ya no pide costo — DECIDIDO (11-oct-2026)
+
+**Decisión de Mauricio:** en la recepción *«solo coloquen el registro de lo que entró, sin costos ni nada de eso»*. Quien recibe en bodega no maneja facturas (la matriz de permisos ya le niega Compras), y el precio de farmacia **deja de derivarse del costo**: se va a escribir como **precio mínimo del envase** (ver §4.5, parte 2, pendiente).
+
+| | Antes | Desde el 11-oct-2026 |
+|---|---|---|
+| Lo que pide la recepción | qué, cuántas, contenido, **costo por caja**, lote, vence | qué, cuántas, lote, vence |
+| Costo de la línea | número (cero = donación) | **vacío** = «se recibió sin costo» |
+| Promedio móvil | se mueve con cada entrada | **no se toca**: lo que entra sin costo se valoriza al promedio vigente, como un ajuste, y la cantidad base se pone al día |
+| Precio al primer ingreso | se calculaba del costo | **no se siembra**: se fija a mano en la ficha |
+
+- **Vacío NO es cero.** Cero es una donación, que entra al promedio y lo baja; vacío no lo toca. La base exige las dos columnas de costo juntas o ninguna.
+- **El servicio sigue aceptando costo** (`LineaRecibida::$costoPorPresentacion` es opcional), para un import del sistema viejo o el día que se quiera volver a costear. Las recepciones viejas conservan el suyo.
+- **Lo que se deja de tener:** costo promedio al día, valor del inventario en lempiras y margen real por producto. Las facturas de proveedores siguen en Compras, para el ISV.
+- La pantalla tampoco pide ya «Trae» (unidades por caja): lo pone la presentación. Si el laboratorio cambia el envase, se carga otra presentación.
+
+Pruebas: `tests/Feature/Inventario/RecepcionesTest.php`, sección «Sin costo».
+
 ---
 
 ## 3. Unidades — cómo se compra y en qué se vende
@@ -210,6 +228,8 @@ Y hay un cambio de fondo: antes el piso de 120 % se tocaba solo con pacientes de
 5. El paciente acredita la condición con **tarjeta de identidad**; los jubilados, con carné del IPM o INJUPEMP. El MPI ya exige documento de identidad (§8.2) y ya distingue el carné de jubilado como tipo propio, así que la detección es automática — pero el documento debe estar **verificado**, no digitado a ojo.
 
 ### 4.5 Política de precio — DECIDIDA
+
+> ⚠️ **Cambio en curso (11-oct-2026) — parte 2, todavía no construida.** Mauricio decidió que el piso ya no salga de `costo × (1 + margen)` sino que **se escriba directo, por envase**: *«se le coloca precio mínimo a la caja y de ahí se calcula el precio de las presentaciones; si la caja trae 100 pastillas y cuesta 120, la pastilla sale a 1.20, así que un blíster de 10 se vende a 12 mínimo»*. El resto de esta sección sigue valiendo igual: **un solo precio de lista para todos**, `lista = mínimo ÷ (1 − descuento máximo)`, y ningún descuento puede bajar del mínimo. Ejemplo con 40 % de cuarta edad: caja mínimo L 120 → lista L 200 (joven), L 150 (tercera edad), L 120 (cuarta).
 
 > **Decisión de Mauricio, 17-ago-2026:**
 > **el margen nunca baja del 120 % en medicamentos, sin importar la edad del paciente ni el descuento legal que le corresponda.**

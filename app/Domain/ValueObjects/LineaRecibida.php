@@ -27,15 +27,24 @@ use Carbon\CarbonInterface;
  * ─────────────────────────────────────────────────────────────────────
  *
  * `unidadesPorPresentacion` viaja como dato y no se saca de
- * `$presentacion->unidades_por_presentacion`. Es a propósito: el
- * formulario lo propone desde el catálogo pero quien recibe lo puede
- * corregir —el laboratorio cambió el envase y el catálogo todavía no—, y
- * lo que llegó de verdad manda sobre lo que dice el catálogo.
+ * `$presentacion->unidades_por_presentacion`. La pantalla de hoy ya no
+ * deja corregirlo —lo pone la presentación, y si el laboratorio cambió el
+ * envase se carga otra presentación—, pero un import del sistema viejo
+ * trae el contenido escrito en su propio papel, y ese manda.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * 🔴 EL COSTO ES OPCIONAL (11-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Regla de Mauricio: la recepción registra lo que entró, no lo que costó.
+ * `null` es «se recibió sin costo» y NO es cero: cero es una donación,
+ * que entra al promedio y lo baja; `null` no lo toca. Ver
+ * `RegistradorDeRecepcion::asentar()`.
  */
 final readonly class LineaRecibida
 {
     /**
-     * @param Decimal $costoPorPresentacion lo que costó la caja, IMPUESTO INCLUIDO
+     * @param Decimal|null $costoPorPresentacion lo que costó la caja, IMPUESTO INCLUIDO; null si se recibió sin costo
      *
      * @throws RecepcionException
      */
@@ -44,7 +53,7 @@ final readonly class LineaRecibida
         public ?ItemPresentacion $presentacion,
         public Decimal $cantidadPresentacion,
         public Decimal $unidadesPorPresentacion,
-        public Decimal $costoPorPresentacion,
+        public ?Decimal $costoPorPresentacion,
         public ?string $numeroLote = null,
         public ?CarbonInterface $vencimiento = null,
         public ?string $notas = null,
@@ -61,11 +70,23 @@ final readonly class LineaRecibida
     }
 
     /**
-     * Lo que costó la línea entera: 100 cajas × L 1.000 = L 100.000.
+     * ¿Vino con costo? Sin costo, la línea entra al kardex sin tocar el
+     * promedio y sin proponer precio.
      */
-    public function costoDeLaLinea(): Decimal
+    public function traeCosto(): bool
     {
-        return $this->cantidadPresentacion->por($this->costoPorPresentacion);
+        return $this->costoPorPresentacion instanceof Decimal;
+    }
+
+    /**
+     * Lo que costó la línea entera: 100 cajas × L 1.000 = L 100.000.
+     * Null si se recibió sin costo.
+     */
+    public function costoDeLaLinea(): ?Decimal
+    {
+        return $this->costoPorPresentacion instanceof Decimal
+            ? $this->cantidadPresentacion->por($this->costoPorPresentacion)
+            : null;
     }
 
     /**
@@ -74,11 +95,13 @@ final readonly class LineaRecibida
      * Se divide el costo de la presentación entre su contenido y no el
      * costo de la línea entre las unidades de la línea: da lo mismo, pero
      * así la cuenta se puede leer contra la factura sin sacar la
-     * calculadora.
+     * calculadora. Null si se recibió sin costo.
      */
-    public function costoUnitario(): Decimal
+    public function costoUnitario(): ?Decimal
     {
-        return $this->costoPorPresentacion->entre($this->unidadesPorPresentacion);
+        return $this->costoPorPresentacion instanceof Decimal
+            ? $this->costoPorPresentacion->entre($this->unidadesPorPresentacion)
+            : null;
     }
 
     public function tieneLote(): bool
@@ -110,7 +133,7 @@ final readonly class LineaRecibida
             throw RecepcionException::elContenidoDebeSerPositivo($this->item->etiqueta());
         }
 
-        if ($this->costoPorPresentacion->esNegativo()) {
+        if ($this->costoPorPresentacion instanceof Decimal && $this->costoPorPresentacion->esNegativo()) {
             throw RecepcionException::elCostoNoPuedeSerNegativo($this->item->etiqueta());
         }
 

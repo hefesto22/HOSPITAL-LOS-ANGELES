@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Recepciones\Pages;
 
 use App\Domain\Exceptions\RecepcionException;
-use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaRecibida;
 use App\Filament\Resources\Prestamos\PrestamoResource;
 use App\Filament\Resources\Recepciones\RecepcionResource;
@@ -23,6 +22,7 @@ use Filament\Notifications\Actions\Action as NotificationAction;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -40,6 +40,13 @@ use Illuminate\Validation\ValidationException;
 class CreateRecepcion extends CreateRecord
 {
     protected static string $resource = RecepcionResource::class;
+
+    /**
+     * Cuántas líneas se listan en la confirmación antes de resumir el
+     * resto. Más que eso no entra en el recuadro sin scroll, y lo que no
+     * se ve no se verifica.
+     */
+    private const RENGLONES_A_LA_VISTA = 12;
 
     protected function handleRecordCreation(array $data): Model
     {
@@ -134,10 +141,13 @@ class CreateRecepcion extends CreateRecord
                  * entiende, también — el dominio no puede distinguirlos
                  * y el margen se corrige con un ajuste.
                  */
-                costoPorPresentacion: NumeroDeFormulario::aDecimalO(
-                    $cruda['costo_por_presentacion'] ?? null,
-                    Decimal::de('0'),
-                ),
+                /*
+                 * La pantalla ya no pide costo (11-oct-2026): llega vacío
+                 * y la línea entra sin tocar el promedio. Vacío NO es
+                 * cero —cero sería una donación—, por eso `aDecimal()` y
+                 * no `aDecimalO()` con un cero de respaldo.
+                 */
+                costoPorPresentacion: NumeroDeFormulario::aDecimal($cruda['costo_por_presentacion'] ?? null),
                 numeroLote: is_string($cruda['numero_lote'] ?? null) ? $cruda['numero_lote'] : null,
                 vencimiento: is_string($vencimiento) && $vencimiento !== ''
                     ? Carbon::parse($vencimiento)
@@ -153,17 +163,16 @@ class CreateRecepcion extends CreateRecord
      * VERIFICAR ANTES DE QUE ENTRE AL ESTANTE
      * ─────────────────────────────────────────────────────────────────
      *
-     * Guardar una recepción NO es guardar un formulario: mueve el kardex
-     * y recalcula el costo promedio, y eso no se deshace con Ctrl+Z —se
-     * corrige con un ajuste, que pide motivo y queda escrito—. Un botón
+     * Guardar una recepción NO es guardar un formulario: mueve el kardex,
+     * y eso no se deshace con Ctrl+Z —se corrige con un ajuste, que pide
+     * motivo y queda escrito—. Un botón
      * que hace todo eso sin preguntar nada es un botón que alguien
      * aprieta con «1000» donde iba «100».
      *
      * Por eso el paso de confirmación muestra el RESUMEN, no un «¿estás
-     * seguro?». Lo que hay que verificar es el número: cuántas unidades
-     * entran, por cuánto dinero y a qué almacén. Un «¿seguro?» a secas se
-     * contesta que sí sin leer; un total que no cuadra con lo que hay en
-     * la mano, no.
+     * seguro?». Lo que hay que verificar es qué entra y a qué almacén,
+     * caja por caja. Un «¿seguro?» a secas se contesta que sí sin leer;
+     * una lista que no cuadra con lo que hay en la mano, no.
      *
      * ⚠️ Esto NO reemplaza la revisión posterior de otra persona: son dos
      * controles distintos. Este dice «lo que tecleé está bien»; aquel
@@ -175,46 +184,42 @@ class CreateRecepcion extends CreateRecord
         return parent::getCreateFormAction()
             ->requiresConfirmation()
             ->modalHeading('Verificar antes de ingresar al inventario')
-            ->modalDescription(fn (): string => $this->resumenParaConfirmar())
+            ->modalDescription(fn (): HtmlString => $this->resumenParaConfirmar())
             ->modalSubmitActionLabel('Sí, ingresar al inventario')
             ->modalIcon('heroicon-o-archive-box-arrow-down');
     }
 
     /**
-     * «3 productos · 1.000 unidades · L 10,000.00 · ALMACEN-1».
+     * Lo que va a entrar, línea por línea, y a qué almacén.
      *
      * Se arma del estado del formulario y no del registro, porque acá
      * todavía no hay registro: la idea es justamente verlo ANTES.
+     *
+     * ⚠️ Línea por línea y no un total de unidades: desde que la
+     * recepción no lleva costo (11-oct-2026) el total en lempiras ya no
+     * existe, y sumar 200 tabletas con 3 frascos de jarabe da «203» de
+     * nada. Lo que se verifica contra lo que hay en la mano es cada caja.
      */
-    private function resumenParaConfirmar(): string
+    private function resumenParaConfirmar(): HtmlString
     {
         $lineas = is_array($this->data['lineas'] ?? null) ? $this->data['lineas'] : [];
 
-        $unidades = Decimal::de('0');
-        $dinero = Decimal::de('0');
-        $productos = 0;
+        $renglones = [];
 
         foreach ($lineas as $cruda) {
             if (! is_array($cruda)) {
                 continue;
             }
 
-            $cantidad = NumeroDeFormulario::aDecimal($cruda['cantidad_presentacion'] ?? null);
-            $porEnvase = NumeroDeFormulario::aDecimal($cruda['unidades_por_presentacion'] ?? null);
+            $renglon = $this->comoSeLeeLaLinea($cruda);
 
-            if ($cantidad === null || $porEnvase === null) {
-                continue;
+            if ($renglon !== null) {
+                $renglones[] = $renglon;
             }
-
-            $productos++;
-            $unidades = $unidades->sumar($cantidad->por($porEnvase));
-            $dinero = $dinero->sumar($cantidad->por(
-                NumeroDeFormulario::aDecimalO($cruda['costo_por_presentacion'] ?? null, Decimal::de('0')),
-            ));
         }
 
-        if ($productos === 0) {
-            return 'Todavía no agregaste ninguna línea.';
+        if ($renglones === []) {
+            return new HtmlString('Todavía no agregaste ninguna línea.');
         }
 
         $almacen = is_numeric($this->data['almacen_id'] ?? null)
@@ -223,21 +228,69 @@ class CreateRecepcion extends CreateRecord
 
         /*
          * ⚠️ La deuda va PRIMERO y no de coletilla al final. Este
-         * recuadro se lee de arriba hacia abajo y se cierra apenas el
-         * total cuadra: lo que quede debajo del total no se lee.
+         * recuadro se lee de arriba hacia abajo y se cierra apenas la
+         * lista cuadra: lo que quede debajo no se lee.
          */
         $seDebe = app(AvisoDeLoQueSeDebe::class)->frase($this->itemsDelFormulario());
 
-        return sprintf(
-            '%sEntran %s unidades de %d %s, por L %s.%s Esto mueve el kardex y recalcula el costo '
-            .'promedio: para corregirlo después hace falta un ajuste con motivo.',
-            $seDebe === null ? '' : '⚠️ '.$seDebe.' ',
-            $unidades->redondeado(2),
-            $productos,
-            $productos === 1 ? 'producto' : 'productos',
-            $dinero->redondeado(2),
-            $almacen instanceof Almacen ? ' Almacén: '.$almacen->nombre.'.' : '',
+        $html = $seDebe === null ? '' : '<p>⚠️ '.e($seDebe).'</p>';
+
+        $html .= '<p>Entran'.($almacen instanceof Almacen ? ' a <strong>'.e($almacen->nombre).'</strong>' : '').':</p>'
+            .'<ul style="margin:.375rem 0 .5rem;padding-left:1.1rem;list-style:disc;text-align:left">';
+
+        foreach (array_slice($renglones, 0, self::RENGLONES_A_LA_VISTA) as $renglon) {
+            $html .= '<li>'.e($renglon).'</li>';
+        }
+
+        $html .= '</ul>';
+
+        $resto = count($renglones) - self::RENGLONES_A_LA_VISTA;
+
+        if ($resto > 0) {
+            $html .= '<p>y '.$resto.' '.($resto === 1 ? 'línea más' : 'líneas más').'.</p>';
+        }
+
+        return new HtmlString(
+            $html.'<p>Esto mueve el kardex: para corregirlo después hace falta un ajuste con motivo.</p>'
         );
+    }
+
+    /**
+     * «2 × CAJA X 100 TABLETAS — ACETAMINOFEN 500 MG TABLETA = 200 TAB».
+     *
+     * @param array<mixed> $cruda
+     */
+    private function comoSeLeeLaLinea(array $cruda): ?string
+    {
+        $cantidad = NumeroDeFormulario::aDecimal($cruda['cantidad_presentacion'] ?? null);
+        $porEnvase = NumeroDeFormulario::aDecimal($cruda['unidades_por_presentacion'] ?? null);
+        $item = is_numeric($cruda['item_id'] ?? null) ? Item::query()->find((int) $cruda['item_id']) : null;
+
+        if ($cantidad === null || $porEnvase === null || ! $item instanceof Item) {
+            return null;
+        }
+
+        $presentacion = is_numeric($cruda['item_presentacion_id'] ?? null)
+            ? ItemPresentacion::query()->find((int) $cruda['item_presentacion_id'])
+            : null;
+
+        $unidad = $item->unidad_dispensacion_id === null ? '' : ' '.$item->unidadDispensacion->codigo;
+        $unidades = self::sinCeros($cantidad->por($porEnvase)->redondeado(4));
+
+        if (! $presentacion instanceof ItemPresentacion) {
+            return $unidades.$unidad.' — '.$item->nombre.' (sin envase)';
+        }
+
+        return self::sinCeros($cantidad->redondeado(4)).' × '.$presentacion->envase()
+            .' — '.$item->nombre.' = '.$unidades.$unidad;
+    }
+
+    /**
+     * «200.0000» → «200», «0.5000» → «0.5».
+     */
+    private static function sinCeros(string $valor): string
+    {
+        return str_contains($valor, '.') ? rtrim(rtrim($valor, '0'), '.') : $valor;
     }
 
     /**

@@ -35,8 +35,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $cantidad_presentacion
  * @property string $unidades_por_presentacion
  * @property string $cantidad_dispensacion
- * @property string $costo_por_presentacion
- * @property string $costo_unitario
+ * @property string|null $costo_por_presentacion
+ * @property string|null $costo_unitario
  * @property string|null $numero_lote
  * @property CarbonInterface|null $fecha_vencimiento
  * @property string|null $notas
@@ -137,23 +137,28 @@ class RecepcionLinea extends Model
     }
 
     /**
-     * Lo que costó una unidad, impuesto incluido.
+     * Lo que costó una unidad, impuesto incluido. Null si se recibió sin
+     * costo (11-oct-2026).
      */
-    public function costoUnitario(): Decimal
+    public function costoUnitario(): ?Decimal
     {
-        return Decimal::de($this->costo_unitario);
+        return $this->costo_unitario === null ? null : Decimal::de($this->costo_unitario);
     }
 
     /**
-     * Lo que costó la línea entera: cajas × precio por caja.
+     * Lo que costó la línea entera: cajas × precio por caja. Null si se
+     * recibió sin costo.
      */
-    public function costoDeLaLinea(): Decimal
+    public function costoDeLaLinea(): ?Decimal
     {
-        return Decimal::de($this->costo_por_presentacion)->por($this->cantidad_presentacion);
+        return $this->costo_por_presentacion === null
+            ? null
+            : Decimal::de($this->costo_por_presentacion)->por($this->cantidad_presentacion);
     }
 
     /**
-     * «100 × CAJA X 100 = 10.000 · L 10,00 c/u»
+     * «100 × CAJA X 100 = 10.000 · L 10,00 c/u», o sin el costo si la
+     * línea entró sin costo.
      *
      * Las tres cifras juntas: es lo que hace que quien revisa note que
      * 100 cajas de 100 no pueden ser 9.800 tabletas.
@@ -164,9 +169,10 @@ class RecepcionLinea extends Model
 
         $cajas = self::sinCerosSobrantes($this->cantidad_presentacion);
         $unidades = self::sinCerosSobrantes($this->cantidad_dispensacion);
-        $costo = $this->costoUnitario()->redondeado(2);
+        $costo = $this->costoUnitario();
 
-        return "{$cajas} × {$presentacion} = {$unidades} · L {$costo} c/u";
+        return "{$cajas} × {$presentacion} = {$unidades}"
+            .($costo instanceof Decimal ? ' · L '.$costo->redondeado(2).' c/u' : '');
     }
 
     /**

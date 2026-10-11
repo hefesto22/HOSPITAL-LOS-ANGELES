@@ -50,23 +50,26 @@ use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
  *     campo es un `TextInput`, así que funciona sin más;
  *   · **la cámara del teléfono**, con el botón del plugin.
  *
- * Cada lectura agrega una línea con el producto, la presentación y su
- * contenido ya puestos. Solo queda teclear cuántas cajas, a cuánto, y el
- * lote.
+ * Cada lectura agrega una línea con el producto y la presentación ya
+ * puestos. Solo queda teclear cuántas y el lote.
  *
  * ─────────────────────────────────────────────────────────────────────
- * LOS TRES NÚMEROS A LA VISTA
+ * 🔴 SOLO LO QUE ENTRÓ, SIN COSTOS (11-oct-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * Cada línea muestra las cajas, las unidades que van a entrar al kardex y
- * el costo por unidad. No es decoración: es lo que hace que alguien note
- * ANTES de guardar que eligió la presentación equivocada. Después de
- * guardar, el kardex ya se movió.
+ * Regla de Mauricio: «que solo coloquen el registro de lo que entró, sin
+ * costos ni nada de eso». Quien recibe en bodega no maneja facturas —la
+ * matriz de permisos ya le niega Compras— y el precio de farmacia ya no
+ * sale del costo: se escribe como precio mínimo del envase.
  *
- * ⚠️ Acá NO hay casillas de impuesto. El costo que se teclea ya lo lleva
- * adentro: los servicios de salud son exentos, así que el ISV de las
- * compras no se acredita y por lo tanto es costo. El desglose fiscal vive
- * en Compras.
+ * Cada línea es UN renglón: qué llegó, cuántas, lote y vence. Al lado de
+ * «¿Cuántas?» se lee lo que va a entrar al kardex —«= 200 TAB»—, que es lo
+ * que hace notar ANTES de guardar que se eligió el envase equivocado.
+ * Después de guardar, el kardex ya se movió.
+ *
+ * Desaparecieron «Costo por caja», «Trae» y «Entra al kardex». El
+ * contenido del envase lo pone la presentación; si el laboratorio cambió
+ * la caja, se carga otra presentación en la ficha.
  */
 final class RecepcionForm
 {
@@ -163,11 +166,7 @@ final class RecepcionForm
                     ->preload()
                     ->required()
                     ->native(false)
-                    ->helperText(
-                        'El saldo y el costo son POR almacén: equivocarlo descuadra dos estantes '
-                        .'de una vez. Lo que llega del proveedor normalmente entra a BODEGA y de '
-                        .'ahí se baja a farmacia o al carrito.'
-                    ),
+                    ->helperText('Lo del proveedor normalmente entra a BODEGA; de ahí se baja a farmacia.'),
 
                 DatePicker::make('fecha_recepcion')
                     ->label('¿Cuándo llegó?')
@@ -177,7 +176,7 @@ final class RecepcionForm
                     ->native(false)
                     ->displayFormat('d/m/Y')
                     ->maxDate(now())
-                    ->helperText('Es la fecha con la que quedan los movimientos, no la de hoy.'),
+                    ->helperText('La fecha con la que quedan los movimientos.'),
 
             ]);
     }
@@ -190,8 +189,8 @@ final class RecepcionForm
      * ─────────────────────────────────────────────────────────────────
      *
      * Recibir es registrar la entrada al kardex, y para eso alcanza con
-     * almacén, fecha, producto, cantidad, costo y lote. Los dos campos de
-     * acá estorbaban en la pantalla del día a día y por eso se pliegan.
+     * almacén, fecha, producto, cantidad y lote. Los dos campos de acá
+     * estorbaban en la pantalla del día a día y por eso se pliegan.
      *
      * Pero no se van, y la razón no es de diseño sino de farmacovigilancia:
      * cuando ARSA saca un lote de circulación, la pregunta que hay que
@@ -206,11 +205,7 @@ final class RecepcionForm
     private static function deQuienVino(): Section
     {
         return Section::make('De quién vino')
-            ->description(
-                'Opcional. Vale la pena llenarlo cuando viene con factura: es lo que permite '
-                .'saber a quién reclamar si ARSA retira un lote, y comparar precios entre '
-                .'proveedores.'
-            )
+            ->description('Opcional. Sirve para saber a quién reclamar si ARSA retira un lote.')
             ->icon('heroicon-o-truck')
             ->collapsed()
             ->columns(2)
@@ -244,12 +239,18 @@ final class RecepcionForm
                     ->label('Escaneá el código de barras')
                     ->columnSpanFull()
                     ->dehydrated(false)
-                    ->live()
+                    /*
+                     * ⚠️ Con pausa de medio segundo. Sin ella, quien
+                     * escribía «MED-705» a mano disparaba la búsqueda en
+                     * «MED-» y en «MED-7», y cada pedazo dejaba un aviso
+                     * de «ese código no está en el catálogo» que se
+                     * quedaba pegado arriba. La pistola teclea el código
+                     * entero de un saque, así que no la frena.
+                     */
+                    ->live(debounce: 500)
                     ->autofocus()
-                    ->helperText(
-                        'Con la pistola de bodega o con la cámara del teléfono. Cada lectura '
-                        .'agrega una línea con el producto y su presentación ya puestos.'
-                    )
+                    ->placeholder('Disparale a la caja, o escribí el código')
+                    ->helperText('Con la pistola o la cámara: cada lectura agrega una línea.')
                     ->afterStateUpdated(fn (mixed $state, Get $get, Set $set) => self::agregarLoEscaneado($state, $get, $set)),
 
                 Repeater::make('lineas')
@@ -286,17 +287,18 @@ final class RecepcionForm
                     ->defaultItems(0)
                     ->columnSpanFull()
                     /*
-                     * Seis columnas: producto y presentación se llevan dos
-                     * cada uno —son los que traen texto largo— y los
-                     * números entran en la misma fila. Así una línea se
-                     * lee de un vistazo en vez de en cuatro renglones.
+                     * Doce columnas y UN renglón por línea: qué llegó
+                     * (seis), cuántas, lote y vence (dos cada uno). Antes
+                     * eran dos renglones con costo, contenido y una cuenta
+                     * en el medio, y una recepción de veinte líneas no
+                     * cabía en tres pantallas.
                      */
-                    ->columns(6)
+                    ->columns(12)
                     ->itemLabel(fn (array $state): ?string => self::etiquetaDeLinea($state))
                     ->schema(self::camposDeLaLinea()),
 
                 Placeholder::make('resumen')
-                    ->label('Total de la recepción')
+                    ->hiddenLabel()
                     ->content(fn (Get $get): string => self::resumen($get)),
             ]);
     }
@@ -335,7 +337,7 @@ final class RecepcionForm
              */
             Select::make('que_llego')
                 ->label('¿Qué llegó?')
-                ->columnSpan(4)
+                ->columnSpan(6)
                 ->required()
                 ->searchable()
                 ->native(false)
@@ -355,53 +357,29 @@ final class RecepcionForm
                 ->afterStateUpdated(function (mixed $state, Set $set): void {
                     [$item, $presentacion] = self::partirLoQueLlego($state);
 
-                    $set('item_id', $item?->id);
-                    $set('item_presentacion_id', $presentacion?->id);
-                    $set('unidades_por_presentacion', $presentacion->unidades_por_presentacion ?? '1');
+                    foreach (self::datosDeLaLinea($item, $presentacion) as $campo => $valor) {
+                        $set($campo, $valor);
+                    }
                 }),
 
             Hidden::make('item_id'),
             Hidden::make('item_presentacion_id'),
 
             /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 SI DE ESTO SE LE DEBE A ALGUIEN, SE DICE ACÁ
-             * ─────────────────────────────────────────────────────────
-             *
-             * Regla de Mauricio: «cuando a nosotros nos entre de ese
-             * medicamento a bodega o farmacia, que aparezca que hay que
-             * devolverle x cantidad a x empresa o persona».
-             *
-             * Un préstamo de medicamento se pide un martes a las once de
-             * la noche porque no había, y solo se puede devolver el día
-             * que llega la compra. Entre esos dos momentos no hay nada
-             * que hacer, así que la pantalla de «lo que se debe» sirve
-             * para consultar pero no es donde la deuda se salda: nadie la
-             * abre por las mañanas.
-             *
-             * Este renglón es el momento. La caja está entrando, el
-             * producto está en la mano, y el aviso convierte un
-             * recordatorio en un acto. Un mes después esas 20 tabletas ya
-             * se despacharon y la deuda se paga en efectivo, más caro.
-             *
-             * Va acá arriba, pegado a «¿Qué llegó?», y no al final de la
-             * línea: al final ya se tecleó la cantidad y el costo, y
-             * volver a subir a leer algo que apareció abajo es lo que no
-             * pasa cuando hay una fila de cajas esperando.
+             * El contenido del envase viaja escondido: lo pone la
+             * presentación y el registrador lo congela en la línea.
              */
-            Placeholder::make('se_debe')
-                ->hiddenLabel()
-                ->columnSpanFull()
-                ->visible(fn (Get $get): bool => self::loQueSeDebeDeLaLinea($get) !== null)
-                ->content(fn (Get $get): HtmlString => new HtmlString(
-                    '<div style="border-left:3px solid rgb(217 119 6);padding:0.5rem 0.75rem;'
-                    .'background:rgb(254 243 199 / 0.45);border-radius:0.25rem;font-size:0.8125rem;'
-                    .'line-height:1.35;">'
-                    .'<strong>Prestado.</strong> '
-                    .e((string) self::loQueSeDebeDeLaLinea($get))
-                    .' Devolvelo desde Préstamos cuando esta recepción quede guardada.'
-                    .'</div>'
-                )),
+            Hidden::make('unidades_por_presentacion')->default('1'),
+
+            /*
+             * Cómo se lee la línea —«CAJA» al lado del número, «= 200
+             * TAB» arriba—, guardado al elegir. De pantalla: no se guarda.
+             * Leerlo de la base en cada pintada eran tres consultas por
+             * línea y por tecla.
+             */
+            Hidden::make('se_cuenta_en')->dehydrated(false),
+            Hidden::make('entra_en')->dehydrated(false),
+            Hidden::make('pide_lote')->dehydrated(false),
 
             /* A qué acotó el escaneo. De pantalla: no se guarda. */
             Hidden::make('acotado_a')->dehydrated(false),
@@ -412,31 +390,17 @@ final class RecepcionForm
                 ->required()
                 ->minValue(0.0001)
                 ->default('1')
+                ->columnSpan(2)
                 ->live(onBlur: true)
-                ->helperText('Cajas, frascos, bultos.'),
-
-            TextInput::make('unidades_por_presentacion')
-                ->label('Trae')
-                ->numeric()
-                ->required()
-                ->minValue(0.0001)
-                ->default('1')
-                ->live(onBlur: true)
-                ->helperText('Unidades por caja. Queda congelado en esta recepción.'),
-
-            TextInput::make('costo_por_presentacion')
-                ->label('Costo por caja')
-                ->numeric()
-                ->required()
-                ->minValue(0)
-                ->prefix('L')
-                ->default('0')
-                ->live(onBlur: true)
-                ->helperText('Con el impuesto adentro. Cero si es donación.'),
-
-            Placeholder::make('cuenta')
-                ->label('Entra al kardex')
-                ->content(fn (Get $get): string => self::laCuentaDeLaLinea($get)),
+                /*
+                 * 🔴 En qué se cuenta, pegado al número —«CAJA», «FRASCO»,
+                 * «TAB» si llegó suelto— y arriba lo que eso pone en el
+                 * kardex. «2» escrito en una caja de cien y «2» escrito
+                 * en tabletas son el mismo carácter y son 198 tabletas de
+                 * diferencia en el estante.
+                 */
+                ->suffix(fn (Get $get): ?string => self::textoONulo($get('se_cuenta_en')))
+                ->hint(fn (Get $get): ?string => self::loQueEntra($get)),
 
             TextInput::make('numero_lote')
                 ->label('Lote')
@@ -464,15 +428,62 @@ final class RecepcionForm
                 ->dehydrateStateUsing(fn (mixed $state): ?string => is_string($state) && trim($state) !== ''
                     ? mb_strtoupper(trim($state))
                     : null)
-                ->helperText('Impreso en la caja. Se guarda en mayúsculas.'),
+                ->placeholder('Impreso en la caja')
+                /*
+                 * Obligatorio cuando el producto lo exige —un medicamento
+                 * por trazabilidad ante ARSA—. El registrador lo vuelve a
+                 * exigir al guardar; acá es para que el asterisco avise
+                 * antes de apretar Crear.
+                 */
+                ->required(fn (Get $get): bool => $get('pide_lote') === true),
 
             DatePicker::make('fecha_vencimiento')
                 ->label('Vence el')
                 ->native(false)
                 ->displayFormat('d/m/Y')
+                ->placeholder('dd/mm/aaaa')
                 ->columnSpan(2)
-                ->requiredWith('numero_lote')
-                ->helperText('Vacío solo si el producto no caduca.'),
+                ->requiredWith('numero_lote'),
+
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 SI DE ESTO SE LE DEBE A ALGUIEN, SE DICE ACÁ
+             * ─────────────────────────────────────────────────────────
+             *
+             * Regla de Mauricio: «cuando a nosotros nos entre de ese
+             * medicamento a bodega o farmacia, que aparezca que hay que
+             * devolverle x cantidad a x empresa o persona».
+             *
+             * Un préstamo de medicamento se pide un martes a las once de
+             * la noche porque no había, y solo se puede devolver el día
+             * que llega la compra. Entre esos dos momentos no hay nada
+             * que hacer, así que la pantalla de «lo que se debe» sirve
+             * para consultar pero no es donde la deuda se salda: nadie la
+             * abre por las mañanas.
+             *
+             * Este renglón es el momento. La caja está entrando, el
+             * producto está en la mano, y el aviso convierte un
+             * recordatorio en un acto. Un mes después esas 20 tabletas ya
+             * se despacharon y la deuda se paga en efectivo, más caro.
+             *
+             * Va justo debajo del renglón y a lo ancho: desde el
+             * 11-oct-2026 la línea entera es un solo renglón, así que el
+             * aviso queda pegado a lo que se acaba de elegir y se lee
+             * antes de pasar a la caja siguiente.
+             */
+            Placeholder::make('se_debe')
+                ->hiddenLabel()
+                ->columnSpanFull()
+                ->visible(fn (Get $get): bool => self::loQueSeDebeDeLaLinea($get) !== null)
+                ->content(fn (Get $get): HtmlString => new HtmlString(
+                    '<div style="border-left:3px solid rgb(217 119 6);padding:0.5rem 0.75rem;'
+                    .'background:rgb(254 243 199 / 0.45);border-radius:0.25rem;font-size:0.8125rem;'
+                    .'line-height:1.35;">'
+                    .'<strong>Prestado.</strong> '
+                    .e((string) self::loQueSeDebeDeLaLinea($get))
+                    .' Devolvelo desde Préstamos cuando esta recepción quede guardada.'
+                    .'</div>'
+                )),
         ];
     }
 
@@ -491,14 +502,11 @@ final class RecepcionForm
     // ── El escaneo ────────────────────────────────────────────────────
 
     /**
-     * Una lectura del código de barras se convierte en una línea nueva.
-     *
-     * El campo se limpia siempre al final —haya encontrado o no— para que
-     * el siguiente escaneo entre sin borrar a mano. Con la pistola eso es
-     * la diferencia entre recibir un camión en dos minutos o en veinte.
-     */
-    /**
      * Lo que pasa por el lector, y las TRES cosas que puede ser.
+     *
+     * El campo se limpia siempre —haya encontrado o no— para que el
+     * siguiente escaneo entre sin borrar a mano. Con la pistola eso es la
+     * diferencia entre recibir un camión en dos minutos o en veinte.
      *
      * ─────────────────────────────────────────────────────────────────
      * 🔴 EL ESCANEO PROPONE; ELEGIR POR ALGUIEN ES OTRA COSA
@@ -546,7 +554,7 @@ final class RecepcionForm
             Notification::make()
                 ->success()
                 ->title($presentacion->etiqueta())
-                ->body('Agregado. Poné la cantidad, el costo y el lote.')
+                ->body('Agregado. Poné cuántas y el lote.')
                 ->send();
 
             return;
@@ -632,8 +640,8 @@ final class RecepcionForm
                 ->warning()
                 ->title('Ese código no está en el catálogo')
                 ->body(
-                    'Ni como código de barras de un envase ni como código de producto. Revisá que '
-                    .'sea el correcto, o dalo de alta en Farmacia → Productos.'
+                    'Ningún producto lo tiene. Revisá que sea el correcto, o cargáselo al producto '
+                    .'en su ficha, en Identificación.'
                 )
                 ->persistent()
                 ->send();
@@ -677,17 +685,26 @@ final class RecepcionForm
         ?string $acotadoA = null,
         ?ColeccionDeModelos $candidatos = null,
     ): void {
+        $elegido = $presentacion?->item;
+
         /* «Uno solo no es una elección». Ver el encabezado del escaneo. */
         if (! $presentacion instanceof ItemPresentacion && $candidatos instanceof ColeccionDeModelos) {
             $posibles = self::opcionesDeItems($candidatos);
 
             if (count($posibles) === 1) {
-                [, $presentacion] = self::partirLoQueLlego((string) array_key_first($posibles));
+                /*
+                 * ⚠️ El producto también, no solo la presentación. Un
+                 * producto sin envases cargados tiene una sola opción —la
+                 * suelta—, y quedándose solo con la presentación (nula)
+                 * la línea se abría vacía, como si el escaneo no hubiera
+                 * servido.
+                 */
+                [$elegido, $presentacion] = self::partirLoQueLlego((string) array_key_first($posibles));
                 $acotadoA = null;
             }
         }
 
-        $item = $presentacion?->item_id;
+        $item = $elegido?->id;
 
         /** @var array<string, mixed> $lineas */
         $lineas = is_array($get('lineas')) ? $get('lineas') : [];
@@ -698,15 +715,12 @@ final class RecepcionForm
              * que se VE. Sin él la línea escaneada aparecía con el
              * selector vacío y parecía que el escaneo no había servido.
              */
-            'que_llego'                 => $item === null ? null : $item.':'.$presentacion?->id,
-            'acotado_a'                 => $acotadoA,
-            'item_id'                   => $item,
-            'item_presentacion_id'      => $presentacion?->id,
-            'cantidad_presentacion'     => '1',
-            'unidades_por_presentacion' => $presentacion->unidades_por_presentacion ?? '1',
-            'costo_por_presentacion'    => '0',
-            'numero_lote'               => null,
-            'fecha_vencimiento'         => null,
+            'que_llego'             => $item === null ? null : $item.':'.($presentacion->id ?? 0),
+            'acotado_a'             => $acotadoA,
+            'cantidad_presentacion' => '1',
+            'numero_lote'           => null,
+            'fecha_vencimiento'     => null,
+            ...self::datosDeLaLinea($elegido, $presentacion),
         ];
 
         $set('lineas', $lineas);
@@ -753,36 +767,82 @@ final class RecepcionForm
         return self::$deudaPorItem[$id];
     }
 
-    private static function laCuentaDeLaLinea(Get $get): string
+    /**
+     * Lo que se deriva de la caja elegida, listo para escribir en la
+     * línea: los dos ids que se guardan, el contenido que se congela, y
+     * los dos textos con que la línea se lee.
+     *
+     * Vive en UN lugar porque la línea nace por dos caminos —elegida en
+     * el desplegable o abierta por el escaneo— y los dos tienen que
+     * dejarla igual. Antes cada uno armaba su propio arreglo y el día que
+     * se agregaba un campo se agregaba en uno solo.
+     *
+     * @return array<string, bool|int|string|null>
+     */
+    private static function datosDeLaLinea(?Item $item, ?ItemPresentacion $presentacion): array
+    {
+        $unidad = $item instanceof Item ? self::codigoDeLaUnidad($item) : null;
+
+        return [
+            'item_id'                   => $item?->id,
+            'item_presentacion_id'      => $presentacion?->id,
+            'unidades_por_presentacion' => $presentacion->unidades_por_presentacion ?? '1',
+            'se_cuenta_en'              => $presentacion instanceof ItemPresentacion
+                ? $presentacion->unidad->codigo
+                : $unidad,
+            'entra_en'  => $unidad,
+            'pide_lote' => $item?->requiere_lote === true,
+        ];
+    }
+
+    /**
+     * «TAB», «ML»: el código de la unidad del kardex. El código y no el
+     * nombre, porque va pegado a un número en un campo angosto.
+     */
+    private static function codigoDeLaUnidad(Item $item): ?string
+    {
+        $unidad = $item->unidadDispensacion;
+
+        if (! $unidad instanceof Unidad) {
+            return null;
+        }
+
+        return $unidad->codigo !== '' ? $unidad->codigo : $unidad->nombre;
+    }
+
+    /**
+     * «= 200 TAB» — lo que la línea pone en el kardex, arriba de la
+     * cantidad.
+     *
+     * Null cuando no hay cuenta que hacer: lo que llegó suelto ya se
+     * cuenta en la unidad del kardex, y «5 TAB = 5 TAB» es leer dos veces
+     * lo mismo.
+     */
+    private static function loQueEntra(Get $get): ?string
     {
         $cajas = self::comoNumero($get('cantidad_presentacion'));
         $porCaja = self::comoNumero($get('unidades_por_presentacion'));
-        $costo = self::comoNumero($get('costo_por_presentacion'));
+        $unidad = self::textoONulo($get('entra_en'));
 
-        if ($cajas === null || $porCaja === null) {
-            return '—';
+        if ($cajas === null || $porCaja === null || $unidad === null
+            || ! is_numeric($get('item_presentacion_id'))) {
+            return null;
         }
 
         $unidades = Decimal::de($cajas)->por($porCaja);
 
         if ($unidades->esCero()) {
-            return '—';
+            return null;
         }
 
-        $texto = self::sinCerosSobrantes($unidades->redondeado(4)).' unidades';
-
-        if ($costo === null || Decimal::de($costo)->esCero()) {
-            return $texto.' · sin costo';
-        }
-
-        $unitario = Decimal::de($costo)->entre($porCaja)->redondeado(2);
-
-        return "{$texto} · L {$unitario} c/u";
+        return '= '.self::sinCerosSobrantes($unidades->redondeado(4)).' '.$unidad;
     }
 
     /**
-     * Lo que va a entrar en total, para revisar de un vistazo antes de
-     * guardar. Después de guardar, el kardex ya se movió.
+     * Cuántas líneas van a entrar, para revisar de un vistazo antes de
+     * guardar. Las unidades no se suman entre líneas: 200 tabletas y 3
+     * frascos de jarabe no son «203» de nada. Cada línea dice lo suyo
+     * arriba de su cantidad.
      */
     private static function resumen(Get $get): string
     {
@@ -792,32 +852,16 @@ final class RecepcionForm
             return 'Todavía no agregaste nada.';
         }
 
-        $unidades = Decimal::cero();
-        $costo = Decimal::cero();
-
-        foreach ($lineas as $linea) {
-            if (! is_array($linea)) {
-                continue;
-            }
-
-            $cajas = self::comoNumero($linea['cantidad_presentacion'] ?? null);
-            $porCaja = self::comoNumero($linea['unidades_por_presentacion'] ?? null);
-            $porUnidad = self::comoNumero($linea['costo_por_presentacion'] ?? null);
-
-            if ($cajas === null || $porCaja === null) {
-                continue;
-            }
-
-            $unidades = $unidades->sumar(Decimal::de($cajas)->por($porCaja));
-            $costo = $costo->sumar(Decimal::de($cajas)->por($porUnidad ?? '0'));
-        }
-
         $cuantas = count($lineas);
-        $productos = $cuantas === 1 ? '1 producto' : "{$cuantas} productos";
 
-        return $productos
-            .' · '.self::sinCerosSobrantes($unidades->redondeado(4)).' unidades'
-            .' · L '.$costo->redondeado(2);
+        return $cuantas === 1
+            ? '1 línea lista para entrar al inventario.'
+            : "{$cuantas} líneas listas para entrar al inventario.";
+    }
+
+    private static function textoONulo(mixed $valor): ?string
+    {
+        return is_string($valor) && trim($valor) !== '' ? trim($valor) : null;
     }
 
     // ── Ayudantes ─────────────────────────────────────────────────────

@@ -90,14 +90,24 @@ final class RecepcionInfolist
                                 ->numeric(decimalPlaces: 2)
                                 ->suffix(' unidades'),
 
+                            /*
+                             * Solo en las recepciones viejas, que traían
+                             * costo. Desde el 11-oct-2026 se recibe sin
+                             * costo, y dos casillas en blanco en cada
+                             * línea se leerían como algo que faltó llenar.
+                             */
                             TextEntry::make('costo_por_presentacion')
                                 ->label('Costo por presentación')
-                                ->money('HNL'),
+                                ->money('HNL')
+                                ->visible(fn (mixed $record): bool => $record instanceof RecepcionLinea
+                                    && $record->costo_por_presentacion !== null),
 
                             TextEntry::make('costo_unitario')
                                 ->label('Costo por unidad')
                                 ->money('HNL')
                                 ->weight('bold')
+                                ->visible(fn (mixed $record): bool => $record instanceof RecepcionLinea
+                                    && $record->costo_unitario !== null)
                                 ->tooltip('Con el impuesto adentro. Es lo que alimentó el costo promedio.'),
 
                             /*
@@ -119,6 +129,7 @@ final class RecepcionInfolist
                         ->label('Total de la recepción')
                         ->money('HNL')
                         ->weight('bold')
+                        ->visible(fn (Recepcion $record): bool => $record->tieneCostos())
                         ->state(fn (Recepcion $record): string => $record->costoTotal()->redondeado(2)),
                 ]),
         ]);

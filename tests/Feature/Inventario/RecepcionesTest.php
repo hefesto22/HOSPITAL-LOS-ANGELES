@@ -14,12 +14,16 @@ use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use App\Models\Recepcion;
+use App\Models\RecepcionLinea;
+use App\Models\Tarifario;
 use App\Models\User;
 use App\Services\CalculadoraDeCostoPromedio;
 use App\Services\ConsultorDeExistencias;
 use App\Services\RegistradorDeMovimiento;
 use App\Services\RegistradorDeRecepcion;
 use Carbon\Carbon;
+use Database\Seeders\DescuentosLegalesSeeder;
+use Database\Seeders\MargenesObjetivoSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
@@ -377,3 +381,92 @@ it('despachar no cambia el costo promedio', function (): void {
     expect(loQueHay()->totalEn($item, $bodega)->redondeado(0))->toBe('7000')
         ->and(costos()->vigente($item, $bodega)->redondeado(2))->toBe('10.00');
 })->note('El promedio ponderado solo se mueve cuando ENTRA algo. Una salida baja la cantidad y deja el costo unitario donde estaba — si no, cada dispensación revaluaría el estante.');
+
+/*
+|--------------------------------------------------------------------------
+| Sin costo — así recibe la pantalla desde el 11-oct-2026
+|--------------------------------------------------------------------------
+|
+| Regla de Mauricio: bodega registra lo que entró, sin costos. El precio de
+| farmacia ya no sale del costo: se escribe como precio mínimo del envase.
+*/
+
+/**
+ * Una línea como la manda la pantalla de hoy: sin costo.
+ *
+ * @param numeric-string $cajas
+ * @param numeric-string $porCaja
+ */
+function unaLineaSinCosto(Item $item, string $cajas, string $porCaja, ?string $lote = 'SC-1'): LineaRecibida
+{
+    return new LineaRecibida(
+        item: $item,
+        presentacion: null,
+        cantidadPresentacion: Decimal::de($cajas),
+        unidadesPorPresentacion: Decimal::de($porCaja),
+        costoPorPresentacion: null,
+        numeroLote: $lote,
+        vencimiento: $lote === null ? null : Carbon::parse('2027-06-30'),
+    );
+}
+
+it('sin costo entra al kardex y no mueve el promedio', function (): void {
+    $item = Item::factory()->medicamento()->create();
+    $bodega = Almacen::factory()->create();
+
+    recibidor()->registrar($bodega, [unaLineaDe($item, '100', '100', '1000', 'L-1')]);
+    recibidor()->registrar($bodega, [unaLineaSinCosto($item, '50', '100', 'L-2')]);
+
+    $linea = RecepcionLinea::query()->where('numero_lote', 'L-2')->firstOrFail();
+    $movimiento = MovimientoKardex::query()->latest('id')->firstOrFail();
+
+    expect(loQueHay()->totalEn($item, $bodega)->redondeado(0))->toBe('15000')
+        ->and(costos()->vigente($item, $bodega)->redondeado(2))->toBe('10.00')
+        ->and($linea->costo_por_presentacion)->toBeNull()
+        ->and($linea->costo_unitario)->toBeNull()
+        ->and($movimiento->costoUnitarioDecimal()?->redondeado(2))->toBe('10.00')
+        ->and($movimiento->costoPromedioDespuesDecimal()?->redondeado(2))->toBe('10.00');
+})->note('Sin costo NO es costo cero: cero es una donación, que baja el promedio. Lo que entra sin costo se valoriza al promedio que ya había —igual que un ajuste— y la línea guarda los dos costos vacíos, para que nadie lea un cero que no existió.');
+
+it('🔴 lo que entra sin costo pesa en la proxima compra con costo', function (): void {
+    $item = Item::factory()->medicamento()->create();
+    $bodega = Almacen::factory()->create();
+
+    recibidor()->registrar($bodega, [unaLineaDe($item, '100', '100', '1000', 'L-1')]);
+    recibidor()->registrar($bodega, [unaLineaSinCosto($item, '50', '100', 'L-2')]);
+    recibidor()->registrar($bodega, [unaLineaDe($item, '100', '100', '2000', 'L-3')]);
+
+    expect(costos()->vigente($item, $bodega)->redondeado(2))->toBe('14.00');
+})->note('15.000 tabletas a L 10 y 10.000 a L 20 dan L 14,00. Si la cantidad base no siguiera a la existencia después de la entrada sin costo, la tercera compra pesaría contra 10.000 y daría L 15,00: el promedio subiría por algo que no se pagó.');
+
+it('sin costo no le pone precio a lo que entro', function (): void {
+    (new DescuentosLegalesSeeder)->run();
+    (new MargenesObjetivoSeeder)->run();
+
+    $item = Item::factory()->medicamento()->create([
+        'categoria_legal_descuento' => CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico,
+    ]);
+
+    recibidor()->registrar(Almacen::factory()->create(), [unaLineaSinCosto($item, '10', '100')]);
+
+    expect(Tarifario::query()->where('item_id', $item->id)->count())->toBe(0);
+})->note('Sin costo no hay de dónde sacar un precio. Inventarlo —con cero, o con el promedio de otro estante— dejaría una lista de precios que nadie decidió.');
+
+it('recalcular desde las recepciones no cuenta lo que entro sin costo', function (): void {
+    $item = Item::factory()->medicamento()->create();
+    $bodega = Almacen::factory()->create();
+
+    recibidor()->registrar($bodega, [unaLineaDe($item, '100', '100', '1000', 'L-1')]);
+    recibidor()->registrar($bodega, [unaLineaSinCosto($item, '50', '100', 'L-2')]);
+
+    expect(costos()->recalcularDesdeLasRecepciones($item, $bodega)->redondeado(2))->toBe('10.00');
+})->note('Contando las 5.000 tabletas sin costo como si costaran cero, el recálculo daría L 6,67 y «repararía» el caché hacia un número falso.');
+
+it('la base no deja un costo a medias', function (): void {
+    $item = Item::factory()->medicamento()->create();
+
+    recibidor()->registrar(Almacen::factory()->create(), [unaLineaDe($item, '1', '100', '100')]);
+
+    expect(fn () => DB::table('recepcion_lineas')->update(['costo_unitario' => null]))
+        ->toThrow(QueryException::class);
+})->note('Costo por caja sin costo por unidad es una línea a medio escribir, y el recálculo la sumaría a medias. Las dos columnas van juntas o ninguna.');
