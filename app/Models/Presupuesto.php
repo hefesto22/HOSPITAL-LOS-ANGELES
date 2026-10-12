@@ -64,6 +64,7 @@ use Illuminate\Support\Collection;
  * @property numeric-string $total_gravado
  * @property numeric-string $total_isv
  * @property numeric-string $total
+ * @property numeric-string|null $monto_acordado
  * @property int $lineas
  * @property int|null $presupuesto_anterior_id
  * @property string|null $motivo_revision
@@ -121,6 +122,13 @@ class Presupuesto extends Model
         'total_isv',
         'total',
         'lineas',
+
+        /*
+         * Cuánto se le cobra a la familia, acordado. Lo escribe
+         * `CotizadorDePresupuesto::acordarMonto()`, que en la misma
+         * transacción ajusta la holgura que lo completa.
+         */
+        'monto_acordado',
     ];
 
     /**
@@ -146,6 +154,17 @@ class Presupuesto extends Model
     public function detalle(): HasMany
     {
         return $this->hasMany(PresupuestoLinea::class)->orderBy('orden');
+    }
+
+    /**
+     * La holgura que completa el monto acordado, si hay una.
+     *
+     * Hay a lo sumo una por presupuesto: lo garantiza un índice único
+     * parcial de la base (`presupuesto_lineas_un_complemento`).
+     */
+    public function complemento(): ?PresupuestoLinea
+    {
+        return $this->detalle()->where('completa_el_monto', true)->first();
     }
 
     /**

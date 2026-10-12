@@ -5,16 +5,27 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Presupuestos\Pages;
 
 use App\Domain\Enums\EstadoPresupuesto;
+use App\Domain\ValueObjects\Decimal;
 use App\Filament\Resources\Presupuestos\Actions\AgregarALaCuentaAction;
 use App\Filament\Resources\Presupuestos\Actions\AnularPresupuestoAction;
 use App\Filament\Resources\Presupuestos\Actions\GuardarComoPlantillaAction;
 use App\Filament\Resources\Presupuestos\PresupuestoResource;
 use App\Filament\Resources\Presupuestos\Schemas\PresupuestoForm;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Presupuesto;
+use App\Models\PresupuestoLinea;
+use App\Services\AgregadorDePresupuestoALaCuenta;
+use App\Services\CotizadorDePresupuesto;
+use Filament\Actions\Action;
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\On;
+use Throwable;
 
 class EditPresupuesto extends EditRecord
 {
@@ -115,6 +126,176 @@ class EditPresupuesto extends EditRecord
         if ($registro instanceof Presupuesto) {
             $registro->refresh();
         }
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * CUÁNTO SE LE COBRA A LA FAMILIA (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Lo que contó el doctor: los renglones suman L 645, a la familia se
+     * le cobran L 1,000, y el resto va en holgura o agregando más cosas.
+     * Se fija acá y la holgura completa sola la diferencia
+     * (`CotizadorDePresupuesto::acordarMonto()`).
+     *
+     * Se abre desde el botón del resumen de arriba —`mountAction()`—, por
+     * eso vive en un método `…Action` de la página y no en el encabezado,
+     * que ya lleva cuatro botones.
+     */
+    public function acordarMontoAction(): Action
+    {
+        return Action::make('acordarMonto')
+            ->modalHeading('¿Cuánto se le cobra?')
+            ->modalDescription(fn (): string => $this->explicacionDelAcuerdo())
+            ->modalWidth(Width::TwoExtraLarge)
+            ->modalSubmitActionLabel('Guardar')
+            ->visible(fn (): bool => $this->puedeAcordar())
+            ->fillForm(function (): array {
+                $presupuesto = $this->presupuesto();
+
+                return [
+                    'monto'  => $presupuesto?->monto_acordado,
+                    'nombre' => $this->nombreDeLaHolguraQueCompleta(),
+                ];
+            })
+            ->schema([
+                TextInput::make('monto')
+                    ->label('Se le cobrará')
+                    ->numeric()
+                    ->minValue(0)
+                    ->prefix('L')
+                    ->autofocus()
+                    ->helperText('Vacío o en cero: sin monto acordado. La holgura se queda como está y ya no se ajusta sola.'),
+
+                CampoMayusculas::make('nombre')
+                    ->label('Nombre de la holgura que completa')
+                    ->required()
+                    ->minLength(2)
+                    ->maxLength(200)
+                    ->helperText('Como sale en el papel: IMPREVISTOS, MARGEN POR COMPLICACIONES.'),
+            ])
+            ->action(function (array $data): void {
+                $presupuesto = $this->presupuesto();
+
+                if (! $presupuesto instanceof Presupuesto) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('update', $presupuesto), 403);
+
+                try {
+                    app(CotizadorDePresupuesto::class)->acordarMonto(
+                        presupuesto: $presupuesto,
+                        monto: self::montoDe($data['monto'] ?? null),
+                        nombre: is_string($data['nombre'] ?? null) ? $data['nombre'] : null,
+                    );
+                } catch (Throwable $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se guardó')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                $presupuesto->refresh();
+                $this->dispatch('lo-que-se-cobra-cambio');
+                $this->seguirLaCuenta($presupuesto);
+            });
+    }
+
+    private function presupuesto(): ?Presupuesto
+    {
+        $registro = $this->getRecord();
+
+        return $registro instanceof Presupuesto ? $registro : null;
+    }
+
+    private function puedeAcordar(): bool
+    {
+        $presupuesto = $this->presupuesto();
+
+        return $presupuesto instanceof Presupuesto
+            && $presupuesto->estado->esEditable()
+            && Gate::allows('update', $presupuesto);
+    }
+
+    private function explicacionDelAcuerdo(): string
+    {
+        $presupuesto = $this->presupuesto();
+
+        if (! $presupuesto instanceof Presupuesto) {
+            return '';
+        }
+
+        $complemento = $presupuesto->complemento();
+        $renglones = Decimal::de($presupuesto->total)
+            ->restar($complemento instanceof PresupuestoLinea ? $complemento->total : '0');
+
+        return 'Los renglones suman L '.number_format((float) $renglones->redondeado(2), 2).'. '
+            .'La diferencia hasta lo que se le cobra la completa una holgura que se ajusta sola: '
+            .'si agregás renglones se achica, si quitás crece.';
+    }
+
+    /**
+     * El nombre que propone el formulario: el de la holgura que ya
+     * completa, o el de la que puso la plantilla, o el de siempre.
+     */
+    private function nombreDeLaHolguraQueCompleta(): string
+    {
+        $presupuesto = $this->presupuesto();
+
+        if (! $presupuesto instanceof Presupuesto) {
+            return CotizadorDePresupuesto::HOLGURA_POR_DEFECTO;
+        }
+
+        $holgura = $presupuesto->complemento()
+            ?? $presupuesto->detalle()->where('origen', 'holgura')->reorder()->orderByDesc('orden')->first();
+
+        return $holgura instanceof PresupuestoLinea ? $holgura->texto : CotizadorDePresupuesto::HOLGURA_POR_DEFECTO;
+    }
+
+    /**
+     * 🔴 Si el paquete ya está en la cuenta, el monto de la cuenta sigue
+     * al presupuesto en el acto (ADR-0009). El Service no hace nada si el
+     * total no cambió.
+     */
+    private function seguirLaCuenta(Presupuesto $presupuesto): void
+    {
+        if ($presupuesto->estado !== EstadoPresupuesto::Agregado) {
+            return;
+        }
+
+        try {
+            app(AgregadorDePresupuestoALaCuenta::class)->sincronizar($presupuesto);
+        } catch (Throwable $e) {
+            Notification::make()
+                ->danger()
+                ->title('Se guardó, pero la cuenta no se pudo actualizar')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+        }
+    }
+
+    /**
+     * ⚠️ Un `<input type="number">` llega por Livewire como float o como
+     * texto: se normaliza a texto numérico, o nulo si no dice nada.
+     *
+     * @return numeric-string|null
+     */
+    private static function montoDe(mixed $valor): ?string
+    {
+        $texto = match (true) {
+            is_int($valor)    => (string) $valor,
+            is_float($valor)  => number_format($valor, 2, '.', ''),
+            is_string($valor) => trim($valor),
+            default           => '',
+        };
+
+        return is_numeric($texto) ? $texto : null;
     }
 
     private function esBorrador(): bool

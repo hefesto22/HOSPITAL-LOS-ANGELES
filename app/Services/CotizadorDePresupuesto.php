@@ -8,6 +8,7 @@ use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\OrigenLineaPresupuesto;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoCorrelativo;
+use App\Domain\Exceptions\PresupuestoException;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Convenio;
 use App\Models\Encuentro;
@@ -63,6 +64,13 @@ final class CotizadorDePresupuesto
      * agrega la plantilla sola, o la que se agregó con el nombre vacío.
      */
     public const string HOLGURA_POR_DEFECTO = 'HOLGURA DEL PRESUPUESTO';
+
+    /**
+     * La holgura que completa el monto acordado va siempre al final del
+     * papel, después de todo lo que se agregue: es lo que cierra la
+     * cuenta, no un renglón más en el medio.
+     */
+    public const int ORDEN_DEL_COMPLEMENTO = 1_000_000;
 
     public function __construct(
         private readonly ResolutorDePrecio $precios,
@@ -354,6 +362,16 @@ final class CotizadorDePresupuesto
      * (`PresupuestoLinea::seLePuedeCambiarElNombre()`). En uno del
      * catálogo se ignora.
      *
+     * 🔴 Dos precios que no se tocan acá, aunque llegue uno:
+     *
+     *   · el de medicamentos y materiales, que es el de lista
+     *     (`PresupuestoLinea::precioEsDeLista()`, Mauricio 12-oct-2026);
+     *   · el de la holgura que completa el monto acordado, que se calcula
+     *     sola en `recalcular()` — tocarla a mano sería pelearse con ella.
+     *
+     * La pantalla ya no ofrece esos campos; esto es lo que protege si
+     * alguien llama a la acción igual.
+     *
      * @param numeric-string $cantidad
      * @param numeric-string|null $precioUnitario
      */
@@ -363,6 +381,19 @@ final class CotizadorDePresupuesto
         ?string $precioUnitario = null,
         ?string $texto = null,
     ): PresupuestoLinea {
+        $linea->loadMissing('item');
+
+        $cambiaElPrecio = $precioUnitario !== null
+            && ! Decimal::de($precioUnitario)->igualA($linea->precio_unitario);
+
+        if ($cambiaElPrecio && $linea->precioEsDeLista()) {
+            throw PresupuestoException::precioDeLista($linea->texto);
+        }
+
+        if ($linea->completa_el_monto && ($cambiaElPrecio || ! Decimal::de($cantidad)->igualA($linea->cantidad))) {
+            throw PresupuestoException::elComplementoSeCalculaSolo();
+        }
+
         $precio = $precioUnitario ?? $linea->precio_unitario;
 
         /*
@@ -378,11 +409,9 @@ final class CotizadorDePresupuesto
          * Conserva el `item_id`: sigue siendo el mismo ítem, con precio
          * acordado.
          */
-        $origen = $linea->origen === OrigenLineaPresupuesto::Catalogo
-            && $precioUnitario !== null
-            && ! Decimal::de($precioUnitario)->igualA($linea->precio_unitario)
-                ? OrigenLineaPresupuesto::Manual
-                : $linea->origen;
+        $origen = $linea->origen === OrigenLineaPresupuesto::Catalogo && $cambiaElPrecio
+            ? OrigenLineaPresupuesto::Manual
+            : $linea->origen;
 
         $bruto = Decimal::de($precio)->por($cantidad);
         $brutoRedondeado = Decimal::de($bruto->redondeado(2));
@@ -439,8 +468,164 @@ final class CotizadorDePresupuesto
      * Las líneas OPCIONALES sí suman: el presupuesto tiene que decir el
      * techo, no el piso. Cotizar sin lo opcional es la forma más común de
      * quedar corto.
+     *
+     * Antes de sumar, la holgura que completa el monto acordado se ajusta
+     * a lo que falte (`completarElMonto()`). Todo lo que toca un renglón
+     * termina acá, y por eso alcanza con hacerlo en un solo lugar: se
+     * agrega un renglón, la holgura se achica; se quita, crece.
      */
     public function recalcular(Presupuesto $presupuesto): Presupuesto
+    {
+        return DB::transaction(function () use ($presupuesto): Presupuesto {
+            $this->completarElMonto($presupuesto);
+
+            return $this->sumarTotales($presupuesto);
+        });
+    }
+
+    /**
+     * Fija cuánto se le cobra a la familia y deja que la holgura complete
+     * la diferencia (Mauricio, 12-oct-2026).
+     *
+     * Lo que contó el doctor: los renglones suman L 645, a la familia se
+     * le cobran L 1,000, y el resto va en holgura o agregando más cosas
+     * hasta llegar. Con el monto fijado, eso lo hace el sistema: la
+     * holgura que completa vale siempre «monto − lo demás».
+     *
+     * Si ya había una holgura —la que pone la plantilla—, ESA pasa a ser
+     * la que completa, con su nombre: dos holguras en el papel serían dos
+     * maneras de decir lo mismo. Si no había, se crea con `$nombre`.
+     *
+     * ⚠️ Si los renglones se pasan del monto, NO se recorta nada: la
+     * holgura se va, el total queda en lo que suman, y la pantalla avisa
+     * cuánto se pasa. Bajar precios para cuadrar es decisión de alguien.
+     *
+     * @param numeric-string|null $monto nulo o cero = sin monto acordado
+     */
+    public function acordarMonto(Presupuesto $presupuesto, ?string $monto, ?string $nombre = null): Presupuesto
+    {
+        if (! $presupuesto->estado->esEditable()) {
+            throw PresupuestoException::yaNoSeToca($presupuesto->estado->etiqueta());
+        }
+
+        return DB::transaction(function () use ($presupuesto, $monto, $nombre): Presupuesto {
+            $acordado = $monto !== null && Decimal::de($monto)->mayorQue('0')
+                ? Decimal::de($monto)->redondeado(2)
+                : null;
+
+            $presupuesto->update(['monto_acordado' => $acordado]);
+
+            if ($acordado !== null) {
+                $this->adoptarLaHolguraQueYaHabia($presupuesto, $nombre);
+            }
+
+            $this->completarElMonto($presupuesto, $nombre);
+
+            return $this->sumarTotales($presupuesto);
+        });
+    }
+
+    /**
+     * La holgura que ya estaba pasa a ser la que completa, y si llegó un
+     * nombre, se lo lleva.
+     */
+    private function adoptarLaHolguraQueYaHabia(Presupuesto $presupuesto, ?string $nombre): void
+    {
+        $complemento = $presupuesto->complemento();
+
+        if (! $complemento instanceof PresupuestoLinea) {
+            $complemento = $presupuesto->detalle()
+                ->where('origen', OrigenLineaPresupuesto::Holgura->value)
+                ->reorder()
+                ->orderByDesc('orden')
+                ->first();
+
+            if (! $complemento instanceof PresupuestoLinea) {
+                return;
+            }
+
+            $complemento->update([
+                'completa_el_monto' => true,
+                'orden'             => self::ORDEN_DEL_COMPLEMENTO,
+            ]);
+        }
+
+        $nombreValido = self::nombreValido($nombre);
+
+        if ($nombreValido !== null) {
+            $complemento->update(['texto' => $nombreValido]);
+        }
+    }
+
+    /**
+     * Ajusta la holgura que completa el monto acordado a lo que falte.
+     *
+     *   · sin monto acordado, la que completaba se queda como una holgura
+     *     más, con el monto que tenía: quitar el acuerdo no debe mover el
+     *     total a escondidas. Si sobra, se quita como cualquier renglón;
+     *   · si falta, la holgura vale lo que falta —se crea si no estaba—;
+     *   · si no falta nada o los renglones se pasan, se va.
+     *
+     * Es exenta y sin ítem, como toda holgura: no es la venta de nada.
+     */
+    private function completarElMonto(Presupuesto $presupuesto, ?string $nombre = null): void
+    {
+        $complemento = $presupuesto->complemento();
+
+        if ($presupuesto->monto_acordado === null) {
+            $complemento?->update(['completa_el_monto' => false]);
+
+            return;
+        }
+
+        $loDemas = Decimal::cero();
+
+        foreach ($presupuesto->detalle()->where('completa_el_monto', false)->pluck('total') as $total) {
+            $loDemas = $loDemas->sumar(is_numeric($total) ? (string) $total : '0');
+        }
+
+        $falta = Decimal::de($presupuesto->monto_acordado)->restar($loDemas);
+
+        if (! $falta->mayorQue('0')) {
+            $complemento?->delete();
+
+            return;
+        }
+
+        $monto = $falta->redondeado(2);
+
+        if (! $complemento instanceof PresupuestoLinea) {
+            $this->agregarHolgura(
+                presupuesto: $presupuesto,
+                monto: $monto,
+                orden: self::ORDEN_DEL_COMPLEMENTO,
+                texto: $nombre,
+            )->update(['completa_el_monto' => true]);
+
+            return;
+        }
+
+        if (Decimal::de($complemento->total)->igualA($monto)) {
+            return;
+        }
+
+        $complemento->update([
+            'cantidad'        => '1.0000',
+            'precio_unitario' => $monto,
+            'bruto'           => $monto,
+            'descuento'       => '0.00',
+            'subtotal'        => $monto,
+            'base_exenta'     => $monto,
+            'base_gravada'    => '0.00',
+            'isv'             => '0.00',
+            'total'           => $monto,
+        ]);
+    }
+
+    /**
+     * Suma las líneas y escribe los totales del encabezado.
+     */
+    private function sumarTotales(Presupuesto $presupuesto): Presupuesto
     {
         $bruto = Decimal::cero();
         $descuento = Decimal::cero();

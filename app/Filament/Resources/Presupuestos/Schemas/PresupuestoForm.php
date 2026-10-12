@@ -14,6 +14,7 @@ use App\Models\Encuentro;
 use App\Models\Expediente;
 use App\Models\PlantillaPresupuesto;
 use App\Models\Presupuesto;
+use App\Models\PresupuestoLinea;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
@@ -23,6 +24,7 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\HtmlString;
 
 /**
@@ -310,15 +312,53 @@ class PresupuestoForm
             ];
         }
 
+        $acuerdo = self::acuerdo($record);
+
         return new HtmlString(view('filament.presupuestos.resumen', [
-            'estado'      => $record->estado->etiqueta(),
-            'colorEstado' => self::colorDe($record->estado->color()),
-            'total'       => number_format((float) $total->redondeado(2), 2),
-            'renglones'   => $record->lineas,
-            'tope'        => $tramoDelTope,
-            'consumo'     => $consumo,
-            'vence'       => $record->vence_el?->format('d/m/Y'),
+            'estado'       => $record->estado->etiqueta(),
+            'colorEstado'  => self::colorDe($record->estado->color()),
+            'rotulo'       => $acuerdo !== null && ! $acuerdo['pasa'] && $acuerdo['falta'] === null ? 'Se le cobrará' : 'Total',
+            'total'        => number_format((float) $total->redondeado(2), 2),
+            'renglones'    => $record->lineas,
+            'acuerdo'      => $acuerdo,
+            'puedeAcordar' => $record->estado->esEditable() && Gate::allows('update', $record),
+            'tope'         => $tramoDelTope,
+            'consumo'      => $consumo,
+            'vence'        => $record->vence_el?->format('d/m/Y'),
         ])->render());
+    }
+
+    /**
+     * Lo acordado con la familia y cómo se llega: cuánto ponen los
+     * renglones, cuánto la holgura que completa, o cuánto se pasan.
+     *
+     * @return array{monto: string, renglones: string, nombre: string|null, complemento: string|null, pasa: bool, exceso: string, falta: string|null}|null
+     */
+    private static function acuerdo(Presupuesto $presupuesto): ?array
+    {
+        if ($presupuesto->monto_acordado === null) {
+            return null;
+        }
+
+        $acordado = Decimal::de($presupuesto->monto_acordado);
+        $total = Decimal::de($presupuesto->total);
+        $complemento = $presupuesto->complemento();
+        $completa = $complemento instanceof PresupuestoLinea ? Decimal::de($complemento->total) : Decimal::cero();
+
+        return [
+            'monto'       => self::lempiras($acordado),
+            'renglones'   => self::lempiras($total->restar($completa)),
+            'nombre'      => $complemento instanceof PresupuestoLinea ? $complemento->texto : null,
+            'complemento' => $complemento instanceof PresupuestoLinea ? self::lempiras($completa) : null,
+            'pasa'        => $total->mayorQue($acordado),
+            'exceso'      => self::lempiras($total->restar($acordado)),
+            'falta'       => $acordado->mayorQue($total) ? self::lempiras($acordado->restar($total)) : null,
+        ];
+    }
+
+    private static function lempiras(Decimal $monto): string
+    {
+        return number_format((float) $monto->redondeado(2), 2);
     }
 
     /**

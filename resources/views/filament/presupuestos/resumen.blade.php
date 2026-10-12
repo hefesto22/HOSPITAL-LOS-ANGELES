@@ -12,17 +12,39 @@
     eso todas crecen: una que no creciera dejaría asomar el fondo gris al
     quedar sola en su renglón.
 
+    La primera casilla dice también cuánto se le cobra a la familia, si
+    se acordó, y cómo se llega: lo que ponen los renglones más la holgura
+    que completa. El botón abre el formulario de la página
+    (`EditPresupuesto::acordarMontoAction`).
+
     ⚠️ Estilos propios: el CSS del panel viene precompilado y las clases
     de Tailwind que el panel no usa no existen (§9.A7).
 --}}
 <div class="psr">
     <div class="psr-casilla psr-casilla-total">
         <div class="psr-cabeza">
-            <span class="psr-rotulo">Total</span>
+            <span class="psr-rotulo">{{ $rotulo }}</span>
             <span class="psr-estado" style="--c: {{ $colorEstado }}">{{ $estado }}</span>
         </div>
         <strong class="psr-grande">L {{ $total }}</strong>
-        <span class="psr-nota">{{ $renglones }} {{ $renglones === 1 ? 'renglón' : 'renglones' }}</span>
+
+        @if ($acuerdo && $acuerdo['pasa'])
+            <span class="psr-aviso">Se acordó L {{ $acuerdo['monto'] }}: los renglones se pasan por L {{ $acuerdo['exceso'] }}</span>
+        @elseif ($acuerdo && $acuerdo['falta'])
+            <span class="psr-aviso">Se acordó L {{ $acuerdo['monto'] }}: faltan L {{ $acuerdo['falta'] }}</span>
+        @elseif ($acuerdo && $acuerdo['complemento'])
+            <span class="psr-nota">Renglones L {{ $acuerdo['renglones'] }} <span class="psr-entero">+ {{ $acuerdo['nombre'] }} L {{ $acuerdo['complemento'] }}</span></span>
+        @elseif ($acuerdo)
+            <span class="psr-nota">Los renglones llegan justo a lo acordado</span>
+        @else
+            <span class="psr-nota">{{ $renglones }} {{ $renglones === 1 ? 'renglón' : 'renglones' }}</span>
+        @endif
+
+        @if ($puedeAcordar)
+            <button type="button" class="psr-boton" wire:click="mountAction('acordarMonto')">
+                {{ $acuerdo ? 'Cambiar lo que se le cobra' : 'Fijar cuánto se le cobra' }}
+            </button>
+        @endif
     </div>
 
     @if ($tope)
@@ -98,6 +120,14 @@
     .psr-cifra { flex: none; font-size: .875rem; font-weight: 600; color: rgb(39 39 42); font-variant-numeric: tabular-nums; }
     .psr-nota { font-size: .76rem; color: rgb(113 113 122); }
     .psr-entero { white-space: nowrap; }
+    .psr-boton {
+        align-self: flex-start; margin-top: .15rem;
+        font-size: .75rem; font-weight: 600; line-height: 1.2;
+        padding: .3rem .7rem; border: 0; border-radius: .5rem; cursor: pointer; font-family: inherit;
+        color: #b45309; background: color-mix(in srgb, #d97706 10%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #d97706 35%, transparent);
+    }
+    .psr-boton:hover { background: color-mix(in srgb, #d97706 18%, transparent); }
     .psr-aviso { font-size: .76rem; font-weight: 500; color: rgb(185 28 28); }
     .psr-barra { height: .45rem; border-radius: 999px; background: rgb(228 228 231); overflow: hidden; }
     .psr-barra i { display: block; height: 100%; border-radius: 999px; background: var(--c); }
@@ -109,4 +139,5 @@
     .dark .psr-cifra { color: rgb(228 228 231); }
     .dark .psr-barra { background: rgb(255 255 255 / .1); }
     .dark .psr-aviso { color: rgb(252 165 165); }
+    .dark .psr-boton { color: #fbbf24; }
 </style>

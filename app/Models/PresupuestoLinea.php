@@ -45,6 +45,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property numeric-string $total
  * @property bool $opcional
  * @property string|null $nota
+ * @property bool $completa_el_monto
  */
 class PresupuestoLinea extends Model
 {
@@ -79,6 +80,7 @@ class PresupuestoLinea extends Model
         'total',
         'opcional',
         'nota',
+        'completa_el_monto',
     ];
 
     /**
@@ -87,12 +89,13 @@ class PresupuestoLinea extends Model
     protected function casts(): array
     {
         return [
-            'orden'           => 'integer',
-            'origen'          => OrigenLineaPresupuesto::class,
-            'origen_precio'   => OrigenDelPrecio::class,
-            'categoria_legal' => CategoriaLegalDeDescuento::class,
-            'regimen_isv'     => RegimenIsv::class,
-            'opcional'        => 'boolean',
+            'orden'             => 'integer',
+            'origen'            => OrigenLineaPresupuesto::class,
+            'origen_precio'     => OrigenDelPrecio::class,
+            'categoria_legal'   => CategoriaLegalDeDescuento::class,
+            'regimen_isv'       => RegimenIsv::class,
+            'opcional'          => 'boolean',
+            'completa_el_monto' => 'boolean',
         ];
     }
 
@@ -152,5 +155,27 @@ class PresupuestoLinea extends Model
     {
         return $this->origen === OrigenLineaPresupuesto::Holgura
             || ($this->origen === OrigenLineaPresupuesto::Manual && $this->item_id === null);
+    }
+
+    /**
+     * ¿Su precio es el de lista, sin negociación?
+     *
+     * Medicamentos y materiales (Mauricio, 12-oct-2026): su precio lo
+     * deriva el costo por margen —la Ruta A del motor de precios— y no se
+     * regatea en el presupuesto. Lo que se negocia con la familia son los
+     * servicios, los honorarios y la holgura.
+     *
+     * ⚠️ Usa el ítem: cargarlo antes (`with('item')`) en las listas, o es
+     * una consulta por renglón.
+     */
+    public function precioEsDeLista(): bool
+    {
+        if ($this->item_id === null) {
+            return false;
+        }
+
+        $item = $this->item;
+
+        return $item instanceof Item && $item->tipo->precioDerivadoDelCosto();
     }
 }

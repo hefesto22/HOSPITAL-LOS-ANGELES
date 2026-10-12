@@ -43,6 +43,7 @@ class PresupuestoLineaFactory extends Factory
              */
             'descuento_legal_fraccion' => '0.0000',
             'opcional'                 => false,
+            'completa_el_monto'        => false,
             'descuento'                => '0.00',
             'regimen_isv'              => RegimenIsv::Exento,
             'tasa_isv'                 => '0.0000',

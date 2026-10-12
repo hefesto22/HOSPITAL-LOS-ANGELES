@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Presupuestos\RelationManagers;
 
 use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\OrigenLineaPresupuesto;
+use App\Domain\Exceptions\PresupuestoException;
 use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
@@ -16,6 +17,7 @@ use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\ConsultorDeExistencias;
 use App\Services\CotizadorDePresupuesto;
 use App\Support\AlmacenesDelUsuario;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -31,9 +33,11 @@ use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Livewire\Attributes\On;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 use Throwable;
 
@@ -66,7 +70,7 @@ class RenglonesRelationManager extends RelationManager
     {
         return $table
             ->defaultSort('orden')
-            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('item:id,codigo,nombre'))
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('item:id,codigo,nombre,tipo,se_almacena'))
             /*
              * ─────────────────────────────────────────────────────────
              * EL RENGLÓN SE LEE COMO EN EL PAPEL (12-oct-2026)
@@ -83,6 +87,11 @@ class RenglonesRelationManager extends RelationManager
              * páginas: un presupuesto son unas decenas de renglones y se
              * lee entero, de corrido, como el papel. El descuento de ley
              * solo aparece cuando hay alguno.
+             *
+             * Cantidad y precio se escriben en la tabla misma, sin abrir
+             * nada (Mauricio, 12-oct-2026). Medicamentos y materiales
+             * dejan cambiar la cantidad pero no el precio: van con el de
+             * lista.
              */
             ->columns([
                 TextColumn::make('item.codigo')
@@ -97,7 +106,7 @@ class RenglonesRelationManager extends RelationManager
                     ->label('Concepto')
                     ->weight('medium')
                     ->wrap()
-                    ->description(fn (PresupuestoLinea $record): ?string => self::debajoDelConcepto($record)),
+                    ->description(fn (PresupuestoLinea $record): ?string => $this->debajoDelConcepto($record)),
 
                 TextColumn::make('origen')
                     ->label('Precio')
@@ -106,19 +115,23 @@ class RenglonesRelationManager extends RelationManager
                     ->color(fn (OrigenLineaPresupuesto $state): string => $state->color())
                     ->grow(false),
 
-                TextColumn::make('cantidad')
+                $this->cantidadEnLaTabla(),
+
+                TextColumn::make('cantidad_leida')
                     ->label('Cant.')
                     ->alignEnd()
                     ->grow(false)
-                    ->formatStateUsing(fn (mixed $state): string => is_scalar($state)
-                        ? rtrim(rtrim((string) $state, '0'), '.')
-                        : '—'),
+                    ->visible(fn (): bool => ! $this->esBorrador())
+                    ->state(fn (PresupuestoLinea $record): string => self::cantidadLegible($record->cantidad)),
 
-                TextColumn::make('precio_unitario')
+                $this->precioEnLaTabla(),
+
+                TextColumn::make('precio_leido')
                     ->label('P. unit.')
                     ->alignEnd()
                     ->grow(false)
-                    ->formatStateUsing(fn (mixed $state): string => self::lempiras($state)),
+                    ->visible(fn (): bool => ! $this->esBorrador())
+                    ->state(fn (PresupuestoLinea $record): string => self::lempiras($record->precio_unitario)),
 
                 TextColumn::make('descuento')
                     ->label('Desc. ley')
@@ -146,7 +159,7 @@ class RenglonesRelationManager extends RelationManager
             ->striped()
             ->paginated(false)
             ->recordActions([
-                $this->ajustar(),
+                $this->cambiarNombre(),
                 $this->quitar(),
             ])
             ->emptyStateHeading('Sin renglones')
@@ -486,61 +499,105 @@ class RenglonesRelationManager extends RelationManager
             });
     }
 
-    private function ajustar(): Action
+    /**
+     * La cantidad, escrita en la tabla misma.
+     *
+     * 🔴 En lo que sale del estante, topada en la existencia: la misma
+     * regla que al agregar del catálogo (decisión de Mauricio,
+     * 26-ago-2026). Si no alcanza, la casilla se pone en rojo y dice
+     * cuánto hay; no se guarda.
+     *
+     * La holgura no tiene cantidad que cambiar: es un monto, va una vez.
+     */
+    private function cantidadEnLaTabla(): TextInputColumn
     {
-        return Action::make('ajustar')
-            ->label('Ajustar')
+        return TextInputColumn::make('cantidad')
+            ->label('Cant.')
+            ->visible(fn (): bool => $this->esBorrador())
+            ->state(fn (PresupuestoLinea $record): string => self::cantidadLegible($record->cantidad))
+            ->inputMode('decimal')
+            ->width('6.5rem')
+            ->extraInputAttributes(['style' => 'text-align: right'])
+            ->disabled(fn (PresupuestoLinea $record): bool => $record->origen === OrigenLineaPresupuesto::Holgura)
+            ->tooltip(fn (PresupuestoLinea $record): ?string => $record->origen === OrigenLineaPresupuesto::Holgura
+                ? 'La holgura es un monto: va una vez'
+                : null)
+            ->rules(fn (PresupuestoLinea $record): array => [
+                'required',
+                'numeric',
+                'gt:0',
+                $this->alcanzaLaExistencia($record),
+            ])
+            ->validationAttribute('cantidad')
+            ->updateStateUsing(function (PresupuestoLinea $record, mixed $state): mixed {
+                $this->ajustarDesdeLaTabla($record, cantidad: $this->comoCantidad($state));
+
+                return $state;
+            });
+    }
+
+    /**
+     * El precio, escrito en la tabla misma.
+     *
+     * 🔴 Medicamentos y materiales NO: van con el precio de lista
+     * (`PresupuestoLinea::precioEsDeLista()`). Tampoco la holgura que
+     * completa el monto acordado, que se calcula sola. Las dos casillas
+     * quedan apagadas y dicen por qué al pasar el mouse — y el cotizador
+     * lo rechaza igual si alguien llama a la acción por fuera.
+     *
+     * Pisar el precio de un renglón del tarifario lo deja como «precio
+     * acordado a mano»: el reporte de presupuestado contra real deja de
+     * culpar a la cotización por una diferencia que puso una persona.
+     */
+    private function precioEnLaTabla(): TextInputColumn
+    {
+        return TextInputColumn::make('precio_unitario')
+            ->label('P. unit.')
+            ->visible(fn (): bool => $this->esBorrador())
+            ->state(fn (PresupuestoLinea $record): string => Decimal::de($record->precio_unitario)->redondeado(2))
+            ->prefix('L')
+            ->inputMode('decimal')
+            ->width('9.5rem')
+            ->extraInputAttributes(['style' => 'text-align: right'])
+            ->disabled(fn (PresupuestoLinea $record): bool => $record->precioEsDeLista() || $record->completa_el_monto)
+            ->tooltip(fn (PresupuestoLinea $record): ?string => match (true) {
+                $record->precioEsDeLista() => 'Medicamento o material: va con el precio de lista',
+                $record->completa_el_monto => 'Se calcula sola para llegar a lo que se le cobra',
+                default                    => null,
+            })
+            ->rules(['required', 'numeric', 'gte:0'])
+            ->validationAttribute('precio')
+            ->updateStateUsing(function (PresupuestoLinea $record, mixed $state): mixed {
+                $this->ajustarDesdeLaTabla($record, precio: $this->comoCantidad($state, '0.0000'));
+
+                return $state;
+            });
+    }
+
+    /**
+     * El nombre, solo en lo que escribió una persona: la holgura —también
+     * la que puso la plantilla y la que completa el monto— y lo agregado
+     * a mano. Un renglón del catálogo dice lo que dice su ítem.
+     */
+    private function cambiarNombre(): Action
+    {
+        return Action::make('cambiar_nombre')
+            ->label('Cambiar nombre')
             ->icon(Heroicon::OutlinedPencilSquare)
             ->iconButton()
-            ->tooltip(fn (PresupuestoLinea $record): string => $record->seLePuedeCambiarElNombre()
-                ? 'Ajustar nombre, cantidad o precio'
-                : 'Ajustar cantidad o precio')
-            ->visible(fn (): bool => $this->esBorrador())
-            ->fillForm(fn (PresupuestoLinea $record): array => [
-                'texto'           => $record->texto,
-                'cantidad'        => $record->cantidad,
-                'precio_unitario' => $record->precio_unitario,
-            ])
+            ->tooltip('Cambiar el nombre con que sale en el papel')
+            ->visible(fn (PresupuestoLinea $record): bool => $this->esBorrador() && $record->seLePuedeCambiarElNombre())
+            ->modalHeading('Cambiar el nombre')
+            ->modalWidth(Width::Large)
+            ->modalSubmitActionLabel('Guardar')
+            ->fillForm(fn (PresupuestoLinea $record): array => ['texto' => $record->texto])
             ->schema([
-                /*
-                 * El nombre, solo en lo que escribió una persona: la
-                 * holgura —también la que puso la plantilla sola— y lo
-                 * agregado a mano. Un renglón del catálogo dice lo que
-                 * dice su ítem.
-                 */
                 CampoMayusculas::make('texto')
                     ->label('Nombre')
                     ->required()
                     ->minLength(2)
                     ->maxLength(200)
-                    ->visible(fn (PresupuestoLinea $record): bool => $record->seLePuedeCambiarElNombre()),
-
-                TextInput::make('cantidad')
-                    ->label('Cantidad')
-                    ->numeric()
-                    ->minValue(0.0001)
-                    ->required(),
-
-                /*
-                 * 🔴 El precio SE PUEDE pisar, incluso en una línea del
-                 * tarifario: el honorario del cirujano cambia por médico
-                 * y hay que poder corregirlo.
-                 *
-                 * Lo que NO se pierde es de dónde vino el número: al
-                 * cambiarlo, el renglón queda marcado como «precio
-                 * acordado a mano», y el reporte de presupuestado contra
-                 * real deja de culpar a la cotización por una diferencia
-                 * que puso una persona.
-                 */
-                TextInput::make('precio_unitario')
-                    ->label('Precio')
-                    ->numeric()
-                    ->minValue(0)
-                    ->required()
-                    ->prefix('L')
-                    ->helperText(fn (PresupuestoLinea $record): string => $record->origen === OrigenLineaPresupuesto::Catalogo
-                        ? 'Salió del tarifario de este pagador. Si lo cambiás, el renglón pasa a «precio acordado a mano» — el ítem sigue siendo el mismo.'
-                        : 'Este renglón lleva precio acordado a mano.'),
+                    ->helperText('Como sale en el papel: IMPREVISTOS, MARGEN POR COMPLICACIONES.'),
             ])
             ->action(function (PresupuestoLinea $record, array $data): void {
                 abort_unless(Gate::allows('update', $this->presupuesto()), 403);
@@ -553,8 +610,7 @@ class RenglonesRelationManager extends RelationManager
 
                 app(CotizadorDePresupuesto::class)->ajustarLinea(
                     linea: $record,
-                    cantidad: $this->comoCantidad($data['cantidad'] ?? null),
-                    precioUnitario: $this->comoCantidad($data['precio_unitario'] ?? null, '0.0000'),
+                    cantidad: $record->cantidad,
                     texto: is_string($data['texto'] ?? null) ? $data['texto'] : null,
                 );
 
@@ -570,7 +626,13 @@ class RenglonesRelationManager extends RelationManager
             ->iconButton()
             ->tooltip('Quitar el renglón')
             ->color('danger')
-            ->visible(fn (): bool => $this->esBorrador())
+            /*
+             * La holgura que completa el monto no se quita: volvería a
+             * aparecer en el acto, porque falta lo que falta. Se va sola
+             * cuando los renglones llegan al monto, y deja de completar
+             * —y se puede quitar— si se borra el monto acordado.
+             */
+            ->visible(fn (PresupuestoLinea $record): bool => $this->esBorrador() && ! $record->completa_el_monto)
             ->requiresConfirmation()
             ->modalHeading('Quitar el renglón')
             ->modalDescription('Se borra del presupuesto. Todavía está en borrador, así que no lo vio nadie.')
@@ -592,11 +654,18 @@ class RenglonesRelationManager extends RelationManager
     // ── Interno ───────────────────────────────────────────────────────
 
     /**
-     * Lo que va debajo del concepto: si es opcional y su nota.
+     * Lo que va debajo del concepto: si completa el monto acordado, si es
+     * opcional y su nota.
      */
-    private static function debajoDelConcepto(PresupuestoLinea $linea): ?string
+    private function debajoDelConcepto(PresupuestoLinea $linea): ?string
     {
         $partes = [];
+
+        $acordado = $this->presupuesto()->monto_acordado;
+
+        if ($linea->completa_el_monto && $acordado !== null) {
+            $partes[] = 'Completa los '.self::lempiras($acordado).' que se le cobran · se ajusta sola';
+        }
 
         if ($linea->opcional === true) {
             $partes[] = 'Opcional · suma igual al total';
@@ -612,6 +681,83 @@ class RenglonesRelationManager extends RelationManager
     private static function lempiras(mixed $monto): string
     {
         return is_numeric($monto) ? 'L '.number_format((float) $monto, 2) : '—';
+    }
+
+    /**
+     * «3» y no «3.0000»; «2.5» y no «2.5000».
+     */
+    private static function cantidadLegible(string $cantidad): string
+    {
+        return str_contains($cantidad, '.') ? rtrim(rtrim($cantidad, '0'), '.') : $cantidad;
+    }
+
+    /**
+     * La regla de existencia de la casilla de cantidad: en lo que sale del
+     * estante, no más de lo que hay en los almacenes de este usuario.
+     */
+    private function alcanzaLaExistencia(PresupuestoLinea $linea): Closure
+    {
+        return function (string $attribute, mixed $value, Closure $fail) use ($linea): void {
+            $item = $linea->item;
+
+            if (! $item instanceof Item || ! $item->mueveInventario() || ! is_numeric($value)) {
+                return;
+            }
+
+            $hay = $this->cuantoHayDe($item);
+
+            if ($hay->menorQue(Decimal::de($this->comoCantidad($value)))) {
+                $fail("Hay {$hay->redondeado(2)} en existencia: no se puede presupuestar más que eso.");
+            }
+        };
+    }
+
+    /**
+     * Lo que se escribe en la tabla entra por la misma puerta que todo:
+     * el cotizador, que recalcula, ajusta la holgura que completa el monto
+     * y rechaza el precio de lo que va con precio de lista.
+     *
+     * @param numeric-string|null $cantidad
+     * @param numeric-string|null $precio
+     */
+    private function ajustarDesdeLaTabla(PresupuestoLinea $linea, ?string $cantidad = null, ?string $precio = null): void
+    {
+        abort_unless(Gate::allows('update', $this->presupuesto()), 403);
+
+        if (! $this->esBorrador()) {
+            $this->avisarQueYaNoEsBorrador();
+
+            return;
+        }
+
+        try {
+            app(CotizadorDePresupuesto::class)->ajustarLinea(
+                linea: $linea,
+                cantidad: $cantidad ?? $linea->cantidad,
+                precioUnitario: $precio,
+            );
+        } catch (PresupuestoException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se cambió')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->sincronizarConLaCuenta();
+    }
+
+    /**
+     * Cuando la página cambia lo que se le cobra, la holgura que completa
+     * cambió: se vuelve a dibujar la tabla para que diga el monto nuevo.
+     */
+    #[On('lo-que-se-cobra-cambio')]
+    public function alCambiarLoQueSeCobra(): void
+    {
+        $this->presupuesto()->refresh();
     }
 
     /**
@@ -772,7 +918,7 @@ class RenglonesRelationManager extends RelationManager
 
     private function siguienteOrden(): int
     {
-        $ultimo = $this->presupuesto()->detalle()->max('orden');
+        $ultimo = $this->presupuesto()->detalle()->where('completa_el_monto', false)->max('orden');
 
         return (is_numeric($ultimo) ? (int) $ultimo : 0) + 10;
     }
