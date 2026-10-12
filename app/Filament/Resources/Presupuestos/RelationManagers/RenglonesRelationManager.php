@@ -22,10 +22,12 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Enums\TextSize;
+use Filament\Support\Enums\Width;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
@@ -76,14 +78,13 @@ class RenglonesRelationManager extends RelationManager
              * escriben acá —L 1,250.00—, no «1.250,00 HNL». Ajustar y
              * quitar, como íconos: dos palabras por renglón empujaban
              * la tabla hacia la derecha.
+             *
+             * Y sin barra de búsqueda, sin columnas ocultables y sin
+             * páginas: un presupuesto son unas decenas de renglones y se
+             * lee entero, de corrido, como el papel. El descuento de ley
+             * solo aparece cuando hay alguno.
              */
             ->columns([
-                TextColumn::make('orden')
-                    ->label('#')
-                    ->alignCenter()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-
                 TextColumn::make('item.codigo')
                     ->label('Código')
                     ->fontFamily(FontFamily::Mono)
@@ -96,7 +97,6 @@ class RenglonesRelationManager extends RelationManager
                     ->label('Concepto')
                     ->weight('medium')
                     ->wrap()
-                    ->searchable()
                     ->description(fn (PresupuestoLinea $record): ?string => self::debajoDelConcepto($record)),
 
                 TextColumn::make('origen')
@@ -126,7 +126,7 @@ class RenglonesRelationManager extends RelationManager
                     ->grow(false)
                     ->formatStateUsing(fn (mixed $state): string => self::lempiras($state))
                     ->placeholder('—')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->visible(fn (): bool => Decimal::de($this->presupuesto()->total_descuento)->mayorQue('0')),
 
                 TextColumn::make('total')
                     ->label('Importe')
@@ -144,6 +144,7 @@ class RenglonesRelationManager extends RelationManager
                 $this->agregarHolgura(),
             ])
             ->striped()
+            ->paginated(false)
             ->recordActions([
                 $this->ajustar(),
                 $this->quitar(),
@@ -435,16 +436,30 @@ class RenglonesRelationManager extends RelationManager
             ->color('gray')
             ->tooltip('El colchón, como renglón visible')
             ->visible(fn (): bool => $this->esBorrador())
+            ->modalHeading('Agregar holgura')
             ->modalDescription(
-                'El colchón, como línea visible. Repartirlo dentro de los precios dejaría un papel donde cada renglón miente un poco.'
+                'El colchón, como renglón visible y con el nombre que se le explique a la familia. Repartirlo dentro de los precios dejaría un papel donde cada renglón miente un poco.'
             )
+            ->modalWidth(Width::TwoExtraLarge)
+            ->modalSubmitActionLabel('Agregar')
             ->schema([
-                TextInput::make('monto')
-                    ->label('Monto')
-                    ->numeric()
-                    ->minValue(0.01)
-                    ->required()
-                    ->prefix('L'),
+                Grid::make(['default' => 1, 'sm' => 3])->schema([
+                    CampoMayusculas::make('texto')
+                        ->label('Nombre')
+                        ->default(CotizadorDePresupuesto::HOLGURA_POR_DEFECTO)
+                        ->required()
+                        ->minLength(2)
+                        ->maxLength(200)
+                        ->columnSpan(['default' => 1, 'sm' => 2])
+                        ->helperText('Como sale en el papel: IMPREVISTOS, MARGEN POR COMPLICACIONES.'),
+
+                    TextInput::make('monto')
+                        ->label('Monto')
+                        ->numeric()
+                        ->minValue(0.01)
+                        ->required()
+                        ->prefix('L'),
+                ]),
             ])
             ->action(function (array $data): void {
                 $presupuesto = $this->presupuesto();
@@ -463,6 +478,7 @@ class RenglonesRelationManager extends RelationManager
                     presupuesto: $presupuesto,
                     monto: $this->comoCantidad($data['monto'] ?? null, '0.00'),
                     orden: $this->siguienteOrden() + 1000,
+                    texto: is_string($data['texto'] ?? null) ? $data['texto'] : null,
                 );
 
                 $cotizador->recalcular($presupuesto);
@@ -476,13 +492,29 @@ class RenglonesRelationManager extends RelationManager
             ->label('Ajustar')
             ->icon(Heroicon::OutlinedPencilSquare)
             ->iconButton()
-            ->tooltip('Ajustar cantidad o precio')
+            ->tooltip(fn (PresupuestoLinea $record): string => $record->seLePuedeCambiarElNombre()
+                ? 'Ajustar nombre, cantidad o precio'
+                : 'Ajustar cantidad o precio')
             ->visible(fn (): bool => $this->esBorrador())
             ->fillForm(fn (PresupuestoLinea $record): array => [
+                'texto'           => $record->texto,
                 'cantidad'        => $record->cantidad,
                 'precio_unitario' => $record->precio_unitario,
             ])
             ->schema([
+                /*
+                 * El nombre, solo en lo que escribió una persona: la
+                 * holgura —también la que puso la plantilla sola— y lo
+                 * agregado a mano. Un renglón del catálogo dice lo que
+                 * dice su ítem.
+                 */
+                CampoMayusculas::make('texto')
+                    ->label('Nombre')
+                    ->required()
+                    ->minLength(2)
+                    ->maxLength(200)
+                    ->visible(fn (PresupuestoLinea $record): bool => $record->seLePuedeCambiarElNombre()),
+
                 TextInput::make('cantidad')
                     ->label('Cantidad')
                     ->numeric()
@@ -523,6 +555,7 @@ class RenglonesRelationManager extends RelationManager
                     linea: $record,
                     cantidad: $this->comoCantidad($data['cantidad'] ?? null),
                     precioUnitario: $this->comoCantidad($data['precio_unitario'] ?? null, '0.0000'),
+                    texto: is_string($data['texto'] ?? null) ? $data['texto'] : null,
                 );
 
                 $this->sincronizarConLaCuenta();

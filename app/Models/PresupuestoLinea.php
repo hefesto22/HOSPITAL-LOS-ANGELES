@@ -137,4 +137,20 @@ class PresupuestoLinea extends Model
     {
         return $this->belongsTo(Tarifario::class);
     }
+
+    /**
+     * ¿Se le puede cambiar el nombre a este renglón?
+     *
+     * Solo a los que escribió una persona: la holgura —el colchón se
+     * llama como se acuerde con la familia: IMPREVISTOS, MARGEN POR
+     * COMPLICACIONES— y lo agregado a mano sin ítem detrás. Un renglón
+     * del catálogo dice lo que dice su ítem: renombrarlo dejaría el papel
+     * diciendo una cosa y el reporte de presupuestado contra real
+     * comparando otra.
+     */
+    public function seLePuedeCambiarElNombre(): bool
+    {
+        return $this->origen === OrigenLineaPresupuesto::Holgura
+            || ($this->origen === OrigenLineaPresupuesto::Manual && $this->item_id === null);
+    }
 }

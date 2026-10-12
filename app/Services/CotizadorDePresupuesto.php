@@ -18,6 +18,7 @@ use App\Models\PlantillaPresupuesto;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\Sede;
+use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -57,6 +58,12 @@ use Illuminate\Support\Facades\DB;
  */
 final class CotizadorDePresupuesto
 {
+    /**
+     * Cómo se llama la holgura cuando nadie le puso otro nombre: la que
+     * agrega la plantilla sola, o la que se agregó con el nombre vacío.
+     */
+    public const string HOLGURA_POR_DEFECTO = 'HOLGURA DEL PRESUPUESTO';
+
     public function __construct(
         private readonly ResolutorDePrecio $precios,
         private readonly AsignadorDeCorrelativo $correlativos,
@@ -287,15 +294,23 @@ final class CotizadorDePresupuesto
      * ⚠️ NUNCA lleva ítem —un CHECK de la base lo verifica— y nunca lleva
      * ISV: no es la venta de nada, es margen de error de la estimación.
      *
+     * El nombre lo pone quien cotiza (Mauricio, 12-oct-2026): a la familia
+     * se le explica distinto según el caso —IMPREVISTOS, MARGEN POR
+     * COMPLICACIONES—. Vacío, sale con el de siempre.
+     *
      * @param numeric-string $monto
      */
-    public function agregarHolgura(Presupuesto $presupuesto, string $monto, int $orden = 9999): PresupuestoLinea
-    {
+    public function agregarHolgura(
+        Presupuesto $presupuesto,
+        string $monto,
+        int $orden = 9999,
+        ?string $texto = null,
+    ): PresupuestoLinea {
         return $this->escribirLinea(
             presupuesto: $presupuesto,
             item: null,
             origen: OrigenLineaPresupuesto::Holgura,
-            texto: 'HOLGURA DEL PRESUPUESTO',
+            texto: self::nombreValido($texto) ?? self::HOLGURA_POR_DEFECTO,
             cantidad: '1.0000',
             precioUnitario: $monto,
             bruto: Decimal::de($monto),
@@ -303,6 +318,23 @@ final class CotizadorDePresupuesto
             orden: $orden,
             forzarExento: true,
         );
+    }
+
+    /**
+     * El nombre de un renglón escrito por una persona, listo para el
+     * papel: MAYÚSCULAS, sin espacios de sobra y dentro de lo que cabe en
+     * la columna (200). Nulo si no queda nada que valga: un CHECK de la
+     * base exige al menos dos letras.
+     */
+    private static function nombreValido(?string $texto): ?string
+    {
+        $nombre = TextoCanonico::mayusculas($texto);
+
+        if ($nombre === null || mb_strlen($nombre) < 2) {
+            return null;
+        }
+
+        return rtrim(mb_substr($nombre, 0, 200));
     }
 
     /**
@@ -317,6 +349,11 @@ final class CotizadorDePresupuesto
      * ⚠️ Un trigger de la base rechaza esto si el presupuesto ya no está
      * en borrador.
      *
+     * El nombre solo cambia en los renglones que escribió una persona
+     * —la holgura y lo agregado a mano sin ítem—
+     * (`PresupuestoLinea::seLePuedeCambiarElNombre()`). En uno del
+     * catálogo se ignora.
+     *
      * @param numeric-string $cantidad
      * @param numeric-string|null $precioUnitario
      */
@@ -324,6 +361,7 @@ final class CotizadorDePresupuesto
         PresupuestoLinea $linea,
         string $cantidad,
         ?string $precioUnitario = null,
+        ?string $texto = null,
     ): PresupuestoLinea {
         $precio = $precioUnitario ?? $linea->precio_unitario;
 
@@ -359,6 +397,9 @@ final class CotizadorDePresupuesto
         $grava = ! $tasa->esCero();
 
         $linea->update([
+            'texto' => $linea->seLePuedeCambiarElNombre()
+                ? self::nombreValido($texto) ?? $linea->texto
+                : $linea->texto,
             'cantidad'        => $cantidad,
             'precio_unitario' => $precio,
             'origen'          => $origen,

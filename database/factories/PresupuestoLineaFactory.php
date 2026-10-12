@@ -35,15 +35,23 @@ class PresupuestoLineaFactory extends Factory
             'texto'           => 'SERVICIO DE PRUEBA',
             'cantidad'        => '1.0000',
             'precio_unitario' => '1000.0000',
-            'descuento'       => '0.00',
-            'regimen_isv'     => RegimenIsv::Exento,
-            'tasa_isv'        => '0.0000',
-            'bruto'           => '1000.00',
-            'subtotal'        => '1000.00',
-            'base_exenta'     => '1000.00',
-            'base_gravada'    => '0.00',
-            'isv'             => '0.00',
-            'total'           => '1000.00',
+            /*
+             * ⚠️ Con default en la base, pero explícitos (§9.C6): el
+             * default no llega al modelo en memoria después de `create()`,
+             * y `CotizadorDePresupuesto::ajustarLinea()` multiplica por
+             * esta fracción.
+             */
+            'descuento_legal_fraccion' => '0.0000',
+            'opcional'                 => false,
+            'descuento'                => '0.00',
+            'regimen_isv'              => RegimenIsv::Exento,
+            'tasa_isv'                 => '0.0000',
+            'bruto'                    => '1000.00',
+            'subtotal'                 => '1000.00',
+            'base_exenta'              => '1000.00',
+            'base_gravada'             => '0.00',
+            'isv'                      => '0.00',
+            'total'                    => '1000.00',
         ];
     }
 

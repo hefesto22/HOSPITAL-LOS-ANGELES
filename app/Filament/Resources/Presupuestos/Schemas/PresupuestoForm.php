@@ -37,32 +37,40 @@ use Illuminate\Support\HtmlString;
  * en el panel de abajo.
  *
  * ─────────────────────────────────────────────────────────────────────
- * LOS DATOS A LA IZQUIERDA, EL RESUMEN A LA DERECHA (12-oct-2026)
+ * EL RESUMEN ARRIBA, LOS DATOS PLEGADOS, LOS RENGLONES A LA VISTA
  * ─────────────────────────────────────────────────────────────────────
  *
- * Mauricio: «que se vea más profesional y fácil de usar, que administre
- * bien el espacio». Eran dos secciones anchas con un párrafo de ayuda
- * debajo de cada campo: la mitad de la pantalla era texto que se lee una
- * vez. Ahora los datos van en una sola sección compacta —la explicación
- * de cada campo, en el ⓘ— y al lado un resumen que dice lo que importa
- * mientras se cotiza: cuánto va, contra qué tope y, ya en la cuenta,
- * cuánto se consumió.
+ * Mauricio, 12-oct-2026: «que se vea más profesional y fácil de usar»,
+ * y después: «se desperdicia mucho espacio». Lo que se hace en esta
+ * pantalla es trabajar los renglones; los datos del encabezado se llenan
+ * una vez al crear. Así que:
+ *
+ *   · arriba, una franja con lo que importa mientras se cotiza —estado,
+ *     total, tope de la plantilla y, ya en la cuenta, lo consumido—;
+ *   · los datos en una sección PLEGADA al editar, que en su título dice
+ *     pagador, ingreso y plantilla sin abrirla; abierta, en tres columnas
+ *     y con la explicación de cada campo en el ⓘ;
+ *   · y los renglones quedan a la vista sin bajar.
  */
 class PresupuestoForm
 {
     public static function configure(Schema $schema): Schema
     {
         return $schema
-            ->columns(['default' => 1, 'lg' => 3])
+            ->columns(1)
             ->components([
+                Placeholder::make('resumen_del_presupuesto')
+                    ->hiddenLabel()
+                    ->visible(fn (mixed $record): bool => self::existe($record))
+                    ->content(fn (mixed $record): HtmlString => self::resumen($record)),
+
                 Section::make('Datos del presupuesto')
                     ->icon(Heroicon::OutlinedClipboardDocumentList)
+                    ->description(fn (mixed $record): ?string => self::enUnaLinea($record))
                     ->compact()
-                    ->columns(2)
-                    ->columnSpan(fn (mixed $record): array => [
-                        'default' => 1,
-                        'lg'      => self::existe($record) ? 2 : 3,
-                    ])
+                    ->collapsible()
+                    ->collapsed(fn (mixed $record): bool => self::existe($record))
+                    ->columns(['default' => 1, 'md' => 2, 'xl' => 3])
                     ->schema([
                         Select::make('expediente_id')
                             ->label('Paciente')
@@ -210,28 +218,39 @@ class PresupuestoForm
                             ->label('Título')
                             ->required()
                             ->maxLength(150)
-                            ->columnSpanFull()
+                            ->columnSpan(['default' => 1, 'md' => 2, 'xl' => 2])
                             ->placeholder('Lo que va a decir el papel: APENDICECTOMIA'),
 
                         CampoMayusculas::area('notas')
                             ->label('Notas')
                             ->maxLength(500)
-                            ->rows(2)
+                            ->rows(1)
+                            ->autosize()
                             ->columnSpanFull()
                             ->placeholder('Qué NO incluye, qué se acordó con la familia'),
                     ]),
-
-                Section::make('Resumen')
-                    ->icon(Heroicon::OutlinedCalculator)
-                    ->compact()
-                    ->columnSpan(['default' => 1, 'lg' => 1])
-                    ->visible(fn (mixed $record): bool => self::existe($record))
-                    ->schema([
-                        Placeholder::make('resumen_del_presupuesto')
-                            ->hiddenLabel()
-                            ->content(fn (mixed $record): HtmlString => self::resumen($record)),
-                    ]),
             ]);
+    }
+
+    /**
+     * Lo que dice el título de la sección plegada: pagador, ingreso y
+     * plantilla, para no tener que abrirla a ver con qué se cotizó.
+     */
+    private static function enUnaLinea(mixed $record): ?string
+    {
+        if (! self::existe($record) || ! $record instanceof Presupuesto) {
+            return null;
+        }
+
+        $partes = [$record->convenio->nombre];
+
+        $encuentro = $record->encuentro;
+        $partes[] = $encuentro instanceof Encuentro ? 'Ingreso '.$encuentro->numero : 'Sin ingreso';
+
+        $plantilla = $record->plantilla;
+        $partes[] = $plantilla instanceof PlantillaPresupuesto ? 'Plantilla '.$plantilla->codigo : 'Sin plantilla';
+
+        return implode(' · ', $partes);
     }
 
     /**
