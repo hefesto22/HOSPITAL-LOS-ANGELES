@@ -48,7 +48,7 @@
 <style>
     .ldf-vacia { font-size: .85rem; color: rgb(113 113 122); }
     .ldf-lista {
-        max-height: 14rem; overflow-y: auto; overscroll-behavior: contain;
+        max-height: 11rem; overflow-y: auto; overscroll-behavior: contain;
         margin: 0 -.35rem; padding: 0 .35rem;
     }
     .ldf-renglon {

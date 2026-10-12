@@ -3655,13 +3655,21 @@ class CuentasAbiertas extends Page
     /**
      * ¿La columna de la derecha del modal de factura tiene algo?
      *
-     * Desde el 12-oct-2026, siempre que haya cuenta: arriba va lo que
-     * dice la factura, que no depende del pagador ni de si falta cobrar.
-     * Sin cuenta —el modal recién montado— el cliente toma el ancho.
+     * Es la de la plata: lo que autorizó el seguro —si paga un tercero—,
+     * lo que ya abonó y lo que falta cobrar. Sin nada de eso, el papel
+     * toma el ancho entero.
      */
     private function hayColumnaDerechaAlFacturar(): bool
     {
-        return $this->cuentaFacturando() instanceof Cuenta;
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return false;
+        }
+
+        return $cuenta->convenio->tipo->pagaUnTercero()
+            || $cuenta->saldoPendienteDelPaciente()->mayorQue('0')
+            || $cuenta->abonado()->mayorQue('0');
     }
 
     /**
@@ -4257,7 +4265,7 @@ class CuentasAbiertas extends Page
             ->label('Facturar')
             ->icon(Heroicon::OutlinedDocumentText)
             ->color('primary')
-            ->modalWidth('6xl')
+            ->modalWidth('7xl')
             ->stickyModalFooter()
             ->modalHeading(function (array $arguments): string {
                 $cuenta = $this->cuentaDe($arguments);
@@ -4293,117 +4301,124 @@ class CuentasAbiertas extends Page
 
                 /*
                  * ─────────────────────────────────────────────────────
-                 * 🔴 DOS COLUMNAS: A QUIÉN Y CÓMO SE PAGA (11-oct-2026)
+                 * 🔴 A LA IZQUIERDA EL PAPEL, A LA DERECHA LA PLATA
                  * ─────────────────────────────────────────────────────
                  *
-                 * Mauricio: «que sea aún más práctico pero con todo lo
-                 * necesario». A la izquierda el cliente, que casi nunca
-                 * se toca; a la derecha lo que de verdad se hace en el
-                 * mostrador: cobrar —con el vuelto—, ver lo que ya abonó
-                 * y, con seguro, lo que autorizó.
+                 * Mauricio, 11-oct-2026: «que sea aún más práctico pero
+                 * con todo lo necesario». Y el 12: «hay que hacer scroll y
+                 * eso puede provocar que olviden algo». A la izquierda lo
+                 * que va a decir la factura —a nombre de quién y qué
+                 * lleva—; a la derecha lo que se hace en el mostrador:
+                 * cobrar con el vuelto, ver lo que ya abonó y, con seguro,
+                 * lo que autorizó.
+                 *
+                 * Doce columnas, 5 y 7, en un modal de 7xl: la derecha
+                 * queda lo bastante ancha para que las formas de pago se
+                 * dibujen como tabla —una fila— y no como cuatro campos
+                 * apilados, que era lo que empujaba Emitir fuera de la
+                 * pantalla.
                  */
-                Grid::make(['default' => 1, 'lg' => 2])
+                Grid::make(['default' => 1, 'lg' => 12])
                     ->schema([
-                        /*
-                         * ─────────────────────────────────────────────────
-                         * 🔴 EL CLIENTE NO SE ESCRIBE: LO DECIDE LA REGLA
-                         * ─────────────────────────────────────────────────
-                         *
-                         * Mauricio: «¿por qué hay que escribirlo? Desde
-                         * 10,000 sale a nombre del paciente con su RTN;
-                         * menos de 10,000, consumidor final; con seguro, a
-                         * nombre del seguro». Se muestra en una tarjeta y
-                         * se emite así.
-                         *
-                         * La excepción —el paciente que pide factura con
-                         * su RTN por menos de 10,000, la empresa que lo
-                         * mandó— se abre con un interruptor. Con seguro no
-                         * hay excepción: la factura es de quien paga.
-                         */
-                        Section::make('Cliente')
-                            ->icon(Heroicon::OutlinedUser)
-                            ->compact()
-                            ->columnSpan(fn (): array => $this->hayColumnaDerechaAlFacturar() ? ['default' => 1] : ['default' => 'full'])
-                            ->columns(2)
-                            ->schema([
-                                Placeholder::make('cliente_que_sale')
-                                    ->hiddenLabel()
-                                    ->columnSpanFull()
-                                    ->visible(fn (Get $get): bool => ! (bool) $get('otro_cliente'))
-                                    ->content(fn (): HtmlString => $this->clienteQueSale()),
-
-                                Toggle::make('otro_cliente')
-                                    ->label('A nombre de alguien: el paciente, un familiar o una empresa')
-                                    ->columnSpanFull()
-                                    ->live()
-                                    ->default(false)
-                                    ->visible(fn (): bool => ! ($this->cuentaFacturando()?->convenio->tipo->facturaANombreDelSeguro() ?? false)),
-
-                                /*
-                                 * Vienen con el paciente y su documento: es
-                                 * la excepción más común —pide la factura a
-                                 * su nombre— y la empresa se escribe encima.
-                                 */
-                                CampoMayusculas::make('cliente_nombre')
-                                    ->label('Nombre')
-                                    ->columnSpanFull()
-                                    ->required()
-                                    ->maxLength(200)
-                                    ->default(fn (): string => $this->nombreDelPacienteAFacturar() ?? '')
-                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
-
-                                Select::make('cliente_documento_tipo')
-                                    ->label('Documento')
-                                    ->options(fn (): array => self::tiposDeDocumento())
-                                    ->native(false)
-                                    ->default(fn (): ?string => $this->documentoDelPaciente()['tipo'])
-                                    ->requiredWith('cliente_documento')
-                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
-
-                                TextInput::make('cliente_documento')
-                                    ->label('Número')
-                                    ->maxLength(20)
-                                    ->default(fn (): ?string => $this->documentoDelPaciente()['numero'])
-                                    ->hintIcon(
-                                        'heroicon-o-information-circle',
-                                        'RTN para que le sirva de crédito fiscal; sin RTN, sirve la identidad.',
-                                    )
-                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
-
-                                CampoMayusculas::make('cliente_direccion')
-                                    ->label('Dirección')
-                                    ->columnSpanFull()
-                                    ->maxLength(250)
-                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
-
-                                /*
-                                 * La póliza sale junto al paciente, que es de
-                                 * quien es. El «Código de Cliente» del papel es
-                                 * el expediente y lo pone el sistema.
-                                 */
-                                CampoMayusculas::make('poliza')
-                                    ->label('Póliza')
-                                    ->maxLength(40)
-                                    ->default(fn (): ?string => $this->cuentaFacturando()?->numero_poliza)
-                                    ->hint(fn (): ?string => $this->cuentaFacturando()?->numero_poliza === null
-                                        ? 'Sin póliza en la cuenta'
-                                        : null)
-                                    ->hintIcon(
-                                        'heroicon-o-information-circle',
-                                        'Sale junto al paciente: por ahí busca la aseguradora al asegurado cuando reembolsa.',
-                                    )
-                                    ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
-
-                                CampoMayusculas::make('nota')
-                                    ->label('Nota en la factura')
-                                    ->placeholder('Opcional')
-                                    ->columnSpan(fn (): array => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado
-                                        ? ['default' => 1, 'sm' => 1]
-                                        : ['default' => 1, 'sm' => 2])
-                                    ->maxLength(300),
-                            ]),
-
                         Group::make([
+                            /*
+                             * ─────────────────────────────────────────────────
+                             * 🔴 EL CLIENTE NO SE ESCRIBE: LO DECIDE LA REGLA
+                             * ─────────────────────────────────────────────────
+                             *
+                             * Mauricio: «¿por qué hay que escribirlo? Desde
+                             * 10,000 sale a nombre del paciente con su RTN;
+                             * menos de 10,000, consumidor final; con seguro, a
+                             * nombre del seguro». Se muestra en una tarjeta y
+                             * se emite así.
+                             *
+                             * La excepción —el paciente que pide factura con
+                             * su RTN por menos de 10,000, la empresa que lo
+                             * mandó— se abre con un interruptor. Con seguro no
+                             * hay excepción: la factura es de quien paga.
+                             */
+                            Section::make('Cliente')
+                                ->icon(Heroicon::OutlinedUser)
+                                ->compact()
+                                ->columns(2)
+                                ->schema([
+                                    Placeholder::make('cliente_que_sale')
+                                        ->hiddenLabel()
+                                        ->columnSpanFull()
+                                        ->visible(fn (Get $get): bool => ! (bool) $get('otro_cliente'))
+                                        ->content(fn (): HtmlString => $this->clienteQueSale()),
+
+                                    Toggle::make('otro_cliente')
+                                        ->label('A nombre de alguien: el paciente, un familiar o una empresa')
+                                        ->columnSpanFull()
+                                        ->live()
+                                        ->default(false)
+                                        ->visible(fn (): bool => ! ($this->cuentaFacturando()?->convenio->tipo->facturaANombreDelSeguro() ?? false)),
+
+                                    /*
+                                     * Vienen con el paciente y su documento: es
+                                     * la excepción más común —pide la factura a
+                                     * su nombre— y la empresa se escribe encima.
+                                     */
+                                    CampoMayusculas::make('cliente_nombre')
+                                        ->label('Nombre')
+                                        ->columnSpanFull()
+                                        ->required()
+                                        ->maxLength(200)
+                                        ->default(fn (): string => $this->nombreDelPacienteAFacturar() ?? '')
+                                        ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
+
+                                    Select::make('cliente_documento_tipo')
+                                        ->label('Documento')
+                                        ->options(fn (): array => self::tiposDeDocumento())
+                                        ->native(false)
+                                        ->default(fn (): ?string => $this->documentoDelPaciente()['tipo'])
+                                        ->requiredWith('cliente_documento')
+                                        ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
+
+                                    TextInput::make('cliente_documento')
+                                        ->label('Número')
+                                        ->maxLength(20)
+                                        ->default(fn (): ?string => $this->documentoDelPaciente()['numero'])
+                                        ->hintIcon(
+                                            'heroicon-o-information-circle',
+                                            'RTN para que le sirva de crédito fiscal; sin RTN, sirve la identidad.',
+                                        )
+                                        ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
+
+                                    CampoMayusculas::make('cliente_direccion')
+                                        ->label('Dirección')
+                                        ->columnSpanFull()
+                                        ->maxLength(250)
+                                        ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
+
+                                    /*
+                                     * La póliza sale junto al paciente, que es de
+                                     * quien es. El «Código de Cliente» del papel es
+                                     * el expediente y lo pone el sistema.
+                                     */
+                                    CampoMayusculas::make('poliza')
+                                        ->label('Póliza')
+                                        ->maxLength(40)
+                                        ->default(fn (): ?string => $this->cuentaFacturando()?->numero_poliza)
+                                        ->hint(fn (): ?string => $this->cuentaFacturando()?->numero_poliza === null
+                                            ? 'Sin póliza en la cuenta'
+                                            : null)
+                                        ->hintIcon(
+                                            'heroicon-o-information-circle',
+                                            'Sale junto al paciente: por ahí busca la aseguradora al asegurado cuando reembolsa.',
+                                        )
+                                        ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
+
+                                    CampoMayusculas::make('nota')
+                                        ->label('Nota en la factura')
+                                        ->placeholder('Opcional')
+                                        ->columnSpan(fn (): array => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado
+                                            ? ['default' => 1, 'sm' => 1]
+                                            : ['default' => 1, 'sm' => 2])
+                                        ->maxLength(300),
+                                ]),
+
                             /*
                              * ─────────────────────────────────────────────────────
                              * 🔴 LO QUE VA A DECIR EL PAPEL (12-oct-2026)
@@ -4449,7 +4464,13 @@ class CuentasAbiertas extends Page
                                             .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
                                         ),
                                 ]),
+                        ])
+                            ->columnSpan(fn (): array => [
+                                'default' => 1,
+                                'lg'      => $this->hayColumnaDerechaAlFacturar() ? 5 : 12,
+                            ]),
 
+                        Group::make([
                             /*
                              * ─────────────────────────────────────────────────────
                              * 🔴 LO QUE EL SEGURO AUTORIZÓ, ANTES DE EMITIR
@@ -4601,9 +4622,12 @@ class CuentasAbiertas extends Page
                                      * aplicó, no el billete—; es para que
                                      * nadie haga la resta de cabeza con la
                                      * fila esperando.
+                                     *
+                                     * Con quién lo entrega en la MISMA fila
+                                     * (12-oct-2026): uno debajo del otro
+                                     * empujaban Emitir fuera de la pantalla.
                                      */
-                                    Grid::make(2)
-                                        ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get))
+                                    Grid::make(['default' => 1, 'sm' => 3])
                                         ->schema([
                                             TextInput::make('paga_con')
                                                 ->label('Paga con')
@@ -4611,19 +4635,26 @@ class CuentasAbiertas extends Page
                                                 ->inputMode('decimal')
                                                 ->placeholder('Lo que entrega')
                                                 ->dehydrated(false)
-                                                ->live(debounce: 400),
+                                                ->live(debounce: 400)
+                                                ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
 
                                             Placeholder::make('vuelto')
                                                 ->label('Vuelto')
-                                                ->content(fn (Get $get): HtmlString => $this->vueltoDe($get)),
-                                        ]),
+                                                ->content(fn (Get $get): HtmlString => $this->vueltoDe($get))
+                                                ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
 
-                                    CampoMayusculas::make('entregado_por_factura')
-                                        ->label('Lo entrega, si no es el paciente')
-                                        ->placeholder('Opcional')
-                                        ->maxLength(120),
+                                            CampoMayusculas::make('entregado_por_factura')
+                                                ->label('Lo entrega')
+                                                ->placeholder('Si no es el paciente')
+                                                ->maxLength(120)
+                                                ->columnSpan(fn (Get $get): array => [
+                                                    'default' => 1,
+                                                    'sm'      => $this->hayEfectivoEn($get) ? 1 : 3,
+                                                ]),
+                                        ]),
                                 ]),
                         ])
+                            ->columnSpan(['default' => 1, 'lg' => 7])
                             ->visible(fn (): bool => $this->hayColumnaDerechaAlFacturar()),
                     ]),
             ])
