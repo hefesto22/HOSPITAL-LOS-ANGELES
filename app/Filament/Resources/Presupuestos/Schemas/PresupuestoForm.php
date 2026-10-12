@@ -5,19 +5,25 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Presupuestos\Schemas;
 
 use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\EstadoPresupuesto;
+use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Encuentro;
 use App\Models\Expediente;
 use App\Models\PlantillaPresupuesto;
+use App\Models\Presupuesto;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\HtmlString;
 
 /**
  * Formulario de creación del presupuesto.
@@ -29,44 +35,64 @@ use Illuminate\Database\Eloquent\Builder;
  * Lo que se llena acá es el ENCABEZADO. Los renglones los arma
  * `CotizadorDePresupuesto` al guardar, y después se editan uno por uno
  * en el panel de abajo.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * LOS DATOS A LA IZQUIERDA, EL RESUMEN A LA DERECHA (12-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Mauricio: «que se vea más profesional y fácil de usar, que administre
+ * bien el espacio». Eran dos secciones anchas con un párrafo de ayuda
+ * debajo de cada campo: la mitad de la pantalla era texto que se lee una
+ * vez. Ahora los datos van en una sola sección compacta —la explicación
+ * de cada campo, en el ⓘ— y al lado un resumen que dice lo que importa
+ * mientras se cotiza: cuánto va, contra qué tope y, ya en la cuenta,
+ * cuánto se consumió.
  */
 class PresupuestoForm
 {
     public static function configure(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make('A quién se le cotiza')
-                ->columns(2)
-                ->schema([
-                    Select::make('expediente_id')
-                        ->label('Paciente')
-                        ->required()
-                        ->searchable()
-                        ->getSearchResultsUsing(fn (string $search): array => Expediente::query()
-                            ->with('persona')
-                            ->where(function (Builder $sub) use ($search): void {
-                                $sub->where('numero', 'ilike', "%{$search}%")
-                                    ->orWhereHas(
-                                        'persona',
-                                        fn (Builder $p): Builder => $p->where('nombre_busqueda', 'ilike', "%{$search}%")
-                                    );
+        return $schema
+            ->columns(['default' => 1, 'lg' => 3])
+            ->components([
+                Section::make('Datos del presupuesto')
+                    ->icon(Heroicon::OutlinedClipboardDocumentList)
+                    ->compact()
+                    ->columns(2)
+                    ->columnSpan(fn (mixed $record): array => [
+                        'default' => 1,
+                        'lg'      => self::existe($record) ? 2 : 3,
+                    ])
+                    ->schema([
+                        Select::make('expediente_id')
+                            ->label('Paciente')
+                            ->required()
+                            ->searchable()
+                            ->getSearchResultsUsing(fn (string $search): array => Expediente::query()
+                                ->with('persona')
+                                ->where(function (Builder $sub) use ($search): void {
+                                    $sub->where('numero', 'ilike', "%{$search}%")
+                                        ->orWhereHas(
+                                            'persona',
+                                            fn (Builder $p): Builder => $p->where('nombre_busqueda', 'ilike', "%{$search}%")
+                                        );
+                                })
+                                ->limit(20)
+                                ->get()
+                                ->mapWithKeys(fn (Expediente $e): array => [
+                                    $e->id => $e->numero.' — '.($e->persona?->nombreCompleto() ?? 'SIN NOMBRE'),
+                                ])
+                                ->all())
+                            ->getOptionLabelUsing(function (mixed $value): ?string {
+                                $expediente = Expediente::query()->with('persona')->find($value);
+
+                                if (! $expediente instanceof Expediente) {
+                                    return null;
+                                }
+
+                                return $expediente->numero.' — '.($expediente->persona?->nombreCompleto() ?? 'SIN NOMBRE');
                             })
-                            ->limit(20)
-                            ->get()
-                            ->mapWithKeys(fn (Expediente $e): array => [
-                                $e->id => $e->numero.' — '.($e->persona?->nombreCompleto() ?? 'SIN NOMBRE'),
-                            ])
-                            ->all())
-                        ->getOptionLabelUsing(function (mixed $value): ?string {
-                            $expediente = Expediente::query()->with('persona')->find($value);
-
-                            if (! $expediente instanceof Expediente) {
-                                return null;
-                            }
-
-                            return $expediente->numero.' — '.($expediente->persona?->nombreCompleto() ?? 'SIN NOMBRE');
-                        })
-                        /*
+                            /*
                          * 🔴 SI EL PACIENTE YA TIENE CUENTA ABIERTA, EL
                          * INGRESO Y EL PAGADOR SE TOMAN DE AHÍ.
                          *
@@ -76,124 +102,218 @@ class PresupuestoForm
                          * de otro tarifario y nadie lo nota hasta que la
                          * familia compara.
                          */
-                        ->afterStateUpdated(function (Set $set, mixed $state): void {
-                            $set('encuentro_id', null);
+                            ->afterStateUpdated(function (Set $set, mixed $state): void {
+                                $set('encuentro_id', null);
 
-                            if (! is_numeric($state)) {
-                                return;
-                            }
+                                if (! is_numeric($state)) {
+                                    return;
+                                }
 
-                            $cuenta = Cuenta::query()
-                                ->where('estado', EstadoCuenta::Abierta->value)
-                                ->whereHas(
-                                    'encuentro',
-                                    fn (Builder $e): Builder => $e->where('expediente_id', (int) $state)
-                                )
-                                ->with('encuentro:id,numero')
-                                ->first();
+                                $cuenta = Cuenta::query()
+                                    ->where('estado', EstadoCuenta::Abierta->value)
+                                    ->whereHas(
+                                        'encuentro',
+                                        fn (Builder $e): Builder => $e->where('expediente_id', (int) $state)
+                                    )
+                                    ->with('encuentro:id,numero')
+                                    ->first();
 
-                            if (! $cuenta instanceof Cuenta) {
-                                return;
-                            }
+                                if (! $cuenta instanceof Cuenta) {
+                                    return;
+                                }
 
-                            $set('encuentro_id', $cuenta->encuentro_id);
-                            $set('convenio_id', $cuenta->convenio_id);
+                                $set('encuentro_id', $cuenta->encuentro_id);
+                                $set('convenio_id', $cuenta->convenio_id);
 
-                            Notification::make()
-                                ->info()
-                                ->title("Tomado de la cuenta {$cuenta->numero}")
-                                ->body('El ingreso y el pagador se llenaron con los de la cuenta abierta. Podés cambiarlos si este presupuesto es para otra cosa.')
-                                ->send();
-                        })
-                        ->live()
-                        ->helperText('Buscá por número de expediente o por nombre. Tiene que estar registrado: cotizarle a alguien sin identificar es como se pierde el rastro de a quién se le prometió qué.'),
+                                Notification::make()
+                                    ->info()
+                                    ->title("Tomado de la cuenta {$cuenta->numero}")
+                                    ->body('El ingreso y el pagador se llenaron con los de la cuenta abierta. Podés cambiarlos si este presupuesto es para otra cosa.')
+                                    ->send();
+                            })
+                            ->live()
+                            ->placeholder('Expediente o nombre')
+                            ->hintIcon(Heroicon::OutlinedInformationCircle, 'Tiene que estar registrado: cotizarle a alguien sin identificar es como se pierde el rastro de a quién se le prometió qué.'),
 
-                    Select::make('convenio_id')
-                        ->label('Pagador')
-                        ->required()
-                        ->relationship('convenio', 'nombre')
-                        ->searchable()
-                        ->preload()
-                        ->default(fn (): ?int => Convenio::query()->where('codigo', 'CONTADO')->value('id'))
-                        ->helperText('Con qué tarifario se cotiza. Si el caso es PALIG, salen los precios de PALIG.'),
+                        Select::make('convenio_id')
+                            ->label('Pagador')
+                            ->required()
+                            ->relationship('convenio', 'nombre')
+                            ->searchable()
+                            ->preload()
+                            ->default(fn (): ?int => Convenio::query()->where('codigo', 'CONTADO')->value('id'))
+                            ->hintIcon(Heroicon::OutlinedInformationCircle, 'Con qué tarifario se cotiza. Si el caso es PALIG, salen los precios de PALIG.'),
 
-                    /*
+                        /*
                      * Nullable a propósito: mucha gente llega solo a
                      * preguntar cuánto le sale y todavía no ha ingresado.
                      * Se amarra después, al abrir la cuenta.
                      */
-                    Select::make('encuentro_id')
-                        ->label('Ingreso (opcional)')
-                        ->searchable()
-                        ->options(function (Get $get): array {
-                            $expediente = $get('expediente_id');
+                        Select::make('encuentro_id')
+                            ->label('Ingreso (opcional)')
+                            ->searchable()
+                            ->options(function (Get $get): array {
+                                $expediente = $get('expediente_id');
 
-                            if (! is_numeric($expediente)) {
-                                return [];
-                            }
+                                if (! is_numeric($expediente)) {
+                                    return [];
+                                }
 
-                            return Encuentro::query()
-                                ->vivos()
-                                ->where('expediente_id', (int) $expediente)
-                                ->pluck('numero', 'id')
-                                ->all();
-                        })
-                        ->helperText('Solo si el paciente ya ingresó. Sin ingreso el presupuesto igual se cotiza — el medidor empieza a correr cuando se amarre.'),
-                ]),
+                                return Encuentro::query()
+                                    ->vivos()
+                                    ->where('expediente_id', (int) $expediente)
+                                    ->pluck('numero', 'id')
+                                    ->all();
+                            })
+                            ->placeholder('Todavía no ingresa')
+                            ->hintIcon(Heroicon::OutlinedInformationCircle, 'Solo si el paciente ya ingresó. Sin ingreso el presupuesto igual se cotiza — el medidor empieza a correr cuando se amarre.'),
 
-            Section::make('Qué se cotiza')
-                ->columns(2)
-                ->schema([
-                    Select::make('plantilla_id')
-                        ->label('Plantilla')
-                        ->searchable()
-                        ->preload()
-                        ->options(fn (): array => PlantillaPresupuesto::query()
-                            ->vigentesEn(now())
-                            ->orderBy('nombre')
-                            ->get()
-                            ->mapWithKeys(fn (PlantillaPresupuesto $p): array => [$p->id => $p->etiqueta()])
-                            ->all())
-                        ->live()
-                        /*
+                        Select::make('plantilla_id')
+                            ->label('Plantilla')
+                            ->searchable()
+                            ->preload()
+                            ->options(fn (): array => PlantillaPresupuesto::query()
+                                ->vigentesEn(now())
+                                ->orderBy('nombre')
+                                ->get()
+                                ->mapWithKeys(fn (PlantillaPresupuesto $p): array => [$p->id => $p->etiqueta()])
+                                ->all())
+                            ->live()
+                            /*
                          * ⚠️ La plantilla PROPONE el título; no lo impone.
                          * Solo lo escribe si el campo está vacío: pisarlo
                          * siempre no dejaba escribir «APENDICECTOMIA
                          * COMPLICADA» ni «CESAREA + SALPINGECTOMIA», que
                          * es justo cuando el título importa.
                          */
-                        ->afterStateUpdated(function (Set $set, Get $get, mixed $state): void {
-                            if (! is_numeric($state)) {
-                                return;
-                            }
+                            ->afterStateUpdated(function (Set $set, Get $get, mixed $state): void {
+                                if (! is_numeric($state)) {
+                                    return;
+                                }
 
-                            $titulo = $get('titulo');
+                                $titulo = $get('titulo');
 
-                            if (is_string($titulo) && trim($titulo) !== '') {
-                                return;
-                            }
+                                if (is_string($titulo) && trim($titulo) !== '') {
+                                    return;
+                                }
 
-                            $plantilla = PlantillaPresupuesto::query()->find((int) $state);
+                                $plantilla = PlantillaPresupuesto::query()->find((int) $state);
 
-                            if ($plantilla instanceof PlantillaPresupuesto) {
-                                $set('titulo', $plantilla->nombre);
-                            }
-                        })
-                        ->helperText('Trae los renglones típicos ya cotizados. Después se ajustan uno por uno. Sin plantilla, el presupuesto nace vacío y se arma a mano.'),
+                                if ($plantilla instanceof PlantillaPresupuesto) {
+                                    $set('titulo', $plantilla->nombre);
+                                }
+                            })
+                            ->placeholder('Sin plantilla, se arma a mano')
+                            ->hintIcon(Heroicon::OutlinedInformationCircle, 'Trae los renglones típicos ya cotizados. Después se ajustan uno por uno. Sin plantilla, el presupuesto nace vacío y se arma a mano.'),
 
-                    CampoMayusculas::make('titulo')
-                        ->label('Título')
-                        ->required()
-                        ->maxLength(150)
-                        ->helperText('Lo que va a decir el papel: APENDICECTOMIA.'),
+                        CampoMayusculas::make('titulo')
+                            ->label('Título')
+                            ->required()
+                            ->maxLength(150)
+                            ->columnSpanFull()
+                            ->placeholder('Lo que va a decir el papel: APENDICECTOMIA'),
 
-                    CampoMayusculas::area('notas')
-                        ->label('Notas')
-                        ->maxLength(500)
-                        ->rows(2)
-                        ->columnSpanFull()
-                        ->helperText('Lo que conviene dejar por escrito: qué NO incluye, qué se acordó con la familia.'),
-                ]),
-        ]);
+                        CampoMayusculas::area('notas')
+                            ->label('Notas')
+                            ->maxLength(500)
+                            ->rows(2)
+                            ->columnSpanFull()
+                            ->placeholder('Qué NO incluye, qué se acordó con la familia'),
+                    ]),
+
+                Section::make('Resumen')
+                    ->icon(Heroicon::OutlinedCalculator)
+                    ->compact()
+                    ->columnSpan(['default' => 1, 'lg' => 1])
+                    ->visible(fn (mixed $record): bool => self::existe($record))
+                    ->schema([
+                        Placeholder::make('resumen_del_presupuesto')
+                            ->hiddenLabel()
+                            ->content(fn (mixed $record): HtmlString => self::resumen($record)),
+                    ]),
+            ]);
+    }
+
+    /**
+     * ⚠️ En CREAR el schema recibe un modelo VACÍO, no nulo (§9.A2): sin
+     * `exists` el resumen se dibujaría con ceros antes de que el
+     * presupuesto exista.
+     */
+    private static function existe(mixed $record): bool
+    {
+        return $record instanceof Presupuesto && $record->exists;
+    }
+
+    /**
+     * Lo que se mira mientras se cotiza: el estado, cuánto va, contra qué
+     * tope de la plantilla y —ya en la cuenta— cuánto se consumió.
+     *
+     * Se relee del registro en cada pintada: la página escucha a los
+     * renglones (`EditPresupuesto::alCambiarLosRenglones`) y refresca el
+     * presupuesto cada vez que se agrega, ajusta o quita uno.
+     */
+    private static function resumen(mixed $record): HtmlString
+    {
+        if (! self::existe($record) || ! $record instanceof Presupuesto) {
+            return new HtmlString('');
+        }
+
+        $total = Decimal::de($record->total);
+        $plantilla = $record->plantilla instanceof PlantillaPresupuesto ? $record->plantilla : null;
+        $tope = $record->topeDeReferencia();
+
+        $tramoDelTope = null;
+
+        if ($tope instanceof Decimal && $tope->mayorQue('0')) {
+            $fraccion = $total->entre($tope);
+
+            $tramoDelTope = [
+                'plantilla'  => $plantilla instanceof PlantillaPresupuesto ? $plantilla->nombre : 'la plantilla',
+                'tope'       => number_format((float) $tope->redondeado(2), 2),
+                'porcentaje' => min(100, (int) round((float) $fraccion->por('100')->redondeado(0))),
+                'excede'     => $total->mayorQue($tope),
+                'exceso'     => number_format((float) $total->restar($tope)->redondeado(2), 2),
+            ];
+        }
+
+        $consumo = null;
+
+        if ($record->estado === EstadoPresupuesto::Agregado) {
+            $consumido = $record->consumido();
+            $fraccion = $total->esCero() ? Decimal::cero() : $consumido->entre($total);
+            $cuenta = $record->cuentaViva();
+
+            $consumo = [
+                'consumido'  => number_format((float) $consumido->redondeado(2), 2),
+                'porcentaje' => min(100, (int) round((float) $fraccion->por('100')->redondeado(0))),
+                'color'      => self::colorDe($record->semaforo()),
+                'cuenta'     => $cuenta instanceof Cuenta ? $cuenta->numero : null,
+            ];
+        }
+
+        return new HtmlString(view('filament.presupuestos.resumen', [
+            'estado'      => $record->estado->etiqueta(),
+            'colorEstado' => self::colorDe($record->estado->color()),
+            'total'       => number_format((float) $total->redondeado(2), 2),
+            'renglones'   => $record->lineas,
+            'tope'        => $tramoDelTope,
+            'consumo'     => $consumo,
+            'vence'       => $record->vence_el?->format('d/m/Y'),
+        ])->render());
+    }
+
+    /**
+     * Los colores de Filament en hexadecimal: el resumen trae su propio
+     * CSS, porque el del panel viene precompilado (§9.A7).
+     */
+    private static function colorDe(string $color): string
+    {
+        return match ($color) {
+            'success' => '#16a34a',
+            'warning' => '#d97706',
+            'danger'  => '#dc2626',
+            'info'    => '#0284c7',
+            default   => '#71717a',
+        };
     }
 }

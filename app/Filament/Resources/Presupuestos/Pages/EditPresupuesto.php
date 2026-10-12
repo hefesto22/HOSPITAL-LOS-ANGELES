@@ -13,6 +13,7 @@ use App\Filament\Resources\Presupuestos\Schemas\PresupuestoForm;
 use App\Models\Presupuesto;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Schema;
+use Livewire\Attributes\On;
 
 class EditPresupuesto extends EditRecord
 {
@@ -56,11 +57,20 @@ class EditPresupuesto extends EditRecord
     }
 
     /**
-     * El aviso del tope, siempre a la vista mientras se cotiza.
-     *
-     * Va acá y no en una notificación al abrir: una notificación se
-     * cierra y se olvida; esto sigue diciendo el número mientras la
-     * cajera agrega renglones, que es cuando todavía se puede corregir.
+     * El título del caso arriba, en grande: «APENDICECTOMIA» se reconoce
+     * de un vistazo; «Editar PRE-HLA-2026-000001» obligaba a leer.
+     */
+    public function getHeading(): string
+    {
+        $registro = $this->getRecord();
+
+        return $registro instanceof Presupuesto ? $registro->titulo : 'Presupuesto';
+    }
+
+    /**
+     * El número y a quién se le cotiza. El tope y lo consumido ya no van
+     * acá: viven en el resumen, a la derecha de los datos, con su barra
+     * (12-oct-2026), y siguen a la vista mientras se agregan renglones.
      */
     public function getSubheading(): ?string
     {
@@ -70,18 +80,25 @@ class EditPresupuesto extends EditRecord
             return null;
         }
 
-        $tope = $registro->topeDeReferencia();
+        $persona = $registro->persona;
 
-        if ($tope === null) {
-            return null;
+        return $registro->numero.' · '.$persona->nombreCompleto();
+    }
+
+    /**
+     * Los renglones viven en su propio componente (`RenglonesRelationManager`):
+     * cuando agrega, ajusta o quita uno, avisa, y acá se relee el
+     * presupuesto para que el resumen —total, tope, consumo— diga el
+     * número nuevo sin recargar la página.
+     */
+    #[On('renglones-del-presupuesto-cambiaron')]
+    public function alCambiarLosRenglones(): void
+    {
+        $registro = $this->getRecord();
+
+        if ($registro instanceof Presupuesto) {
+            $registro->refresh();
         }
-
-        $va = number_format((float) $registro->total, 2);
-        $maximo = number_format((float) $tope->redondeado(2), 2);
-
-        return $registro->excedeElTope()
-            ? "⚠️ Esta cotización va en L {$va} y {$registro->plantilla?->nombre} no debería pasar de L {$maximo}. Se puede emitir igual — revisá si el caso lo justifica."
-            : "Va en L {$va}. El tope de {$registro->plantilla?->nombre} es L {$maximo}.";
     }
 
     private function esBorrador(): bool

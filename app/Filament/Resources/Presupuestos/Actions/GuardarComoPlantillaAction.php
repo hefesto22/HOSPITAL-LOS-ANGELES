@@ -39,7 +39,7 @@ class GuardarComoPlantillaAction
                 ? 'Guardar como plantilla'
                 : 'Actualizar plantilla')
             ->icon(Heroicon::OutlinedBookmarkSquare)
-            ->color('info')
+            ->color('gray')
             ->visible(fn (Presupuesto $record): bool => $record->detalle()->count() > 0)
             ->modalHeading(fn (Presupuesto $record): string => $record->plantilla_id === null
                 ? 'Guardar esta cotización como plantilla'

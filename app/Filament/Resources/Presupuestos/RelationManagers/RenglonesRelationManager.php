@@ -24,6 +24,8 @@ use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
+use Filament\Support\Enums\FontFamily;
+use Filament\Support\Enums\TextSize;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Columns\TextColumn;
@@ -63,6 +65,18 @@ class RenglonesRelationManager extends RelationManager
         return $table
             ->defaultSort('orden')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('item:id,codigo,nombre'))
+            /*
+             * ─────────────────────────────────────────────────────────
+             * EL RENGLÓN SE LEE COMO EN EL PAPEL (12-oct-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * Concepto grande y el código chico al lado; «opcional» y la
+             * nota debajo del concepto, no en columnas sueltas que casi
+             * siempre iban vacías. Los montos en lempiras como se
+             * escriben acá —L 1,250.00—, no «1.250,00 HNL». Ajustar y
+             * quitar, como íconos: dos palabras por renglón empujaban
+             * la tabla hacia la derecha.
+             */
             ->columns([
                 TextColumn::make('orden')
                     ->label('#')
@@ -72,25 +86,30 @@ class RenglonesRelationManager extends RelationManager
 
                 TextColumn::make('item.codigo')
                     ->label('Código')
-                    ->badge()
-                    ->color('warning')
-                    ->placeholder('—'),
+                    ->fontFamily(FontFamily::Mono)
+                    ->size(TextSize::Small)
+                    ->color('gray')
+                    ->placeholder('—')
+                    ->grow(false),
 
                 TextColumn::make('texto')
                     ->label('Concepto')
+                    ->weight('medium')
                     ->wrap()
                     ->searchable()
-                    ->description(fn (PresupuestoLinea $record): ?string => $record->nota),
+                    ->description(fn (PresupuestoLinea $record): ?string => self::debajoDelConcepto($record)),
 
                 TextColumn::make('origen')
-                    ->label('Origen')
+                    ->label('Precio')
                     ->badge()
                     ->formatStateUsing(fn (OrigenLineaPresupuesto $state): string => $state->etiqueta())
-                    ->color(fn (OrigenLineaPresupuesto $state): string => $state->color()),
+                    ->color(fn (OrigenLineaPresupuesto $state): string => $state->color())
+                    ->grow(false),
 
                 TextColumn::make('cantidad')
                     ->label('Cant.')
                     ->alignEnd()
+                    ->grow(false)
                     ->formatStateUsing(fn (mixed $state): string => is_scalar($state)
                         ? rtrim(rtrim((string) $state, '0'), '.')
                         : '—'),
@@ -98,33 +117,33 @@ class RenglonesRelationManager extends RelationManager
                 TextColumn::make('precio_unitario')
                     ->label('P. unit.')
                     ->alignEnd()
-                    ->money('HNL'),
+                    ->grow(false)
+                    ->formatStateUsing(fn (mixed $state): string => self::lempiras($state)),
 
                 TextColumn::make('descuento')
                     ->label('Desc. ley')
                     ->alignEnd()
-                    ->money('HNL')
+                    ->grow(false)
+                    ->formatStateUsing(fn (mixed $state): string => self::lempiras($state))
                     ->placeholder('—')
                     ->toggleable(isToggledHiddenByDefault: true),
 
                 TextColumn::make('total')
                     ->label('Importe')
                     ->alignEnd()
-                    ->money('HNL')
+                    ->grow(false)
                     ->weight('bold')
-                    ->summarize(Sum::make()->label('Total')->money('HNL')),
-
-                TextColumn::make('opcional')
-                    ->label('')
-                    ->badge()
-                    ->formatStateUsing(fn (mixed $state): string => $state === true ? 'Opcional' : '')
-                    ->color('gray'),
+                    ->formatStateUsing(fn (mixed $state): string => self::lempiras($state))
+                    ->summarize(Sum::make()
+                        ->label('Total')
+                        ->formatStateUsing(fn (mixed $state): string => self::lempiras($state))),
             ])
             ->headerActions([
                 $this->agregarDelCatalogo(),
                 $this->agregarAMano(),
                 $this->agregarHolgura(),
             ])
+            ->striped()
             ->recordActions([
                 $this->ajustar(),
                 $this->quitar(),
@@ -353,9 +372,10 @@ class RenglonesRelationManager extends RelationManager
     private function agregarAMano(): Action
     {
         return Action::make('agregar_a_mano')
-            ->label('Agregar a mano')
-            ->icon(Heroicon::OutlinedPencilSquare)
+            ->label('A mano')
+            ->icon(Heroicon::OutlinedPencil)
             ->color('gray')
+            ->tooltip('Lo que no tiene precio de tarifario')
             ->visible(fn (): bool => $this->esBorrador())
             ->modalDescription(
                 'Para lo que no tiene precio de tarifario: el honorario que el cirujano acordó, algo que no está en el catálogo.'
@@ -410,9 +430,10 @@ class RenglonesRelationManager extends RelationManager
     private function agregarHolgura(): Action
     {
         return Action::make('agregar_holgura')
-            ->label('Agregar holgura')
+            ->label('Holgura')
             ->icon(Heroicon::OutlinedShieldCheck)
-            ->color('info')
+            ->color('gray')
+            ->tooltip('El colchón, como renglón visible')
             ->visible(fn (): bool => $this->esBorrador())
             ->modalDescription(
                 'El colchón, como línea visible. Repartirlo dentro de los precios dejaría un papel donde cada renglón miente un poco.'
@@ -453,7 +474,9 @@ class RenglonesRelationManager extends RelationManager
     {
         return Action::make('ajustar')
             ->label('Ajustar')
-            ->icon(Heroicon::OutlinedAdjustmentsHorizontal)
+            ->icon(Heroicon::OutlinedPencilSquare)
+            ->iconButton()
+            ->tooltip('Ajustar cantidad o precio')
             ->visible(fn (): bool => $this->esBorrador())
             ->fillForm(fn (PresupuestoLinea $record): array => [
                 'cantidad'        => $record->cantidad,
@@ -511,6 +534,8 @@ class RenglonesRelationManager extends RelationManager
         return Action::make('quitar')
             ->label('Quitar')
             ->icon(Heroicon::OutlinedTrash)
+            ->iconButton()
+            ->tooltip('Quitar el renglón')
             ->color('danger')
             ->visible(fn (): bool => $this->esBorrador())
             ->requiresConfirmation()
@@ -532,6 +557,29 @@ class RenglonesRelationManager extends RelationManager
     }
 
     // ── Interno ───────────────────────────────────────────────────────
+
+    /**
+     * Lo que va debajo del concepto: si es opcional y su nota.
+     */
+    private static function debajoDelConcepto(PresupuestoLinea $linea): ?string
+    {
+        $partes = [];
+
+        if ($linea->opcional === true) {
+            $partes[] = 'Opcional · suma igual al total';
+        }
+
+        if (is_string($linea->nota) && trim($linea->nota) !== '') {
+            $partes[] = $linea->nota;
+        }
+
+        return $partes === [] ? null : implode(' · ', $partes);
+    }
+
+    private static function lempiras(mixed $monto): string
+    {
+        return is_numeric($monto) ? 'L '.number_format((float) $monto, 2) : '—';
+    }
 
     /**
      * El ítem detrás de un código escaneado.
@@ -656,6 +704,12 @@ class RenglonesRelationManager extends RelationManager
      */
     private function sincronizarConLaCuenta(): void
     {
+        /*
+         * El resumen de la página —total, tope, consumo— vive en otro
+         * componente: se le avisa para que relea el presupuesto.
+         */
+        $this->dispatch('renglones-del-presupuesto-cambiaron');
+
         $presupuesto = $this->presupuesto()->refresh();
 
         if ($presupuesto->estado !== EstadoPresupuesto::Agregado) {

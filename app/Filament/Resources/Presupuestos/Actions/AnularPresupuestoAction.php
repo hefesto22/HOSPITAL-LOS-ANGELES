@@ -27,6 +27,7 @@ class AnularPresupuestoAction
             ->label('Anular')
             ->icon(Heroicon::OutlinedXCircle)
             ->color('danger')
+            ->outlined()
             ->visible(fn (Presupuesto $record): bool => in_array(
                 $record->estado,
                 [EstadoPresupuesto::Borrador, EstadoPresupuesto::Agregado],
