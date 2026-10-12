@@ -27,6 +27,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int|null $convenio_id
  * @property int|null $sede_id
  * @property string $precio fracción con cuatro decimales, antes del ISV
+ * @property string|null $precio_envase el envase entero, exacto; solo en filas de envase
  * @property string $motivo
  * @property CarbonInterface $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
@@ -49,6 +50,7 @@ class Tarifario extends Model
         'convenio_id',
         'sede_id',
         'precio',
+        'precio_envase',
         'elegible',
         'motivo',
         'vigencia_desde',
@@ -98,6 +100,18 @@ class Tarifario extends Model
     public function monto(): Monto
     {
         return Monto::de($this->precio);
+    }
+
+    /**
+     * Lo que cuesta el envase entero, exacto, o nulo en la fila de la
+     * unidad suelta y en las que se fijaron antes de que existiera.
+     *
+     * ⚠️ Es el que se cobra cuando el envase se vende sin abrir. Armado
+     * desde el unitario, un blíster de 14 a L 25.00 daría L 24.9998.
+     */
+    public function montoDelEnvase(): ?Monto
+    {
+        return $this->precio_envase === null ? null : Monto::de($this->precio_envase);
     }
 
     public function esPrecioDeLista(): bool

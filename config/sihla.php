@@ -110,6 +110,44 @@ return [
          */
         'decimales_costo'  => 4,
         'decimales_dinero' => 2,
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * RECARGO POR FRACCIONAR — el default (Mauricio, 11-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * La caja es el precio de promoción; el blíster y la tableta
+         * suelta salen más caros por unidad: abrir la caja deja sueltas
+         * que se vencen, el blíster reenvasado lleva bolsa y etiqueta, y
+         * vender suelto es más trabajo de mostrador.
+         *
+         * El que manda está en `margenes_objetivo`, por tipo de ítem y con
+         * vigencia (pantalla «Márgenes y recargos»). Esto es solo lo que
+         * recibe una fila nueva cuando nadie dijo otra cosa.
+         */
+        'recargo_por_fraccionar' => [
+            'envase' => '0.10',
+            'suelta' => '0.25',
+        ],
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * REDONDEO DE LA LISTA — siempre HACIA ARRIBA (11-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Precios de mostrador, sin centavos raros: L 1.85 la tableta,
+         * L 16.00 el blíster, L 145 la caja. Hacia arriba y nunca al más
+         * cercano: redondear hacia abajo dejaría a la cuarta edad pagando
+         * menos que el mínimo, que es pérdida.
+         *
+         * Cada escalón dice hasta dónde vale (sin incluir) y a qué paso
+         * se sube. El último no tiene tope.
+         */
+        'redondeo_de_lista' => [
+            ['menor_que' => '10', 'a' => '0.05'],
+            ['menor_que' => '100', 'a' => '0.50'],
+            ['menor_que' => null, 'a' => '1'],
+        ],
     ],
 
     /*

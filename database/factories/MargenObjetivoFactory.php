@@ -27,6 +27,8 @@ class MargenObjetivoFactory extends Factory
         return [
             'tipo_item'      => null,
             'porcentaje'     => '1.2000',
+            'recargo_envase' => '0.1000',
+            'recargo_suelta' => '0.2500',
             'motivo'         => 'Default de la instalación para esta prueba',
             'vigencia_desde' => '2026-01-01',
             'vigencia_hasta' => null,

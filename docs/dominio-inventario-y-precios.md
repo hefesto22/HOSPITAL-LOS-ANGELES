@@ -116,15 +116,22 @@ Reglas que esto arrastra:
 ### 3.1.1 La tableta o la caja sin abrir — DECIDIDO (10-oct-2026)
 
 > **Mauricio:** «Cuando son tabletas debería poderse poner si se dispensa en tableta o caja. La unidad de envase está bien porque es donde viene envasado, y a veces el envase es un frasco que trae 100. Pero debería poderse manejar el envase y cómo se dispensa.»
+>
+> **Mauricio (11-oct-2026):** «El blíster es una presentación que se vende, pero casi siempre llega en cajas, así que si una caja tiene 100 pastillas y el blíster son 10 pastillas se pueden sacar 10 blísteres de una caja.»
 
 | Decisión | Resolución |
 |---|---|
 | Qué hay que configurar | **Nada nuevo.** «Se dispensa en» ya dice lo menos que se entrega (y es la unidad del kardex y del precio); cada presentación cargada ya es un envase que se puede entregar cerrado. Un interruptor por presentación («también se vende sin abrir») se probó y se sacó el mismo día: pedía contestar algo que la ficha ya dice |
+| Dónde se cargan los envases (11-oct-2026) | En la ficha, **«Formas de venta»**, junto con el producto y también al crearlo: la unidad suelta sale de «Se dispensa en» y no se carga; «+ Blíster», «+ Caja», «+ Frasco» agregan la fila con el envase elegido y solo falta cuántas trae (la caja, en total de tabletas). Al guardar se crean las presentaciones con su nombre (`CAJA X 100 TAB`). Una forma por la que ya entró mercadería (lotes, recepciones, cargos, préstamos o precio propio) **no cambia de tamaño ni se quita**; una que nunca se usó, sí. La lista «Presentaciones de compra» dejó de existir en farmacia (`SincronizadorDeFormasDeVenta`) |
+| El envase principal (11-oct-2026) | Se elige con la **estrella**, que está en cada fila y en la línea de la suelta. Mientras nadie elija, es el más grande (la caja en las tabletas). La suelta también puede ser la principal: el suero que se dispensa por BOLSA y llega en CAJA X 12. Se guarda en `es_predeterminada`; con la suelta como principal, ninguna presentación lo lleva. Hoy ordena el listado y los presupuestos; en la parte 2 es el envase al que se le pone el **precio mínimo** |
 | Al cobrar | «¿Cómo se le agrega?» ofrece la unidad de «Se dispensa en» y cada envase **sin abrir**. Con más de una forma, **nada viene marcado**: lo elige quien cobra y el formulario no deja seguir sin respuesta |
 | Qué significa vender el envase | **Multiplica la cantidad, no cambia el precio**: 1 CAJA X 100 = 100 TAB que salen del kardex, al precio de 100 tabletas. El renglón de la cuenta se lee «1 CAJA» (`cargos.cantidad_presentacion`) |
 | Qué envases NO se ofrecen | Los de una sola unidad («AMPOLLA X 1» es lo mismo que una ampolla) y los de lo que no se almacena (en un honorario las presentaciones son variantes, no cajas) |
-| De qué lote sale la caja sin abrir | Solo de lotes recibidos **en esa presentación**. Una caja no se arma con tabletas de un lote de blíster (§9.F9) |
-| Caja partida por FEFO entre dos lotes | Los envases se reparten en proporción a lo que salió de cada lote y el residuo va a la última fila: la suma da exactamente lo vendido |
+| De qué lote sale un envase sin abrir (11-oct-2026) | **Entero y de UN solo lote**: del que entró en ese envase, o del que entró en uno más grande que **lo trae adentro** —el BLISTER X 10 sale de un lote de CAJA X 100—. Al revés no: una caja no se arma con blísteres ni con lo que quedó de una caja abierta (§9.F9) |
+| Qué envase trae otros adentro | Las tres cosas juntas: (1) su unidad lo dice —**Unidades › «Trae otros envases adentro»**, una vez por tipo de envase: CAJA sí; FRASCO no, porque trae las tabletas sueltas—; (2) son de tipos distintos —una CAJA X 30 no trae cajas de 10—; (3) el contenido es múltiplo exacto —una CAJA X 100 no trae blísteres de 14— |
+| Cuántos hay sin abrir en un lote | Solo los enteros, como se cuentan en el estante: lo suelto se saca de lo ya abierto. De un lote de cajas con 95 tabletas salen **9 blísteres y ninguna caja**; con 160, una caja. «¿De dónde sale?» muestra ese número y nombra el envase a abrir: «sacalo del lote X, de una CAJA X 100» |
+| Varios envases de varios lotes | Una fila por lote con sus envases enteros: dos cajas de un lote y una de otro son filas de 2 y 1, y la suma da exactamente lo vendido |
+| Precio del blíster sacado de una caja | El de la tableta en la caja, por diez: caja a L 120 → L 1.20 la tableta → **L 12 el blíster** (regla de Mauricio, §4.5) |
 
 La regla vive en `App\Services\FormasDeCobro` y la prueba `tests/Feature/Cuentas/CajaSinAbrirTest.php`.
 
@@ -229,7 +236,7 @@ Y hay un cambio de fondo: antes el piso de 120 % se tocaba solo con pacientes de
 
 ### 4.5 Política de precio — DECIDIDA
 
-> ⚠️ **Cambio en curso (11-oct-2026) — parte 2, todavía no construida.** Mauricio decidió que el piso ya no salga de `costo × (1 + margen)` sino que **se escriba directo, por envase**: *«se le coloca precio mínimo a la caja y de ahí se calcula el precio de las presentaciones; si la caja trae 100 pastillas y cuesta 120, la pastilla sale a 1.20, así que un blíster de 10 se vende a 12 mínimo»*. El resto de esta sección sigue valiendo igual: **un solo precio de lista para todos**, `lista = mínimo ÷ (1 − descuento máximo)`, y ningún descuento puede bajar del mínimo. Ejemplo con 40 % de cuarta edad: caja mínimo L 120 → lista L 200 (joven), L 150 (tercera edad), L 120 (cuarta).
+> ✅ **Construido el 11-oct-2026 — el precio de farmacia se escribe como el MÍNIMO del envase principal.** Mauricio: *«la caja a 120 es lo mínimo que puede pagar la cuarta edad; menos de ahí se considera pérdida»*. El resto de esta sección sigue valiendo igual: **un solo precio de lista para todos**, `lista = mínimo ÷ (1 − descuento máximo)`, y ningún descuento puede bajar del mínimo. Detalle en §4.6.
 
 > **Decisión de Mauricio, 17-ago-2026:**
 > **el margen nunca baja del 120 % en medicamentos, sin importar la edad del paciente ni el descuento legal que le corresponda.**
@@ -274,6 +281,36 @@ Por eso los porcentajes van como **configuración con vigencia y jamás hardcode
 **Lo que todavía conviene hacer:** un abogado debería leer el ejemplar de La Gaceta No. 31,361 del 21-jul-2007 y confirmar que el Artículo 30 no fue reformado por ningún decreto posterior al 45-2025. La verificación de este documento se hizo contra el texto de la ley publicado por la Biblioteca Virtual en Salud y contra el título oficial del Decreto 45-2025 en el portal del SAR; es sólido, pero no reemplaza a un abogado revisando la consolidación completa.
 
 ---
+
+
+### 4.6 Precio por forma de venta — DECIDIDO Y CONSTRUIDO (11-oct-2026)
+
+> **Mauricio:** «Al colocarle precio sería a la total, cuánto se debe de vender, para que calcule de la mejor manera el desglose de cómo se vende cada cosa… si compra la caja, 120 es el precio de promoción.»
+
+| Decisión | Resolución |
+|---|---|
+| Qué se escribe | **Un solo número**: el mínimo del envase principal (el de la estrella en «Formas de venta») —lo que paga la cuarta edad—. «Fijar el precio de venta», en la pestaña Precios del producto |
+| Lo demás | Se calcula y se muestra antes de guardar, en una tabla: lista para todos, tercera y cuarta edad, por cada forma |
+| La caja es la promoción | El blíster y la tableta suelta llevan **recargo por unidad**: por defecto **+10 % el envase más chico** y **+25 % lo suelto**. Los envases más grandes que el principal no llevan recargo |
+| Dónde se configuran los recargos | **«Márgenes y recargos»**, por tipo de ítem y con vigencia (columnas `recargo_envase` y `recargo_suelta` de `margenes_objetivo`); y al fijar el precio se pueden cambiar **para ese producto** |
+| Lista | `mínimo ÷ (1 − descuento máximo)`, redondeada **hacia arriba**: a L 0.05 debajo de L 10, a L 0.50 hasta L 100 y a L 1 arriba (`sihla.precios.redondeo_de_lista`). Hacia arriba para que la cuarta edad nunca pague menos que el mínimo |
+| Qué se guarda | La suelta: la fila sin envase, precio por unidad. Cada envase: su fila, con el precio por unidad **y el del envase entero exacto** (`tarifarios.precio_envase`) |
+| Cómo se cobra | **El precio es de la forma en que se vende, no del lote del que sale.** La caja sin abrir se cobra a `precio_envase` × cajas —exacto, sin pasar por el unitario—; el blíster sin abrir, al del blíster aunque salga de una caja; lo suelto, al de la suelta |
+
+**Golden tests** (`tests/Feature/Catalogo/PrecioPorFormaDeVentaTest.php`):
+
+| Mínimo de la caja | Forma | Lista | Tercera (25 %) | Cuarta (40 %) |
+|---|---|---:|---:|---:|
+| L 120 | CAJA X 100 ★ | **L 200.00** | L 150.00 | L 120.00 |
+| | BLÍSTER X 10 (+10 %) | **L 22.00** | L 16.50 | L 13.20 |
+| | TABLETA (+25 %) | **L 2.50** | L 1.87 | L 1.50 |
+| L 87 | CAJA X 100 ★ | **L 145.00** | L 108.75 | L 87.00 |
+| | BLÍSTER X 10 | **L 16.00** | L 12.00 | L 9.60 |
+| | TABLETA | **L 1.85** | L 1.39 | L 1.11 |
+
+⚠️ La tercera edad paga **L 1.87** la tableta de L 2.50 y no 1.88: el descuento (L 0.625) se redondea a L 0.63 y se resta, igual que en la cuenta.
+
+⚠️ **Suero:** si la principal es la unidad suelta (la BOLSA, estrella en la línea de la suelta), la CAJA X 12 sale a 12 bolsas sin recargo: no se cobra más por llevarse más.
 
 ## 5. Convenios y seguros
 

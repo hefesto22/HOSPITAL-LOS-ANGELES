@@ -18,7 +18,8 @@ class ListMargenesObjetivo extends ListRecords
     {
         return 'El precio de lista se calcula con estos números y con el descuento máximo de ley: '
             .'costo × (1 + margen) ÷ (1 − descuento). Dividir por el descuento es lo que convierte '
-            .'el margen en piso garantizado y no en objetivo que se incumple con cada paciente mayor.';
+            .'el margen en piso garantizado y no en objetivo que se incumple con cada paciente mayor. '
+            .'Los recargos dicen cuánto más se cobra por unidad el blíster y la tableta suelta que la caja.';
     }
 
     /**

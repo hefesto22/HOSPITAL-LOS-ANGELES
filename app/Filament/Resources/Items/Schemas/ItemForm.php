@@ -176,11 +176,16 @@ final class ItemForm
      * las presentaciones, que es justo lo que se carga después. Mauricio:
      * «demasiado espacio, hay que hacer mucho scroll».
      *
-     * Quedan tres renglones:
+     * Quedan tres renglones, y debajo las formas de venta:
      *
      *   Tipo                 | Categoría          | Código
      *   Nombre               | Principios activos
      *   Se dispensa en | Código de barras | Nota
+     *   Formas de venta: TABLETA suelta · BLÍSTER de 10 · CAJA de 100
+     *
+     * Las formas de venta viven acá y no en una lista aparte desde el
+     * 11-oct-2026: se cargan con el producto, también al crearlo
+     * (`FormasDeVenta`).
      *
      * Lo que explicaban las descripciones de sección va en el ⓘ del
      * rótulo de cada campo: se lee al pasar el mouse y no ocupa renglón.
@@ -215,6 +220,8 @@ final class ItemForm
                 ->columnSpan(2),
             self::campoDescripcion(AmbitoCatalogo::Productos)
                 ->columnSpan(2),
+
+            ...FormasDeVenta::componentes(),
 
             self::campoSeAlmacena(AmbitoCatalogo::Productos),
         ];
@@ -1517,6 +1524,11 @@ final class ItemForm
             ->searchable()
             ->native(false)
             ->required()
+            /*
+             * `live()` porque las formas de venta se leen con esto: «1
+             * CAJA = 100 TAB» y la unidad suelta de la primera línea.
+             */
+            ->live()
             ->placeholder('TABLETA, ML, AMPOLLA…')
             ->hintIcon(
                 'heroicon-o-information-circle',

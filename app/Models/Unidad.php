@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $simbolo
  * @property MagnitudDeMedida $magnitud
  * @property bool $permite_fraccion
+ * @property bool $contiene_envases
  */
 class Unidad extends Model
 {
@@ -43,6 +44,7 @@ class Unidad extends Model
         'simbolo',
         'magnitud',
         'permite_fraccion',
+        'contiene_envases',
     ];
 
     /**
@@ -66,6 +68,7 @@ class Unidad extends Model
         return [
             'magnitud'         => MagnitudDeMedida::class,
             'permite_fraccion' => 'boolean',
+            'contiene_envases' => 'boolean',
         ];
     }
 

@@ -47,6 +47,14 @@ final class PrecioNoFijableException extends SihlaException
         );
     }
 
+    public static function sinMinimo(): self
+    {
+        return new self(
+            'Falta el mínimo: lo menos que se puede cobrar por el envase principal, lo que paga la '
+            .'cuarta edad. Sin ese número no hay de dónde sacar los demás precios.'
+        );
+    }
+
     public static function yaHayCondicionPosterior(string $convenio, string $desde): self
     {
         return new self(

@@ -50,6 +50,18 @@ final class MargenesObjetivoTable
                     ->description(fn (MargenObjetivo $record): string => 'L 100 de costo se venden dejando L '
                         .Decimal::de('100')->por($record->fraccion())->redondeado(2)),
 
+                /*
+                 * Cuánto más se cobra por unidad al fraccionar: el
+                 * blíster sacado de la caja y la tableta suelta
+                 * (Mauricio, 11-oct-2026).
+                 */
+                TextColumn::make('recargo_envase')
+                    ->label('Al fraccionar')
+                    ->state(fn (MargenObjetivo $record): string => 'Envase chico +'
+                        .$record->recargoEnvase()->comoPorcentaje())
+                    ->description(fn (MargenObjetivo $record): string => 'Suelta +'
+                        .$record->recargoSuelta()->comoPorcentaje()),
+
                 TextColumn::make('vigencia_desde')
                     ->label('Desde')
                     ->date('d/m/Y')

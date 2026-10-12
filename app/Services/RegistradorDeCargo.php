@@ -19,7 +19,6 @@ use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Almacen;
 use App\Models\Cargo;
 use App\Models\Cuenta;
-use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
@@ -89,6 +88,7 @@ final class RegistradorDeCargo
         private readonly RegistradorDeMovimiento $movimientos,
         private readonly CalculadoraDeCostoPromedio $costos,
         private readonly ConsultorDeExistencias $existencias,
+        private readonly FormasDeCobro $formas,
     ) {}
 
     /**
@@ -253,7 +253,7 @@ final class RegistradorDeCargo
 
         $fechaServicio = $ocurridoEn;
 
-        $precio = $this->resolverPrecio($linea, $cuenta, $fechaServicio, $lote);
+        $precio = $this->resolverPrecio($linea, $cuenta, $fechaServicio);
         $descuento = $this->descuentoDe($encuentro->persona, $item, $fechaServicio);
         $cobertura = $this->coberturas->para($cuenta, $precio->fila);
 
@@ -284,6 +284,13 @@ final class RegistradorDeCargo
                 presupuestoLineaId: $linea->presupuestoLineaId,
                 politica: $linea->politica,
                 textoDelCargo: $linea->textoDelCargo,
+                /*
+                 * El envase y cuántos de ESTA fila: con ellos la
+                 * calculadora cobra la caja sin abrir a su precio entero
+                 * y no a cien veces el unitario.
+                 */
+                presentacion: $this->presentacionDelCargo($item, $linea),
+                envases: $envases,
             ),
             precio: $precio,
             descuentoLegal: $descuento,
@@ -397,19 +404,20 @@ final class RegistradorDeCargo
      * Cuántos envases le tocan a cada fila del reparto por lote.
      *
      * ─────────────────────────────────────────────────────────────────
-     * 🔴 UNA CAJA PARTIDA EN DOS LOTES SIGUE SIENDO UNA CAJA
+     * 🔴 LOS ENVASES SE REPARTEN ENTRE LAS FILAS, NO SE COPIAN
      * ─────────────────────────────────────────────────────────────────
      *
-     * Si las 100 tabletas de una caja salen 60 de un lote y 40 de otro,
-     * se asientan dos filas. Con los envases copiados enteros a cada una,
-     * el renglón —que los suma— diría «2 CAJA» por 100 tabletas: una
+     * Tres cajas sin abrir pueden salir dos de un lote y una de otro: se
+     * asientan dos filas. Con los envases copiados enteros a cada una, el
+     * renglón —que los suma— diría «6 CAJA» por trescientas tabletas: una
      * cantidad que nadie entregó, en la factura que el paciente lee.
      *
-     * Se reparten en la proporción de lo que salió de cada lote, y el
-     * residuo del redondeo va a la última fila, para que la suma dé
-     * exactamente lo vendido. Una parte que redondea a cero queda sin
-     * envases: la base prohíbe el cero, y la fila igual dice de qué
-     * presentación salió.
+     * Se reparten en la proporción de lo que salió de cada lote. Como un
+     * envase sin abrir sale entero de un solo lote (`repartirPorLote()`),
+     * cada fila recibe envases enteros: 2 y 1. El residuo del redondeo va
+     * igual a la última fila, para que la suma dé exactamente lo vendido;
+     * una parte que redondea a cero queda sin envases: la base prohíbe el
+     * cero, y la fila igual dice de qué presentación salió.
      *
      * @param list<array{lote: Lote|null, cantidad: Decimal}> $repartos
      *
@@ -466,15 +474,22 @@ final class RegistradorDeCargo
 
         /*
          * ─────────────────────────────────────────────────────────────
-         * 🔴 EL ENVASE SIN ABRIR SALE DE UN LOTE DE ESE ENVASE
+         * 🔴 EL ENVASE SIN ABRIR SALE ENTERO, DE UN LOTE QUE LO TRAE
          * ─────────────────────────────────────────────────────────────
          *
          * Una caja de 100 vendida sin abrir es una caja que estaba en el
          * estante con su lote impreso. Si FEFO la armara con tabletas de
-         * un lote de blíster, el cargo diría que el paciente se llevó ese
-         * lote y la caja en la mano diría otro: ante un retiro de
+         * un lote de blíster —o con las 60 que quedaban en una caja ya
+         * abierta y 40 de otra—, el cargo diría que el paciente se llevó
+         * un lote y la caja en la mano diría otro: ante un retiro de
          * mercado, la trazabilidad lote → paciente (§9.F9) apuntaría al
          * paciente equivocado.
+         *
+         * Así que de cada lote se toman solo envases enteros, y solo de
+         * los lotes que entraron en ese envase o en uno que lo trae
+         * adentro: el BLISTER X 10 sí sale de un lote de CAJA X 100
+         * (Mauricio, 11-oct-2026). La regla es de
+         * `FormasDeCobro::sinAbrirEnElLote()`.
          *
          * Solo para lo que se vende sin abrir. La tableta suelta sigue
          * saliendo de donde FEFO diga, que es la regla de siempre.
@@ -483,12 +498,9 @@ final class RegistradorDeCargo
             ? $this->presentacionDelCargo($linea->item, $linea)
             : null;
 
-        if ($sinAbrir instanceof ItemPresentacion) {
-            $disponibles = $disponibles->filter(
-                fn (Existencia $existencia): bool => $existencia->lote_id !== null
-                    && $existencia->lote->item_presentacion_id === $sinAbrir->id,
-            );
-        }
+        $presentaciones = $sinAbrir instanceof ItemPresentacion
+            ? $this->presentacionesDe($linea->item)
+            : null;
 
         $repartos = [];
         $pendiente = $linea->cantidad;
@@ -499,6 +511,15 @@ final class RegistradorDeCargo
             }
 
             $saldo = Decimal::de((string) $existencia->getAttribute('cantidad'));
+
+            if ($sinAbrir instanceof ItemPresentacion && $presentaciones !== null) {
+                $saldo = $this->formas->sinAbrirEnElLote(
+                    envase: $sinAbrir,
+                    envaseDelLote: $existencia->lote_id === null ? null : $existencia->lote->item_presentacion_id,
+                    saldo: $saldo,
+                    presentaciones: $presentaciones,
+                );
+            }
 
             if ($saldo->esCero() || $saldo->esNegativo()) {
                 continue;
@@ -555,7 +576,6 @@ final class RegistradorDeCargo
         LineaDeCargo $linea,
         Cuenta $cuenta,
         CarbonInterface $fechaServicio,
-        ?Lote $lote = null,
     ): PrecioResuelto {
         /*
          * 🔴 EL PRECIO ACORDADO GANA (ADR-0009).
@@ -581,11 +601,22 @@ final class RegistradorDeCargo
                 sede: $cuenta->sede,
 
                 /*
-                 * El envase sale del lote que FEFO eligió: es de ese
-                 * frasco de donde se está sirviendo, y por eso es su
-                 * precio el que corresponde.
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 EL PRECIO ES DE LA FORMA EN QUE SE VENDE (11-oct-2026)
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Antes era el del envase del LOTE del que se servía. Con
+                 * la caja como precio de promoción eso cobraba la tableta
+                 * suelta al precio de la caja solo porque salía de una
+                 * caja. Ahora: la caja sin abrir, al precio de la caja; el
+                 * blíster sin abrir, al del blíster —aunque salga de un
+                 * lote de cajas—; lo suelto, al de la suelta, que es la
+                 * fila sin envase. Sin fila propia del envase se cae a la
+                 * de la suelta, que nunca es más barata.
                  */
-                presentacion: $lote?->presentacion,
+                presentacion: $this->envaseDelCargo($linea->item, $linea) instanceof Decimal
+                    ? $this->presentacionDelCargo($linea->item, $linea)
+                    : null,
             );
         } catch (PrecioNoDefinidoException) {
             throw CargoException::sinPrecio(
@@ -687,15 +718,6 @@ final class RegistradorDeCargo
     }
 
     /**
-     * Cuántos envases se cobraron, o nulo cuando no se cobró por envase.
-     *
-     * ⚠️ Devuelve nulo también cuando la presentación NO es de este
-     * ítem. Una de otro producto dejaría el renglón diciendo «1 CAJA X
-     * 100» de algo que se entregó en frasco, y ese es un error que el
-     * CHECK de la base no puede ver: las dos columnas estarían llenas y
-     * la fila sería válida.
-     */
-    /**
      * De qué envase salió, valga o no como unidad de cobro.
      *
      * 🔴 Esto es el ORIGEN y se guarda SIEMPRE que la presentación sea de
@@ -719,6 +741,15 @@ final class RegistradorDeCargo
             : null;
     }
 
+    /**
+     * Cuántos envases se cobraron, o nulo cuando no se cobró por envase.
+     *
+     * ⚠️ Devuelve nulo también cuando la presentación NO es de este
+     * ítem. Una de otro producto dejaría el renglón diciendo «1 CAJA X
+     * 100» de algo que se entregó en frasco, y ese es un error que el
+     * CHECK de la base no puede ver: las dos columnas estarían llenas y
+     * la fila sería válida.
+     */
     private function envaseDelCargo(Item $item, LineaDeCargo $linea): ?Decimal
     {
         if (! $this->presentacionDelCargo($item, $linea) instanceof ItemPresentacion) {
@@ -732,6 +763,21 @@ final class RegistradorDeCargo
         }
 
         return $envases;
+    }
+
+    /**
+     * Las presentaciones del ítem con su unidad, para saber de qué lotes
+     * puede salir un envase sin abrir. Solo se consultan cuando se vende
+     * uno: la tableta suelta no las necesita.
+     *
+     * @return Collection<int, ItemPresentacion>
+     */
+    private function presentacionesDe(Item $item): Collection
+    {
+        return ItemPresentacion::query()
+            ->with('unidad')
+            ->where('item_id', $item->id)
+            ->get();
     }
 
     /**

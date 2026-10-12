@@ -26,6 +26,7 @@ class UnidadFactory extends Factory
             'simbolo'          => null,
             'magnitud'         => MagnitudDeMedida::Conteo,
             'permite_fraccion' => false,
+            'contiene_envases' => false,
         ];
     }
 
@@ -40,5 +41,13 @@ class UnidadFactory extends Factory
     public function fraccionable(): self
     {
         return $this->state(fn (): array => ['permite_fraccion' => true]);
+    }
+
+    /**
+     * Un envase que trae otros adentro: la CAJA que trae blísteres.
+     */
+    public function queTraeEnvases(): self
+    {
+        return $this->state(fn (): array => ['contiene_envases' => true]);
     }
 }

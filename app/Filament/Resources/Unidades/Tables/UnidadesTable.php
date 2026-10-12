@@ -44,6 +44,12 @@ final class UnidadesTable
                     ->alignCenter()
                     ->boolean()
                     ->tooltip('Si no los admite, ninguna salida del kardex puede tener fracción.'),
+
+                IconColumn::make('contiene_envases')
+                    ->label('Trae envases')
+                    ->alignCenter()
+                    ->boolean()
+                    ->tooltip('De una CAJA que entró se venden blísteres sin abrir. De un FRASCO de tabletas, no.'),
             ])
             ->defaultSort('nombre')
             ->paginated([25, 50, 100])

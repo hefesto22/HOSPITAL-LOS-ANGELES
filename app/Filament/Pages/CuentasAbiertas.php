@@ -2149,38 +2149,29 @@ class CuentasAbiertas extends Page
             return $this->estantesPorItem[$memoria];
         }
 
-        $saldos = Existencia::query()
-            ->where('item_id', $item->id)
-            /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 SOLO LOS DEL ENVASE QUE SE ESTÁ COBRANDO
-             * ─────────────────────────────────────────────────────────
-             *
-             * Sin este filtro, la existencia sumaba TODOS los mililitros
-             * del jarabe —los frascos de 60, los de 80 y los de 120— y
-             * después los dividía entre 60. El resultado era «38 FRASCO»:
-             * un número que no corresponde a ningún frasco que exista en
-             * el estante, y que promete una entrega que el hospital no
-             * puede cumplir.
-             *
-             * Cada lote sabe de qué presentación es, así que la pregunta
-             * correcta es cuántos frascos DE ESE ENVASE hay, no cuántos
-             * cabrían si todo el líquido estuviera en frascos de 60.
-             *
-             * Nulo = sin envase elegido, y ahí sí se suma todo: es el
-             * caso del pase de presupuesto y del ítem que se cobra por
-             * unidad suelta.
-             */
-            ->when(
-                $presentacionId !== null,
-                fn (Builder $consulta): Builder => $consulta->whereHas(
-                    'lote',
-                    fn (Builder $lote): Builder => $lote->where('item_presentacion_id', $presentacionId),
-                ),
-            )
-            ->selectRaw('almacen_id, sum(cantidad) as total')
-            ->groupBy('almacen_id')
-            ->pluck('total', 'almacen_id');
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 CON UN ENVASE ELEGIDO, SOLO LOS ENVASES SIN ABRIR
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Sumar todo y dividir entre lo que trae el envase daba «38
+         * FRASCO» con los mililitros de los frascos de 60, de 80 y de
+         * 120: un número que no corresponde a ningún frasco del estante y
+         * que promete una entrega que el hospital no puede cumplir. La
+         * cuenta se hace lote por lote en `sinAbrirPorAlmacen()`.
+         *
+         * Nulo = sin envase elegido, y ahí sí se suma todo: es el caso
+         * del pase de presupuesto y del ítem que se cobra por unidad
+         * suelta.
+         */
+        $saldos = $presentacionId === null
+            ? Existencia::query()
+                ->where('item_id', $item->id)
+                ->selectRaw('almacen_id, sum(cantidad) as total')
+                ->groupBy('almacen_id')
+                ->pluck('total', 'almacen_id')
+                ->all()
+            : $this->sinAbrirPorAlmacen($item, $presentacionId);
 
         /** @var Collection<int, Almacen> $almacenes */
         $almacenes = AlmacenesDelUsuario::elegibles()->vigentes()->orderBy('nombre')->get();
@@ -2203,6 +2194,62 @@ class CuentasAbiertas extends Page
                 return $dispensa !== 0 ? $dispensa : $otro['hay']->comparar($uno['hay']);
             })
             ->values();
+    }
+
+    /**
+     * Cuánto hay del envase sin abrir en cada estante, en unidades del
+     * kardex.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LOTE POR LOTE, Y SOLO LOS ENVASES ENTEROS
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Dos cajas abiertas con 60 tabletas cada una son 120 tabletas y
+     * CERO cajas sin abrir. Sumar primero y dividir después prometía una
+     * caja que no está en el estante. Se cuenta cada lote por separado,
+     * con la misma regla con la que después se descuenta
+     * (`FormasDeCobro::sinAbrirEnElLote()`): de un lote de cajas con 95
+     * tabletas salen 9 blísteres y ninguna caja.
+     *
+     * Entran los lotes del envase y los de uno que lo trae adentro: el
+     * BLISTER X 10 se ofrece aunque todo lo que haya sean cajas.
+     *
+     * @return array<int, string> por almacén
+     */
+    private function sinAbrirPorAlmacen(Item $item, int $presentacionId): array
+    {
+        $envase = $this->presentacionDe($item, $presentacionId);
+
+        if (! $envase instanceof ItemPresentacion) {
+            return [];
+        }
+
+        $formas = app(FormasDeCobro::class);
+        $presentaciones = $this->presentacionesDe($item);
+
+        $filas = Existencia::query()
+            ->join('lotes', 'existencias.lote_id', '=', 'lotes.id')
+            ->where('existencias.item_id', $item->id)
+            ->whereIn('lotes.item_presentacion_id', $formas->envasesQueLoTraen($envase, $presentaciones))
+            ->conSaldo()
+            ->get(['existencias.almacen_id', 'existencias.cantidad', 'lotes.item_presentacion_id']);
+
+        $porAlmacen = [];
+
+        foreach ($filas as $fila) {
+            $almacenId = (int) $fila->getAttribute('almacen_id');
+
+            $porAlmacen[$almacenId] = ($porAlmacen[$almacenId] ?? Decimal::cero())->sumar(
+                $formas->sinAbrirEnElLote(
+                    envase: $envase,
+                    envaseDelLote: (int) $fila->getAttribute('item_presentacion_id'),
+                    saldo: $fila->cantidadDecimal(),
+                    presentaciones: $presentaciones,
+                ),
+            );
+        }
+
+        return array_map(static fn (Decimal $hay): string => $hay->exacto(), $porAlmacen);
     }
 
     /**
@@ -2565,6 +2612,19 @@ class CuentasAbiertas extends Page
 
         $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
 
+        /*
+         * Todo lo que hay en cada estante, para decir también lo suelto:
+         * «9 BLISTER + 5 TAB». Es la misma consulta memorizada que usa
+         * el resto de la pantalla, así que no cuesta otra.
+         */
+        $todo = [];
+
+        if ($presentacion instanceof ItemPresentacion) {
+            foreach ($this->estantesDe($item) as $estante) {
+                $todo[$estante['almacen']->id] = $estante['hay'];
+            }
+        }
+
         return $this->estantesDe($item, $presentacion?->id)
             /*
              * 🔴 LOS ESTANTES VACÍOS NO SE LISTAN.
@@ -2582,7 +2642,12 @@ class CuentasAbiertas extends Page
             ->reject(fn (array $estante): bool => $estante['hay']->esCero())
             ->mapWithKeys(fn (array $estante): array => [
                 $estante['almacen']->id => $estante['almacen']->nombre
-                    .' · '.$this->existenciaComoSeCobra($item, $estante['hay'], $unidadDeCobro),
+                    .' · '.$this->existenciaComoSeCobra(
+                        $item,
+                        $estante['hay'],
+                        $unidadDeCobro,
+                        $todo[$estante['almacen']->id] ?? null,
+                    ),
             ])
             ->all();
     }
@@ -2601,9 +2666,23 @@ class CuentasAbiertas extends Page
      * estante no puede cumplir.
      *
      * El kardex sigue en mililitros. Esto es solamente cómo se LEE.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LOS ENVASES ENTEROS Y LO SUELTO, LAS DOS COSAS (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * `$hay` son solo los envases sin abrir. Una caja con 95 tabletas,
+     * cobrando por blíster, decía «9 BLISTER» y las 5 del blíster roto
+     * desaparecían de la lectura. Mauricio: «exacto sería 9 blíster y 5
+     * tabletas». Con `$todo` —lo que hay en el estante— se dice lo
+     * suelto también: «9 BLISTER + 5 TAB».
      */
-    private function existenciaComoSeCobra(Item $item, Decimal $hay, ?string $unidadDeCobro): string
-    {
+    private function existenciaComoSeCobra(
+        Item $item,
+        Decimal $hay,
+        ?string $unidadDeCobro,
+        ?Decimal $todo = null,
+    ): string {
         $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
 
         if ($presentacion instanceof ItemPresentacion) {
@@ -2617,7 +2696,12 @@ class CuentasAbiertas extends Page
                  * El `?->` no protegía de nada y obligaba a inventar un
                  * «envases» que no puede ocurrir.
                  */
-                return self::cifraCorta($hay->entre($contenido)).' '.$presentacion->unidad->codigo;
+                $envases = self::cifraCorta($hay->entre($contenido)).' '.$presentacion->unidad->codigo;
+                $suelto = $todo instanceof Decimal ? $todo->restar($hay) : null;
+
+                return $suelto instanceof Decimal && $suelto->mayorQue('0')
+                    ? rtrim($envases.' + '.self::cifraCorta($suelto).' '.($item->unidadDispensacion->codigo ?? ''))
+                    : $envases;
             }
         }
 
@@ -4718,7 +4802,7 @@ class CuentasAbiertas extends Page
          * paquete, y se pone al día abajo con el agregador.
          */
         $lineas = $cuenta->cargos()
-            ->with(['item', 'almacen'])
+            ->with(['item', 'almacen', 'lote', 'presentacion'])
             ->orderBy('id')
             ->get()
             ->filter(fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta()
@@ -4757,9 +4841,33 @@ class CuentasAbiertas extends Page
                         cantidad: $cantidad,
                         claveIdempotencia: (string) Str::uuid(),
                         almacen: $almacen,
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 SE REHACE IGUAL: MISMO LOTE, MISMO ENVASE
+                         * ─────────────────────────────────────────────
+                         *
+                         * Lo único que cambia es la rebaja. Sin el
+                         * envase, el blíster volvía a nacer como diez
+                         * tabletas sueltas —L 40.50 en vez de L 38.50—
+                         * porque el precio sale de la forma en que se
+                         * vende (11-oct-2026, se vio en pantalla).
+                         *
+                         * Y el lote es el que el paciente se llevó: la
+                         * anulación lo devolvió a ese mismo lote, y
+                         * dejarlo al FEFO podía asentar otro. Ante un
+                         * retiro de mercado, la pregunta «a quién se le
+                         * dio el lote X» tiene que seguir contestándose
+                         * con la verdad (§9.F9).
+                         */
+                        lote: $cargo->lote_id === null ? null : $cargo->lote,
                         descuentoComercialPorcentaje: $fraccion,
                         motivoDescuento: $fraccion instanceof Decimal ? $motivo : null,
                         autorizadoPor: $fraccion instanceof Decimal ? $cuenta->descuento_hospital_por : null,
+                        presentacion: $cargo->presentacion,
+                        envases: is_numeric($cargo->cantidad_presentacion)
+                            ? Decimal::de($cargo->cantidad_presentacion)
+                            : null,
                     ));
                 }
             });
@@ -5438,7 +5546,12 @@ class CuentasAbiertas extends Page
         }
 
         return $this->presentacionesPorItem[$item->id] = ItemPresentacion::query()
-            ->with('unidad:id,codigo,nombre')
+            /*
+             * `contiene_envases` va en la lista: con columnas nombradas,
+             * la que falta llega nula sin error (§9.M-6), y sin ella
+             * ningún blíster saldría de un lote de cajas.
+             */
+            ->with('unidad:id,codigo,nombre,contiene_envases')
             ->where('item_id', $item->id)
             ->orderBy('unidades_por_presentacion')
             ->get();
@@ -6192,21 +6305,18 @@ class CuentasAbiertas extends Page
         $lotes = app(ConsultorDeExistencias::class)->enOrdenFefo($item, $almacen);
 
         /*
-         * El envase sin abrir sale solo de lotes de ese envase, igual que
-         * en `RegistradorDeCargo`: si acá se nombraran los de cualquier
-         * envase, la pantalla mandaría a buscar la caja a un lote de
-         * blísteres.
+         * El envase sin abrir sale con la misma regla que en
+         * `RegistradorDeCargo`: entero, y de un lote que entró en ese
+         * envase o en uno que lo trae adentro. Si acá se nombraran otros,
+         * la pantalla mandaría a buscar la caja a un lote de blísteres, o
+         * a la caja que ya está abierta.
          */
-        $sinAbrir = app(FormasDeCobro::class)->esEnvaseEntero($forma, $this->presentacionesDe($item))
+        $formas = app(FormasDeCobro::class);
+        $presentaciones = $this->presentacionesDe($item);
+
+        $sinAbrir = $formas->esEnvaseEntero($forma, $presentaciones)
             ? $this->presentacionDeLaUnidad($item, $forma)
             : null;
-
-        if ($sinAbrir instanceof ItemPresentacion) {
-            $lotes = $lotes->filter(
-                fn (Existencia $saldo): bool => $saldo->lote_id !== null
-                    && $saldo->lote->item_presentacion_id === $sinAbrir->id,
-            );
-        }
 
         $nombres = [];
         $restante = $pedida;
@@ -6218,13 +6328,24 @@ class CuentasAbiertas extends Page
 
             $lote = $saldo->lote;
             $hay = $saldo->cantidadDecimal();
+            $delEnvase = $saldo->lote_id === null ? null : $lote->item_presentacion_id;
+
+            if ($sinAbrir instanceof ItemPresentacion) {
+                $hay = $formas->sinAbrirEnElLote($sinAbrir, $delEnvase, $hay, $presentaciones);
+
+                if (! $hay->mayorQue('0')) {
+                    continue;
+                }
+            }
+
             $sale = $hay->menorQue($restante) ? $hay : $restante;
 
-            $nombres[] = $lote instanceof Lote
+            $nombres[] = ($lote instanceof Lote
                 ? 'lote '.$lote->numero.($lote->fecha_vencimiento instanceof CarbonInterface
                     ? ' (vence '.$lote->fecha_vencimiento->format('d/m/Y').')'
                     : '')
-                : 'sin lote';
+                : 'sin lote')
+                .$this->deQueEnvaseSeSaca($sinAbrir, $delEnvase, $presentaciones);
 
             $restante = $restante->restar($sale);
         }
@@ -6236,6 +6357,24 @@ class CuentasAbiertas extends Page
         return count($nombres) === 1
             ? 'sacalo del '.$nombres[0]
             : 'sale de '.implode(' y después ', $nombres);
+    }
+
+    /**
+     * «, de una CAJA X 100» cuando el blíster sin abrir sale de un lote
+     * que entró en cajas: quien va al estante tiene que saber que hay que
+     * abrir una caja, y no buscar un blíster suelto que no está.
+     *
+     * @param Collection<int, ItemPresentacion> $presentaciones
+     */
+    private function deQueEnvaseSeSaca(?ItemPresentacion $sinAbrir, ?int $delEnvase, Collection $presentaciones): string
+    {
+        if (! $sinAbrir instanceof ItemPresentacion || $delEnvase === null || $delEnvase === $sinAbrir->id) {
+            return '';
+        }
+
+        $grande = $presentaciones->firstWhere('id', $delEnvase);
+
+        return $grande instanceof ItemPresentacion ? ', de una '.self::envaseCorto($grande) : '';
     }
 
     /**

@@ -64,6 +64,19 @@ final class UnidadForm
                         'Media ampolla que se abrió no es media existencia: es una ampolla consumida '
                         .'y una merma. Medio mililitro, en cambio, es una dosis.'
                     ),
+
+                /*
+                 * De qué lotes sale un envase sin abrir. Con esto
+                 * encendido en CAJA, el BLISTER X 10 se vende de un lote
+                 * que entró en CAJA X 100 (`FormasDeCobro`).
+                 */
+                Toggle::make('contiene_envases')
+                    ->label('Trae otros envases adentro')
+                    ->columnSpanFull()
+                    ->helperText(
+                        'Una CAJA trae blísteres o frascos: de una caja que entró se puede vender un '
+                        .'blíster sin abrir. Un FRASCO de tabletas no: adentro van sueltas.'
+                    ),
             ]);
     }
 }

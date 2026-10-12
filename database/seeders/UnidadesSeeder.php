@@ -72,10 +72,18 @@ class UnidadesSeeder extends Seeder
         'DIA'  => ['DÍA', 'd', MagnitudDeMedida::Tiempo, false],
     ];
 
+    /**
+     * Los envases que traen otros adentro: de una CAJA X 100 salen diez
+     * BLISTER X 10 sin abrir. Un FRASCO no: trae las tabletas sueltas.
+     *
+     * @var list<string>
+     */
+    private const TRAEN_ENVASES = ['CAJA'];
+
     public function run(): void
     {
         foreach (self::UNIDADES as $codigo => [$nombre, $simbolo, $magnitud, $permiteFraccion]) {
-            Unidad::query()->updateOrCreate(
+            $unidad = Unidad::query()->updateOrCreate(
                 ['codigo' => $codigo],
                 [
                     'nombre'           => $nombre,
@@ -84,6 +92,14 @@ class UnidadesSeeder extends Seeder
                     'permite_fraccion' => $permiteFraccion,
                 ],
             );
+
+            /*
+             * Solo al crearla. Si el hospital después le apagó «trae
+             * envases adentro», volver a sembrar no se lo enciende.
+             */
+            if ($unidad->wasRecentlyCreated && in_array($codigo, self::TRAEN_ENVASES, true)) {
+                $unidad->forceFill(['contiene_envases' => true])->save();
+            }
         }
 
         $this->command?->info('✓ '.count(self::UNIDADES).' unidades de medida sembradas.');

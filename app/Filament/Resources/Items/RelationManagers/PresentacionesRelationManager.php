@@ -31,6 +31,11 @@ use Illuminate\Support\HtmlString;
 /**
  * Presentaciones de compra de un ítem.
  *
+ * ⚠️ Desde el 11-oct-2026 farmacia no usa esta lista: los envases de un
+ * producto se cargan en la ficha, en «Formas de venta» (`FormasDeVenta`
+ * y `SincronizadorDeFormasDeVenta`). Queda para el catálogo de servicios,
+ * donde las presentaciones son variantes —el honorario de cada médico—.
+ *
  * ─────────────────────────────────────────────────────────────────────
  * QUÉ SE CARGA ACÁ Y QUÉ NO
  * ─────────────────────────────────────────────────────────────────────

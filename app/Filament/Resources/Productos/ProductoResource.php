@@ -6,7 +6,6 @@ namespace App\Filament\Resources\Productos;
 
 use App\Filament\Resources\Items\RelationManagers\ExistenciasRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
-use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
 use App\Filament\Resources\Items\Tables\ItemsTable;
 use App\Filament\Resources\Productos\Pages\CreateProducto;
@@ -130,16 +129,19 @@ class ProductoResource extends Resource
     }
 
     /**
-     * Los tres paneles que solo tienen sentido de este lado: en qué
-     * presentación se compra, a qué precio se vende, y cuánto hay hoy en
-     * cada almacén.
+     * Los paneles que solo tienen sentido de este lado: a qué precio se
+     * vende y cuánto hay hoy en cada almacén.
+     *
+     * En qué envases viene ya no es un panel: son las «Formas de venta»
+     * de la ficha, que se cargan con el producto (11-oct-2026). La lista
+     * de presentaciones sigue en el catálogo de servicios, donde son
+     * variantes —el honorario de cada médico—.
      *
      * @return array<int, class-string>
      */
     public static function getRelations(): array
     {
         return [
-            PresentacionesRelationManager::class,
             PreciosRelationManager::class,
             ExistenciasRelationManager::class,
         ];

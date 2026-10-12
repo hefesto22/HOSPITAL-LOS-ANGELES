@@ -56,16 +56,15 @@ final class ResolutorDePrecio
         ?ItemPresentacion $presentacion = null,
     ): PrecioResuelto {
         /*
-         * 🔴 El envase viene del LOTE del que se está sirviendo, no de
-         * una elección de quien cobra.
+         * 🔴 El envase es la FORMA en que se vende (11-oct-2026): la caja
+         * sin abrir trae su precio, el blíster el suyo, y lo suelto cae
+         * a la fila sin envase. Antes era el envase del lote del que se
+         * servía; con la caja como precio de promoción eso cobraba la
+         * tableta suelta al precio de la caja (`RegistradorDeCargo`).
          *
-         * El frasco de 60 ML y el de 80 ML costaron distinto el
-         * mililitro; si los dos se cobraran igual, el margen del hospital
-         * dependería de cuál estaba abierto y nadie lo sabría. Con el
-         * envase acá, el precio sigue al mismo frasco que el costo.
-         *
-         * Nulo cae al precio del producto entero, que es lo que existía
-         * antes y sigue siendo el respaldo.
+         * Nulo cae al precio del producto entero —el de la unidad
+         * suelta—, que es también el respaldo cuando un envase no tiene
+         * fila propia.
          */
         $fila = Tarifario::query()
             ->where('item_id', $item->id)

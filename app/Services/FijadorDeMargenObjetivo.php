@@ -45,7 +45,19 @@ use Illuminate\Support\Facades\DB;
 final class FijadorDeMargenObjetivo
 {
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * LOS RECARGOS VIAJAN CON EL MARGEN (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Son la misma política —cuánto deja lo que se vende— y viven en la
+     * misma fila. Sin recargos explícitos se conservan los del margen
+     * vigente de ese tipo, y si no hay ninguno, los del default de la
+     * instalación (`sihla.precios.recargo_por_fraccionar`): cambiar el
+     * margen no puede borrar en silencio lo que se decidió del blíster.
+     *
      * @param TipoItem|null $tipo nulo = el default de la instalación
+     * @param Decimal|null $recargoEnvase fracción: 0.10 = 10 %
+     * @param Decimal|null $recargoSuelta fracción: 0.25 = 25 %
      *
      * @throws MargenNoFijableException
      */
@@ -54,6 +66,8 @@ final class FijadorDeMargenObjetivo
         Decimal $fraccion,
         string $motivo,
         CarbonInterface $desde,
+        ?Decimal $recargoEnvase = null,
+        ?Decimal $recargoSuelta = null,
     ): MargenObjetivo {
         $dia = $desde->copy()->startOfDay();
 
@@ -64,7 +78,14 @@ final class FijadorDeMargenObjetivo
          *
          * @var MargenObjetivo $creado
          */
-        $creado = DB::transaction(function () use ($tipo, $fraccion, $motivo, $dia): MargenObjetivo {
+        $creado = DB::transaction(function () use (
+            $tipo,
+            $fraccion,
+            $motivo,
+            $dia,
+            $recargoEnvase,
+            $recargoSuelta,
+        ): MargenObjetivo {
             $posterior = MargenObjetivo::query()
                 ->where(fn (Builder $sub): Builder => $this->delMismoTipo($sub, $tipo))
                 ->whereDate('vigencia_desde', '>=', $dia->toDateString())
@@ -93,6 +114,8 @@ final class FijadorDeMargenObjetivo
             return MargenObjetivo::query()->create([
                 'tipo_item'      => $tipo,
                 'porcentaje'     => $fraccion->paraBase(4),
+                'recargo_envase' => ($recargoEnvase ?? $this->recargoEnvaseDe($vigente))->paraBase(4),
+                'recargo_suelta' => ($recargoSuelta ?? $this->recargoSueltaDe($vigente))->paraBase(4),
                 'motivo'         => $motivo,
                 'vigencia_desde' => $dia->toDateString(),
                 'vigencia_hasta' => null,
@@ -100,6 +123,33 @@ final class FijadorDeMargenObjetivo
         });
 
         return $creado;
+    }
+
+    private function recargoEnvaseDe(?MargenObjetivo $vigente): Decimal
+    {
+        return $vigente instanceof MargenObjetivo
+            ? $vigente->recargoEnvase()
+            : self::porDefecto('envase');
+    }
+
+    private function recargoSueltaDe(?MargenObjetivo $vigente): Decimal
+    {
+        return $vigente instanceof MargenObjetivo
+            ? $vigente->recargoSuelta()
+            : self::porDefecto('suelta');
+    }
+
+    /**
+     * El default de la instalación. Sin configuración, cero: un recargo
+     * inventado sería un precio que nadie decidió.
+     */
+    public static function porDefecto(string $cual): Decimal
+    {
+        $configurado = config('sihla.precios.recargo_por_fraccionar.'.$cual);
+
+        return is_string($configurado) && is_numeric($configurado)
+            ? Decimal::de($configurado)
+            : Decimal::cero();
     }
 
     /**

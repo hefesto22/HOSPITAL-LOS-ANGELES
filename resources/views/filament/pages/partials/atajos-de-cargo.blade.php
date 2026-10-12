@@ -49,6 +49,14 @@
             Agregar de una, el cargo se rechaza por falta de motivo con un
             aviso rojo que parece un error del sistema. El número se escribe
             y la pregunta ya está ahí.
+
+            🔴 `wire:model.live.blur`, NO `wire:model.blur` (11-oct-2026).
+            En Livewire 4 el `.blur` solo, sin `.live`, ya no le avisa al
+            servidor: guarda el valor en el navegador y nada más. El
+            descuento quedaba esperando hasta que alguien apretara Agregar,
+            y quien solo quería rebajar lo ya cargado lo veía no hacer
+            nada. Con `.live.blur` se aplica al salir del campo, y Enter
+            sale del campo en vez de mandar el formulario de abajo.
         --}}
         <div class="sihla-descuento" x-data="{ desc: @js($descuento), motivo: @js($motivo ?? '') }">
             <label class="sihla-descuento-titulo" for="sihla-descuento-tanda">Descuento del hospital</label>
@@ -62,8 +70,9 @@
                     max="{{ $tope }}"
                     step="0.01"
                     placeholder="0"
-                    wire:model.blur="descuentoDeLaTanda"
+                    wire:model.live.blur="descuentoDeLaTanda"
                     x-on:input="desc = $event.target.value"
+                    x-on:keydown.enter.prevent="$el.blur()"
                     @disabled($tope === '0.00')
                 >
                 <span class="sihla-descuento-signo">%</span>
@@ -82,8 +91,9 @@
                 class="sihla-descuento-motivo"
                 maxlength="200"
                 placeholder="¿Por qué? Lo puede dar cualquiera"
-                wire:model.blur="motivoDeLaTanda"
+                wire:model.live.blur="motivoDeLaTanda"
                 x-on:input="motivo = $event.target.value"
+                x-on:keydown.enter.prevent="$el.blur()"
                 x-show="Number(desc) > 0"
                 x-cloak
             >

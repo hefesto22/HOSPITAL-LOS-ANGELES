@@ -22,6 +22,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int $id
  * @property TipoItem|null $tipo_item nulo = default de la instalación
  * @property string $porcentaje
+ * @property string $recargo_envase fracción: 0.1000 = 10 %
+ * @property string $recargo_suelta fracción: 0.2500 = 25 %
  * @property string $motivo
  * @property CarbonInterface $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
@@ -44,6 +46,8 @@ class MargenObjetivo extends Model
         'motivo',
         'vigencia_desde',
         'vigencia_hasta',
+        'recargo_envase',
+        'recargo_suelta',
     ];
 
     /** @var list<string> */
@@ -59,6 +63,23 @@ class MargenObjetivo extends Model
             'vigencia_desde' => 'date',
             'vigencia_hasta' => 'date',
         ];
+    }
+
+    /**
+     * Cuánto más se cobra por unidad un envase más chico que el
+     * principal: el blíster sacado de la caja.
+     */
+    public function recargoEnvase(): Decimal
+    {
+        return Decimal::de($this->recargo_envase);
+    }
+
+    /**
+     * Cuánto más se cobra la unidad suelta que en el envase principal.
+     */
+    public function recargoSuelta(): Decimal
+    {
+        return Decimal::de($this->recargo_suelta);
     }
 
     public function fraccion(): Decimal

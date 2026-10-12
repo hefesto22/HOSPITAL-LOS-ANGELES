@@ -43,12 +43,12 @@ class MargenObjetivoResource extends Resource
 
     public static function getNavigationLabel(): string
     {
-        return 'Márgenes objetivo';
+        return 'Márgenes y recargos';
     }
 
     public static function getBreadcrumb(): string
     {
-        return 'Márgenes';
+        return 'Márgenes y recargos';
     }
 
     public static function getModelLabel(): string

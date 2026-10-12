@@ -28,12 +28,19 @@ use App\Models\Tarifario;
  */
 final readonly class PrecioResuelto
 {
+    /**
+     * @param Monto $precio por unidad del kardex
+     * @param Monto|null $porEnvase el envase entero, exacto, cuando la fila es de un envase
+     *                              (`tarifarios.precio_envase`); es el que se cobra al
+     *                              venderlo sin abrir
+     */
     public function __construct(
         public Monto $precio,
         public OrigenDelPrecio $origen,
         public ?Tarifario $fila,
         public ?ConvenioCondicion $condicion = null,
         public ?string $referenciaAcordada = null,
+        public ?Monto $porEnvase = null,
     ) {}
 
     /**
@@ -47,6 +54,7 @@ final readonly class PrecioResuelto
                 ? OrigenDelPrecio::PrecioDeLista
                 : OrigenDelPrecio::PrecioNegociado,
             fila: $fila,
+            porEnvase: $fila->montoDelEnvase(),
         );
     }
 
@@ -55,11 +63,19 @@ final readonly class PrecioResuelto
      */
     public static function conFactor(Tarifario $lista, ConvenioCondicion $condicion): self
     {
+        $envase = $lista->montoDelEnvase();
+
         return new self(
             precio: $condicion->aplicarA($lista->monto()),
             origen: OrigenDelPrecio::PorcentajePactado,
             fila: $lista,
             condicion: $condicion,
+            /*
+             * El mismo porcentaje sobre el envase entero, no sobre el
+             * unitario multiplicado: es lo que se le cobra al pagador por
+             * la caja, y tiene que salir del precio de la caja.
+             */
+            porEnvase: $envase instanceof Monto ? $condicion->aplicarA($envase) : null,
         );
     }
 

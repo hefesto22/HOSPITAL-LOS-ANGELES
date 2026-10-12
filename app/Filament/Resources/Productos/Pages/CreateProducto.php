@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Productos\Pages;
 
+use App\Domain\Exceptions\FormasDeVentaException;
 use App\Filament\Resources\Items\Pages\CreateItem;
+use App\Filament\Resources\Items\Schemas\FormasDeVenta;
 use App\Filament\Resources\Productos\ProductoResource;
 use App\Models\Item;
+use App\Services\SincronizadorDeFormasDeVenta;
 use App\Services\SincronizadorDePrincipiosActivos;
 use Filament\Notifications\Notification;
+use Filament\Support\Exceptions\Halt;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Alta de un producto de farmacia.
@@ -18,30 +24,68 @@ use Filament\Notifications\Notification;
  * dejaría dos caminos que escriben lo mismo, uno de los cuales
  * envejecería.
  *
- * Lo que sí cambia es a dónde termina: en farmacia, guardar el producto
- * es la MITAD del alta.
+ * Lo que sí cambia: el producto nace con sus formas de venta —la caja,
+ * el blíster— en la misma transacción, y al terminar se va a la ficha.
  */
 class CreateProducto extends CreateItem
 {
     protected static string $resource = ProductoResource::class;
 
     /**
+     * Cuántos envases nacieron con el producto, para que el aviso diga
+     * lo que hay y no lo que falta.
+     */
+    protected int $envasesCargados = 0;
+
+    /**
      * ─────────────────────────────────────────────────────────────────
-     * 🔴 GUARDAR NO TERMINA EL ALTA: EMPIEZA LA SEGUNDA MITAD
+     * 🔴 EL PRODUCTO NACE CON SUS FORMAS DE VENTA (11-oct-2026)
      * ─────────────────────────────────────────────────────────────────
      *
-     * `CreateItem` manda al listado, y para un servicio está bien: una
-     * cesárea se da de alta con su precio y ya está completa.
+     * Antes el alta era la mitad: había que guardar, volver a la ficha y
+     * cargar cada envase en su modal. Ahora la caja y el blíster vienen
+     * en el mismo formulario y se guardan juntos con el producto, o no
+     * se guarda nada (`SincronizadorDeFormasDeVenta`).
      *
-     * Un producto no. «ACETAMINOFEN TABLETA 800 MG» todavía no se puede
-     * comprar, ni recibir, ni escanear, ni cobrar: le faltan las
-     * presentaciones, que son lo único que existe de verdad en el
-     * estante. Mandar al listado obliga a buscar de nuevo el producto
-     * que se acaba de crear, entrar a editarlo y recién ahí seguir — tres
-     * pasos para continuar algo que nunca se había terminado.
-     *
-     * Se va a la ficha, donde la primera pestaña de abajo es
-     * «Presentaciones de compra».
+     * @param array<string, mixed> $data
+     */
+    protected function handleRecordCreation(array $data): Model
+    {
+        $formas = FormasDeVenta::paraGuardar($data[FormasDeVenta::CAMPO] ?? null);
+        $sueltaPrincipal = FormasDeVenta::esSi($data[FormasDeVenta::SUELTA_PRINCIPAL] ?? null);
+
+        unset($data[FormasDeVenta::CAMPO], $data[FormasDeVenta::SUELTA_PRINCIPAL]);
+
+        try {
+            $producto = DB::transaction(function () use ($data, $formas, $sueltaPrincipal): Model {
+                $creado = parent::handleRecordCreation($data);
+
+                if ($creado instanceof Item) {
+                    app(SincronizadorDeFormasDeVenta::class)->sincronizar($creado, $formas, $sueltaPrincipal);
+                }
+
+                return $creado;
+            });
+        } catch (FormasDeVentaException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se creó el producto')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            throw new Halt;
+        }
+
+        $this->envasesCargados = count($formas);
+
+        return $producto;
+    }
+
+    /**
+     * Se va a la ficha y no al listado: lo que sigue es el precio, y
+     * mandar al listado obligaba a buscar de nuevo el producto que se
+     * acababa de crear.
      */
     protected function getRedirectUrl(): string
     {
@@ -53,19 +97,23 @@ class CreateProducto extends CreateItem
     }
 
     /**
-     * El aviso dice qué falta, no que todo salió bien.
-     *
-     * «Producto creado» a secas se lee como final de trámite, y el
-     * producto todavía no sirve para nada.
+     * Sin envases el producto igual sirve —se recibe y se vende suelto—,
+     * pero casi nunca es lo que se quiso: el aviso lo dice.
      */
     protected function getCreatedNotification(): ?Notification
     {
+        if ($this->envasesCargados > 0) {
+            return Notification::make()
+                ->success()
+                ->title('Producto creado con sus formas de venta');
+        }
+
         return Notification::make()
             ->success()
-            ->title('Producto creado — falta la presentación')
+            ->title('Producto creado — se vende solo suelto')
             ->body(
-                'Agregale abajo cómo viene envasado: la caja de 100, el blíster de 12. Sin eso no '
-                .'se puede comprar, y el precio se calcula al recibir la primera compra.'
+                'Si llega en caja o en blíster, agregalo en «Formas de venta»: así se recibe y se '
+                .'cobra sin abrir.'
             );
     }
 

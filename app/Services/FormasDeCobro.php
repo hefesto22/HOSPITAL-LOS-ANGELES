@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Domain\ValueObjects\Decimal;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Models\Unidad;
 use Illuminate\Support\Collection;
 
 /**
@@ -44,6 +45,15 @@ use Illuminate\Support\Collection;
  * ⚠️ Solo lo que se almacena tiene envases que vender. En un honorario
  * las «presentaciones» son variantes —el Dr. Carlos, el Dr. Miguel—, no
  * cajas en un estante.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * DE DÓNDE SALE EL ENVASE SIN ABRIR (11-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Entero y de UN lote: del que entró en ese envase, o del que entró en
+ * uno más grande que lo trae adentro —el BLISTER X 10 sale de un lote
+ * que entró en CAJA X 100—. Al revés no: una caja no se arma con
+ * blísteres. Ver `envasesQueLoTraen()` y `sinAbrirEnElLote()`.
  *
  * ─────────────────────────────────────────────────────────────────────
  * POR QUÉ ESTO ES UNA CONVERSIÓN Y NO UN PRECIO DISTINTO
@@ -186,6 +196,169 @@ final class FormasDeCobro
     public function envasesEnteros(?string $clave, Decimal $cantidad, Collection $presentaciones): ?Decimal
     {
         return $this->esEnvaseEntero($clave, $presentaciones) ? $cantidad : null;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 DE QUÉ ENVASES RECIBIDOS SALE ESTE SIN ABRIR (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «el blíster es una presentación que se vende, pero casi
+     * siempre llega en cajas: si una caja trae 100 pastillas y el blíster
+     * son 10, de una caja se sacan 10 blísteres».
+     *
+     * Un envase sale sin abrir de un lote que entró:
+     *
+     *   · en ESE envase —la caja, de un lote de cajas—; o
+     *   · en uno más grande que lo trae ENTERO adentro.
+     *
+     * «Lo trae entero adentro» pide tres cosas, y ninguna sobra:
+     *
+     *   · Que el grande sea de una unidad que trae envases
+     *     (`unidades.contiene_envases`). Una CAJA X 100 trae blísteres; un
+     *     FRASCO X 100 trae las tabletas sueltas, y de ahí no sale ningún
+     *     blíster aunque 100 sea múltiplo de 10. Se marca una vez por
+     *     tipo de envase, no por producto.
+     *   · Que sean de tipos distintos. Una CAJA X 30 no trae cajas de 10:
+     *     son dos cajas de dos laboratorios.
+     *   · Que el contenido sea un múltiplo exacto. Una CAJA X 100 no trae
+     *     blísteres de 14.
+     *
+     * 🔴 Al revés nunca: una caja sin abrir no se arma con blísteres. La
+     * caja que se lleva el paciente tiene un lote impreso, y armada con
+     * otra cosa el cargo diría un lote que no es el de la caja (§9.F9).
+     *
+     * @param Collection<int, ItemPresentacion> $presentaciones las del ítem
+     *
+     * @return list<int> las presentaciones de los lotes que sirven
+     */
+    public function envasesQueLoTraen(ItemPresentacion $envase, Collection $presentaciones): array
+    {
+        $ids = [$envase->id];
+
+        foreach ($presentaciones as $grande) {
+            if ($this->loTraeAdentro($grande, $envase)) {
+                $ids[] = $grande->id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Cuánto se puede sacar de un lote para entregar este envase sin
+     * abrir: los envases ENTEROS que caben en su saldo, en unidades del
+     * kardex. Cero si el lote no entró en un envase que lo traiga.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 UN ENVASE SIN ABRIR SALE ENTERO DE UN SOLO LOTE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Un lote de cajas con 60 tabletas es una caja abierta: ahí hay seis
+     * blísteres enteros y ninguna caja sin abrir. Si la caja se armara
+     * con esas 60 y 40 del lote siguiente, el cargo diría dos lotes por
+     * una caja que el paciente se llevó entera de uno solo, y el kardex
+     * quedaría con 60 tabletas en un estante donde no hay ninguna.
+     *
+     * Se cuenta como cuenta quien está frente al estante: lo suelto se
+     * saca de lo que ya está abierto. De un lote de cajas con 95 tabletas
+     * salen 9 blísteres enteros —el décimo es el que tiene 5—, y de uno
+     * con 160 sale una caja sin abrir —la otra es la que tiene 60—.
+     *
+     * @param int|null $envaseDelLote en qué envase entró el lote
+     * @param Collection<int, ItemPresentacion> $presentaciones las del ítem
+     */
+    public function sinAbrirEnElLote(
+        ItemPresentacion $envase,
+        ?int $envaseDelLote,
+        Decimal $saldo,
+        Collection $presentaciones,
+    ): Decimal {
+        $contenido = $this->contenidoDe($envase);
+
+        if ($envaseDelLote === null
+            || ! $contenido instanceof Decimal
+            || ! $saldo->mayorQue('0')
+            || ! in_array($envaseDelLote, $this->envasesQueLoTraen($envase, $presentaciones), true)
+        ) {
+            return Decimal::cero();
+        }
+
+        return $this->enterosQueCaben($saldo, $contenido)->por($contenido);
+    }
+
+    /**
+     * Cuántos envases chicos trae uno grande, enteros, o nulo si no los
+     * trae: CAJA X 100 trae 10 BLISTER X 10; FRASCO X 100 no trae
+     * ninguno, CAJA X 30 no trae CAJA X 10, CAJA X 100 no trae BLISTER X
+     * 14. Las tres condiciones están explicadas en `envasesQueLoTraen()`.
+     *
+     * Recibe la unidad y el número sueltos, y no presentaciones, porque
+     * la ficha lo pregunta mientras se escribe —«1 CAJA = 100 TAB · trae
+     * 10 BLISTER»—, antes de que exista ninguna presentación.
+     */
+    public function cuantosTrae(Unidad $envaseGrande, Decimal $deGrande, int $unidadChica, Decimal $deChica): ?Decimal
+    {
+        if (! $envaseGrande->contiene_envases
+            || $envaseGrande->id === $unidadChica
+            || ! $deChica->mayorQue('0')
+            || ! $deGrande->mayorQue($deChica)
+        ) {
+            return null;
+        }
+
+        $enteros = $this->enterosQueCaben($deGrande, $deChica);
+
+        return $enteros->por($deChica)->igualA($deGrande) ? $enteros : null;
+    }
+
+    private function loTraeAdentro(ItemPresentacion $grande, ItemPresentacion $chico): bool
+    {
+        if ($grande->id === $chico->id || $grande->item_id !== $chico->item_id) {
+            return false;
+        }
+
+        $deGrande = $this->contenidoDe($grande);
+        $deChico = $this->contenidoDe($chico);
+
+        if (! $deGrande instanceof Decimal || ! $deChico instanceof Decimal) {
+            return false;
+        }
+
+        /*
+         * Explícito y no perezoso: quien arma la lista con `with('unidad')`
+         * no paga nada, y quien no lo hizo paga una consulta en vez de
+         * reventar con la carga perezosa prohibida (§13.2).
+         */
+        if (! $grande->relationLoaded('unidad')) {
+            $grande->load('unidad');
+        }
+
+        return $this->cuantosTrae($grande->unidad, $deGrande, $chico->unidad_id, $deChico) instanceof Decimal;
+    }
+
+    /**
+     * Lo que trae el envase, o nulo si no es un número positivo.
+     */
+    private function contenidoDe(ItemPresentacion $presentacion): ?Decimal
+    {
+        $contenido = $presentacion->unidades_por_presentacion;
+
+        if (! is_numeric($contenido)) {
+            return null;
+        }
+
+        $decimal = Decimal::de($contenido);
+
+        return $decimal->mayorQue('0') ? $decimal : null;
+    }
+
+    /**
+     * Cuántos envases enteros caben: 95 entre 10 son 9, no 9.5.
+     */
+    private function enterosQueCaben(Decimal $total, Decimal $contenido): Decimal
+    {
+        return Decimal::de(bcdiv($total->exacto(), $contenido->exacto(), 0));
     }
 
     private function seFracciona(Item $item): bool

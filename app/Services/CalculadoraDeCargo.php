@@ -17,6 +17,7 @@ use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Convenio;
 use App\Models\ConvenioCondicion;
 use App\Models\Item;
+use App\Models\Tarifario;
 use Carbon\CarbonInterface;
 
 /**
@@ -80,9 +81,7 @@ final class CalculadoraDeCargo
         }
 
         // 1 ── Bruto
-        $bruto = Monto::de(
-            $precio->precio->cantidad()->por($linea->cantidad)->redondeado(2)
-        );
+        $bruto = $this->bruto($linea, $precio);
 
         // 2 ── Descuento legal, sobre la base que declaró el convenio
         $base = $this->baseLegalDe($convenio);
@@ -160,6 +159,38 @@ final class CalculadoraDeCargo
             politica: $item->politica_cargo,
             explicacionDelPrecio: $precio->explicacion(),
         );
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL ENVASE SIN ABRIR SE COBRA A SU PRECIO (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * La caja de 100 a L 200.00 se cobra L 200.00 por caja, no 100 × el
+     * unitario: un blíster de 14 a L 25.00 armado desde L 1.7857 la
+     * tableta daría L 24.9998, y en la factura que el paciente lee eso es
+     * un centavo que nadie sabe explicar.
+     *
+     * Solo cuando las tres cosas coinciden: la fila es de un envase, tiene
+     * su precio entero, y la línea vende ESE envase sin abrir. Todo lo
+     * demás —lo suelto, la fracción, un servicio— sigue siendo cantidad ×
+     * unitario, como siempre.
+     */
+    private function bruto(LineaDeCargo $linea, PrecioResuelto $precio): Monto
+    {
+        $envases = $linea->envases;
+        $fila = $precio->fila;
+
+        if ($precio->porEnvase instanceof Monto
+            && $envases instanceof Decimal
+            && $fila instanceof Tarifario
+            && $fila->item_presentacion_id !== null
+            && $fila->item_presentacion_id === $linea->presentacion?->id
+        ) {
+            return Monto::de($precio->porEnvase->cantidad()->por($envases)->redondeado(2));
+        }
+
+        return Monto::de($precio->precio->cantidad()->por($linea->cantidad)->redondeado(2));
     }
 
     /**

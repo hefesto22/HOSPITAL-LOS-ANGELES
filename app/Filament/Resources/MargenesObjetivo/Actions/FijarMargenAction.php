@@ -85,6 +85,32 @@ final class FijarMargenAction
                     ])
                     ->helperText(fn (Get $get): string => self::ejemplo($get('porcentaje'))),
 
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * LOS RECARGOS POR FRACCIONAR (Mauricio, 11-oct-2026)
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * «Por defecto +10 % el blíster y +25 % la suelta, pero
+                 * que se pueda cambiar.» Acá se cambia para todo el tipo;
+                 * al fijar el precio de un producto se puede cambiar solo
+                 * para él. Vacío = se quedan los que ya tiene el tipo.
+                 */
+                TextInput::make('recargo_envase')
+                    ->label('Recargo del envase más chico')
+                    ->suffix('%')
+                    ->placeholder('Igual que ahora')
+                    ->rule('regex:/^\d{1,3}(\.\d{1,2})?$/')
+                    ->validationMessages(['regex' => 'Solo el número: 10, o 12.5.'])
+                    ->helperText('El blíster sacado de la caja: cuánto más se cobra por tableta que en la caja.'),
+
+                TextInput::make('recargo_suelta')
+                    ->label('Recargo de lo suelto')
+                    ->suffix('%')
+                    ->placeholder('Igual que ahora')
+                    ->rule('regex:/^\d{1,3}(\.\d{1,2})?$/')
+                    ->validationMessages(['regex' => 'Solo el número: 25, o 22.5.'])
+                    ->helperText('La tableta suelta: cuánto más que en el envase principal.'),
+
                 DatePicker::make('vigencia_desde')
                     ->label('Vigente desde')
                     ->required()
@@ -122,6 +148,8 @@ final class FijarMargenAction
                         fraccion: Decimal::de($porcentaje)->entre('100'),
                         motivo: $motivo,
                         desde: Carbon::parse($desde),
+                        recargoEnvase: self::fraccionONula($data['recargo_envase'] ?? null),
+                        recargoSuelta: self::fraccionONula($data['recargo_suelta'] ?? null),
                     );
                 } catch (MargenNoFijableException $e) {
                     Notification::make()
@@ -145,7 +173,9 @@ final class FijarMargenAction
                 Notification::make()
                     ->success()
                     ->title('Margen fijado en '.$margen->fraccion()->comoPorcentaje())
-                    ->body('Aplica a los precios que se calculen desde el '
+                    ->body('Envase más chico +'.$margen->recargoEnvase()->comoPorcentaje()
+                        .' · suelta +'.$margen->recargoSuelta()->comoPorcentaje()
+                        .'. Aplica a los precios que se fijen desde el '
                         .$margen->vigencia_desde->format('d/m/Y').'.')
                     ->send();
             });
@@ -175,5 +205,18 @@ final class FijarMargenAction
         $ganancia = Decimal::de($porcentaje)->entre('100')->por('100')->redondeado(2);
 
         return "Lo que costó L 100.00 tendría que dejar L {$ganancia} de ganancia.";
+    }
+
+    /**
+     * El porcentaje escrito, como fracción, o nulo si quedó vacío: nulo
+     * le dice al fijador que conserve el recargo que ya tiene el tipo.
+     */
+    private static function fraccionONula(mixed $porcentaje): ?Decimal
+    {
+        if (! is_string($porcentaje) || preg_match('/^\d{1,3}(\.\d{1,2})?$/', $porcentaje) !== 1) {
+            return null;
+        }
+
+        return Decimal::de($porcentaje)->entre('100');
     }
 }

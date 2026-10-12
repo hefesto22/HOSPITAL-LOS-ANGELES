@@ -43,6 +43,8 @@ final class FijadorDePrecio
     /**
      * @param Convenio|null $convenio nulo = el precio de lista
      * @param Sede|null $sede nulo = vale para todas las sedes
+     * @param Monto $precio por unidad del kardex
+     * @param Monto|null $precioEnvase el envase entero, exacto; solo con `$presentacion`
      *
      * @throws PrecioNoFijableException
      */
@@ -54,6 +56,7 @@ final class FijadorDePrecio
         string $motivo,
         CarbonInterface $desde,
         ?ItemPresentacion $presentacion = null,
+        ?Monto $precioEnvase = null,
     ): Tarifario {
         /*
          * 🔴 La regla vive acá y no en la pantalla: `BasesDePrecios` ya
@@ -92,6 +95,7 @@ final class FijadorDePrecio
             $sedeId,
             $presentacionId,
             $precio,
+            $precioEnvase,
             $motivo,
             $dia,
         ): Tarifario {
@@ -136,9 +140,14 @@ final class FijadorDePrecio
                 'convenio_id'          => $convenioId,
                 'sede_id'              => $sedeId,
                 'precio'               => $precio->cantidad()->paraBase(4),
-                'motivo'               => $motivo,
-                'vigencia_desde'       => $dia->toDateString(),
-                'vigencia_hasta'       => null,
+                /*
+                 * Solo en una fila de envase: en la de la unidad suelta no
+                 * hay envase entero del que hablar, y la base lo rechaza.
+                 */
+                'precio_envase'  => $presentacionId === null ? null : $precioEnvase?->valor(),
+                'motivo'         => $motivo,
+                'vigencia_desde' => $dia->toDateString(),
+                'vigencia_hasta' => null,
             ]);
         });
 

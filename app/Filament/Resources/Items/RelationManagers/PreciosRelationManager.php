@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Items\RelationManagers;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Resources\Items\Actions\FijarPrecioDeVentaAction;
 use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
@@ -75,6 +76,16 @@ class PreciosRelationManager extends RelationManager
      */
     private static function porEnvase(Tarifario $tarifario): Monto
     {
+        /*
+         * El envase entero exacto, cuando la fila lo tiene: L 25.00 el
+         * blíster de 14, y no los L 25.00 que da 1.7857 × 14 redondeado.
+         */
+        $entero = $tarifario->montoDelEnvase();
+
+        if ($entero instanceof Monto) {
+            return $entero;
+        }
+
         $presentacion = $tarifario->presentacion;
 
         if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
@@ -132,6 +143,17 @@ class PreciosRelationManager extends RelationManager
         return $item instanceof Item && $item->regimen_isv->esGravado();
     }
 
+    /**
+     * ¿Es un producto de farmacia, que se vende por formas —suelta,
+     * blíster, caja— y se pone precio desde el mínimo?
+     */
+    private function seVendePorFormas(): bool
+    {
+        $item = $this->getOwnerRecord();
+
+        return $item instanceof Item && $item->mueveInventario();
+    }
+
     public function table(Table $table): Table
     {
         return $table
@@ -167,7 +189,12 @@ class PreciosRelationManager extends RelationManager
                      * ninguna aplica. Llamarla como al producto entero
                      * hacía parecer que había cuatro precios para elegir.
                      */
-                    ->placeholder('Respaldo · sin envase')
+                    /*
+                     * En farmacia la fila sin envase ES la unidad suelta
+                     * desde el 11-oct-2026: el precio de la tableta. En
+                     * el catálogo de servicios sigue siendo el respaldo.
+                     */
+                    ->placeholder(fn (): string => $this->seVendePorFormas() ? 'Suelta' : 'Respaldo · sin envase')
                     /*
                      * Un solo `?->`, en `presentacion`: el nullsafe corta
                      * toda la cadena, así que si no hay presentación esto
@@ -177,7 +204,9 @@ class PreciosRelationManager extends RelationManager
                      * tenerla, que es una mentira sobre el esquema.
                      */
                     ->description(fn (Tarifario $record): string => $record->presentacion?->unidad->codigo
-                        ?? 'Se usa si el lote no declaró envase'),
+                        ?? ($this->seVendePorFormas()
+                            ? 'Lo que se vende sin envase, por unidad'
+                            : 'Se usa si el lote no declaró envase')),
 
                 TextColumn::make('sede.nombre')
                     ->label('Sede')
@@ -233,6 +262,12 @@ class PreciosRelationManager extends RelationManager
             ->paginated([10, 25])
             ->headerActions([
                 $this->accionDeFijar(),
+                /*
+                 * En farmacia el precio se fija desde el mínimo del envase
+                 * principal y salen todas las formas juntas (11-oct-2026).
+                 * La acción de arriba queda para el catálogo de servicios.
+                 */
+                FijarPrecioDeVentaAction::make(),
             ])
             ->recordActions([])
             ->toolbarActions([])
@@ -256,7 +291,8 @@ class PreciosRelationManager extends RelationManager
              * cualquiera que pudiera abrir la ficha podía fijar el precio
              * de venta del hospital.
              */
-            ->visible(fn (): bool => Gate::allows('update', $this->getOwnerRecord()))
+            ->visible(fn (): bool => ! $this->seVendePorFormas()
+                && Gate::allows('update', $this->getOwnerRecord()))
             ->modalHeading('Fijar un precio nuevo')
             ->modalDescription(
                 'El precio vigente para ese pagador y sede se cierra el día anterior. Las facturas ya '
