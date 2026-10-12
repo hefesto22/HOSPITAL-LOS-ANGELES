@@ -8,6 +8,7 @@ use App\Models\Convenio;
 use Carbon\Carbon;
 use Database\Seeders\ConveniosSeeder;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
@@ -69,7 +70,13 @@ it('libera el codigo cuando el convenio se da de baja', function (): void {
 })->note('El índice único es PARCIAL, con `where deleted_at is null`. Si mañana se vuelve a firmar con la misma aseguradora, el código está libre; sin eso quedaría quemado para siempre.');
 
 it('no deja fiarle al contado', function (): void {
-    Convenio::factory()->contado()->create(['dias_credito' => 30]);
+    $contado = Convenio::factory()->contado()->create();
+
+    /*
+     * Por fuera del modelo, que ya lo limpia al guardar: lo que se prueba
+     * es el CHECK, la última defensa si alguien escribe directo (§9.C4).
+     */
+    DB::table('convenios')->where('id', $contado->id)->update(['dias_credito' => 30]);
 })->throws(QueryException::class)
     ->note('Treinta días de crédito al que paga en caja es una contradicción en los términos. El formulario limpia el campo, y la base lo rechaza igual por si la escritura no vino del formulario.');
 
@@ -150,17 +157,21 @@ it('🔴 el seguro de reembolso no paga: paga el paciente', function (): void {
 })->note('🔴 «¿El hospital le factura a la aseguradora?» es la pregunta que separa un convenio de un seguro externo. Acá la respuesta es no: el paciente paga en caja al precio de lista y reclama él. Tratarlo como pagador dejaría una cuenta por cobrar contra una aseguradora que nunca recibió factura y no sabe que existe.');
 
 it('🔴 la base impide fiarle credito a un seguro de reembolso', function (): void {
-    Convenio::factory()->reembolso()->create(['dias_credito' => 30]);
+    $reembolso = Convenio::factory()->reembolso()->create();
+
+    DB::table('convenios')->where('id', $reembolso->id)->update(['dias_credito' => 30]);
 })->throws(QueryException::class)
     ->note('🔴 El CHECK decía «tipo <> contado». Dejarlo atado al nombre del tipo viejo permitía darle treinta días de crédito a alguien a quien jamás se le va a mandar una factura.');
 
 it('🔴 la base impide que un seguro de reembolso cubra algo', function (): void {
     /*
-     * `->reembolso()` deja los días de crédito en nulo a propósito: sin
-     * eso, la fila violaría PRIMERO el CHECK del crédito y la prueba
-     * pasaría por el motivo equivocado.
+     * Solo la cobertura: con los días de crédito también, la fila
+     * violaría PRIMERO el CHECK del crédito y la prueba pasaría por el
+     * motivo equivocado.
      */
-    Convenio::factory()->reembolso()->create([
+    $reembolso = Convenio::factory()->reembolso()->create();
+
+    DB::table('convenios')->where('id', $reembolso->id)->update([
         'cobertura_fraccion' => '0.8000',
         'cubre_por_defecto'  => true,
     ]);
@@ -173,3 +184,22 @@ it('un seguro de reembolso se puede dar de alta con sus datos', function (): voi
     expect($palic->tipo)->toBe(TipoConvenio::Reembolso)
         ->and($palic->tipo->pagaUnTercero())->toBeFalse();
 })->note('Es para lo que existe: que la aseguradora se dé de alta UNA vez con su nombre y su RTN, en vez de escribirse de veinte formas distintas en un campo libre, y que salga impresa junto a la póliza para que el paciente pueda reclamar.');
+
+it('🔴 pasar una aseguradora a reembolso limpia su cobertura y su credito', function (): void {
+    $palic = Convenio::factory()->create([
+        'tipo'               => TipoConvenio::AseguradoraPrivada,
+        'cobertura_fraccion' => '0.8000',
+        'tope_por_evento'    => '30000.00',
+        'cubre_por_defecto'  => true,
+        'dias_credito'       => 30,
+    ]);
+
+    $palic->update(['tipo' => TipoConvenio::Reembolso]);
+    $palic->refresh();
+
+    expect($palic->tipo)->toBe(TipoConvenio::Reembolso)
+        ->and($palic->dias_credito)->toBeNull()
+        ->and((bool) $palic->getAttribute('cubre_por_defecto'))->toBeFalse()
+        ->and($palic->getAttribute('tope_por_evento'))->toBeNull()
+        ->and((float) $palic->getAttribute('cobertura_fraccion'))->toBe(0.0);
+})->note('Mauricio, 11-oct-2026: daba 500 al cambiar PALIC a «seguro externo». El formulario esconde la cobertura con el tipo nuevo, y lo escondido no se guardaba.');

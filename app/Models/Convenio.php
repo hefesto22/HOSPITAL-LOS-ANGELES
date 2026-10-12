@@ -99,6 +99,36 @@ class Convenio extends Model
     }
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 QUIEN NO PAGA NO CUBRE NI FÍA (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Pasar PALIC de «aseguradora privada» a «reembolso» reventaba con el
+     * CHECK `convenios_no_cubre_si_no_paga_un_tercero`. El formulario sí
+     * ponía la cobertura en cero al cambiar el tipo, pero la sección de
+     * cobertura se esconde con el tipo nuevo y lo escondido no se guarda:
+     * quedaban la cobertura y el crédito del tipo anterior.
+     *
+     * Es una regla del dato, no de la pantalla: un convenio que no paga
+     * —contado o reembolso— no cubre nada ni da crédito, entre por donde
+     * entre. Se aplica al guardar, y la base la sigue exigiendo con sus
+     * CHECK por si alguien escribe por fuera del modelo.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $convenio): void {
+            if ($convenio->tipo instanceof TipoConvenio && ! $convenio->tipo->pagaUnTercero()) {
+                $convenio->forceFill([
+                    'cobertura_fraccion' => '0',
+                    'tope_por_evento'    => null,
+                    'cubre_por_defecto'  => false,
+                    'dias_credito'       => null,
+                ]);
+            }
+        });
+    }
+
+    /**
      * El código y el nombre van canónicos. El contacto NO: es el nombre
      * de una persona escrito por quien la conoce, y en mayúsculas se lee
      * como un grito.

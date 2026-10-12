@@ -204,19 +204,12 @@ final class ConvenioForm
             ->columns(3)
             ->visible(fn (Get $get): bool => self::tipoDe($get('tipo'))?->pagaUnTercero() ?? false)
             /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 ESCONDIDOS, PERO VIAJAN (11-oct-2026)
-             * ─────────────────────────────────────────────────────────
-             *
-             * Pasar PALIC de «aseguradora privada» a «reembolso» daba
-             * 500: el CHECK `convenios_no_cubre_si_no_paga_un_tercero`.
-             * Al cambiar el tipo, `afterStateUpdated` sí ponía la
-             * cobertura en cero —pero con el tipo nuevo esta sección se
-             * esconde, y un campo escondido NO se manda al guardar. Se
-             * guardaba el tipo y quedaba la cobertura del tipo anterior.
-             *
-             * `dehydratedWhenHidden()` hace que viajen igual, con los
-             * valores que les dejó el cambio de tipo.
+             * ⚠️ Con la sección escondida estos campos NO se guardan, ni
+             * con `dehydratedWhenHidden()`: Filament no baja a los hijos
+             * de un contenedor oculto. Por eso pasar a reembolso dejaba
+             * la cobertura vieja y el CHECK lo rechazaba (11-oct-2026).
+             * La regla «quien no paga no cubre ni fía» vive en el modelo
+             * `Convenio`, que la aplica al guardar venga de donde venga.
              */
             ->schema([
                 TextInput::make('cobertura_fraccion')
@@ -226,7 +219,6 @@ final class ConvenioForm
                     ->minValue(0)
                     ->maxValue(1)
                     ->step('0.0001')
-                    ->dehydratedWhenHidden()
                     ->helperText('0.80 es el 80 %. Cero = el paciente paga todo.'),
 
                 TextInput::make('tope_por_evento')
@@ -234,12 +226,10 @@ final class ConvenioForm
                     ->numeric()
                     ->minValue(0.01)
                     ->prefix('L')
-                    ->dehydratedWhenHidden()
                     ->helperText('Vacío = sin tope. El excedente lo paga el paciente.'),
 
                 Toggle::make('cubre_por_defecto')
                     ->label('Cubre lo que no tiene precio propio')
-                    ->dehydratedWhenHidden()
                     ->helperText('Apagado: solo cubre lo que está declarado.'),
             ]);
     }
@@ -304,12 +294,6 @@ final class ConvenioForm
                      * nulo y agrega una segunda forma de decir lo mismo.
                      */
                     ->visible(fn (Get $get): bool => self::tipoDe($get('tipo'))?->admiteCredito() ?? false)
-                    /*
-                     * Escondido viaja igual, ya en nulo: si no, pasar a
-                     * reembolso guardaba los treinta días del tipo
-                     * anterior y el CHECK del crédito lo rechazaba.
-                     */
-                    ->dehydratedWhenHidden()
                     ->helperText('Vacío = se cobra al momento.'),
             ]);
     }
