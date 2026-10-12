@@ -14,6 +14,7 @@ use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\QuienPresta;
 use App\Domain\Enums\RangoEdad;
+use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDiagnostico;
 use App\Domain\Enums\TipoEncuentro;
@@ -61,7 +62,7 @@ use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
-use App\Services\AplicadorDeDescuentoEnServicios;
+use App\Services\AplicadorDeDescuentoDeLaCuenta;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
 use App\Services\FormasDeCobro;
@@ -196,10 +197,9 @@ class CuentasAbiertas extends Page
      *
      * Lo que se puso arriba en «Descuento sobre medicamentos» sobrevive a
      * cada «Agregar». Vive en el componente y no en los argumentos de la
-     * acción porque el modal se vuelve a montar por tres caminos
-     * distintos —Agregar, el atajo de lo más cargado, y el atajo que solo
-     * deja el ítem puesto—, y un dato que hay que acordarse de pasar en
-     * los tres se pierde en el que alguien olvide.
+     * acción porque el modal se vuelve a montar después de cada
+     * «Agregar», y un dato que hay que acordarse de pasar en cada
+     * remontaje se pierde el día que alguien lo olvide.
      *
      * 🔴 `cuentaDelDescuento` es lo que impide que se cruce de paciente:
      * la propiedad sobrevive a que el modal se cierre, así que sin ella
@@ -230,15 +230,22 @@ class CuentasAbiertas extends Page
     public ?string $motivoDeLaTanda = null;
 
     /*
-     * El descuento en servicios (11-oct-2026): el hermano del de
-     * farmacia, en porcentaje o en lempiras. Vive en la cuenta; esto es
-     * solo lo que muestra la banda.
+     * Los descuentos en servicios (11-oct-2026) y en honorarios
+     * (12-oct-2026): los hermanos del de farmacia, en porcentaje o en
+     * lempiras. Viven en la cuenta; esto es solo lo que muestra la
+     * sección. Ver `RubroDeDescuento`.
      */
     public ?string $descuentoServicios = null;
 
     public string $modoServicios = 'porcentaje';
 
     public ?string $motivoServicios = null;
+
+    public ?string $descuentoHonorarios = null;
+
+    public string $modoHonorarios = 'porcentaje';
+
+    public ?string $motivoHonorarios = null;
 
     /**
      * ─────────────────────────────────────────────────────────────────
@@ -1337,10 +1344,8 @@ class CuentasAbiertas extends Page
                 );
             })
             /*
-             * `fillForm` con el ítem que venga en los argumentos: es lo
-             * que permite que un atajo de «lo más usado» que SÍ mueve
-             * inventario deje el ítem puesto y solo pida el almacén, en
-             * vez de fallar con un aviso.
+             * `fillForm` con el ítem que venga en los argumentos, si
+             * viene: deja el ítem puesto y solo pide lo que falta.
              */
             ->fillForm(function (array $arguments): array {
                 $this->cargarElDescuentoDe($arguments);
@@ -1378,8 +1383,8 @@ class CuentasAbiertas extends Page
 
                 /*
                  * ⚠️ El precio también se propone ACÁ y no solo en
-                 * `prepararLaLinea()`. Cuando el ítem llega puesto —desde
-                 * un atajo de la banda de arriba— nadie tocó el buscador,
+                 * `prepararLaLinea()`. Cuando el ítem llega puesto en los
+                 * argumentos nadie tocó el buscador,
                  * así que su `afterStateUpdated` nunca corre y el campo
                  * se quedaba vacío justo en el camino más rápido.
                  */
@@ -1422,15 +1427,15 @@ class CuentasAbiertas extends Page
             ->modalContent(function (array $arguments) {
                 $cuenta = $this->cuentaDe($arguments);
 
-                return view('filament.pages.partials.atajos-de-cargo', [
-                    'cuenta'    => $cuenta,
-                    'items'     => $this->itemsFrecuentes($arguments),
-                    'puede'     => $this->puedeCargar(),
-                    'tope'      => $this->topeDeDescuento($cuenta)->por('100')->redondeado(2),
-                    'ayuda'     => $this->ayudaDelDescuento($cuenta),
-                    'descuento' => $this->descuentoDeLaTanda,
-                    'motivo'    => $this->motivoDeLaTanda,
-                    'servicios' => $this->datosDelDescuentoEnServicios($cuenta),
+                return view('filament.pages.partials.descuentos-de-la-cuenta', [
+                    'cuenta'     => $cuenta,
+                    'puede'      => $this->puedeCargar(),
+                    'tope'       => $this->topeDeDescuento($cuenta)->por('100')->redondeado(2),
+                    'ayuda'      => $this->ayudaDelDescuento($cuenta),
+                    'descuento'  => $this->descuentoDeLaTanda,
+                    'motivo'     => $this->motivoDeLaTanda,
+                    'servicios'  => $this->datosDelDescuento($cuenta, RubroDeDescuento::Servicios),
+                    'honorarios' => $this->datosDelDescuento($cuenta, RubroDeDescuento::Honorarios),
                 ]);
             })
             ->modalFooter(fn (array $arguments) => view(
@@ -1625,18 +1630,20 @@ class CuentasAbiertas extends Page
         $autorizado = $descuento instanceof Decimal ? $cuenta->descuento_hospital_por : null;
 
         /*
-         * Y lo que NO sale de farmacia lleva el descuento en servicios,
-         * si la cuenta lo tiene en porcentaje: topado con la categoría
-         * del ítem. En lempiras se reparte después, entre todos.
+         * Y lo que NO sale de farmacia lleva el descuento de su rubro
+         * —servicios u honorarios—, si la cuenta lo tiene en porcentaje:
+         * topado con la categoría del ítem. En lempiras se reparte
+         * después, entre todos los del rubro.
          */
-        $enServicios = $item->se_almacena
-            ? null
-            : app(AplicadorDeDescuentoEnServicios::class)->fraccionParaLaLineaNueva($cuenta, $item, now());
+        $rubro = AplicadorDeDescuentoDeLaCuenta::rubroDe($item);
+        $enSuRubro = $rubro instanceof RubroDeDescuento
+            ? app(AplicadorDeDescuentoDeLaCuenta::class)->fraccionParaLaLineaNueva($cuenta, $item, now())
+            : null;
 
-        if ($enServicios instanceof Decimal) {
-            $descuento = $enServicios;
-            $motivo = $cuenta->motivo_descuento_servicios;
-            $autorizado = $cuenta->descuento_servicios_por;
+        if ($rubro instanceof RubroDeDescuento && $enSuRubro instanceof Decimal) {
+            $descuento = $enSuRubro;
+            $motivo = AplicadorDeDescuentoDeLaCuenta::motivoDe($cuenta, $rubro);
+            $autorizado = AplicadorDeDescuentoDeLaCuenta::quienLoDio($cuenta, $rubro);
         }
 
         try {
@@ -1736,7 +1743,7 @@ class CuentasAbiertas extends Page
          */
         $this->claveDeEnvio = (string) Str::uuid();
 
-        $this->repartirDeNuevoLosServicios($cuenta, $item);
+        $this->repartirDeNuevoElRubroDe($cuenta, $item);
 
         /*
          * Se suma con SIGNO y no con `montoTotal()`, que devuelve el
@@ -3278,11 +3285,11 @@ class CuentasAbiertas extends Page
 
         $item = Item::query()->find($cargo->item_id);
 
-        if ($item instanceof Item && AplicadorDeDescuentoEnServicios::aplicaAlItem($item)) {
+        if ($item instanceof Item && AplicadorDeDescuentoDeLaCuenta::rubroDe($item) instanceof RubroDeDescuento) {
             $cuenta = Cuenta::query()->find($cargo->cuenta_id);
 
             if ($cuenta instanceof Cuenta) {
-                $this->repartirDeNuevoLosServicios($cuenta, $item);
+                $this->repartirDeNuevoElRubroDe($cuenta, $item);
             }
         }
 
@@ -3350,6 +3357,16 @@ class CuentasAbiertas extends Page
     public ?string $busquedaEscrita = null;
 
     public ?int $cuentaDelAbono = null;
+
+    /**
+     * Los recibos de la cuenta del modal, leídos una vez por petición: el
+     * título de la sección, su visibilidad y la lista los piden los tres.
+     * Privado a propósito —Livewire no lo guarda entre peticiones—, y se
+     * vacía al anular o corregir para que la lista no muestre lo de antes.
+     *
+     * @var array{cuenta: int, filas: list<array{id: int, numero: string, cuando: string, medios: string, total: string, quien: string, entrego: string|null, nota: string|null, anulado: bool, motivo: string|null, tocable: bool}>}|null
+     */
+    private ?array $recibosLeidos = null;
 
     /**
      * Abre el modal de abono para una cuenta. Se llama desde la tarjeta
@@ -3522,7 +3539,16 @@ class CuentasAbiertas extends Page
      */
     private function nombreDelPacienteAFacturar(): ?string
     {
-        $persona = $this->cuentaFacturando()?->encuentro->persona ?? null;
+        return self::nombreDelPacienteDe($this->cuentaFacturando());
+    }
+
+    /**
+     * El nombre del paciente de una cuenta, o nulo si no hay a quién
+     * nombrar. Lo comparten la franja de la factura y la del abono.
+     */
+    private static function nombreDelPacienteDe(?Cuenta $cuenta): ?string
+    {
+        $persona = $cuenta?->encuentro->persona ?? null;
 
         if (! $persona instanceof Persona) {
             return null;
@@ -3707,16 +3733,7 @@ class CuentasAbiertas extends Page
 
         $saldo = $cuenta->saldoPendienteDelPaciente();
         $abonado = $cuenta->abonado();
-        $expediente = Expediente::query()->withTrashed()->find($cuenta->encuentro->expediente_id);
-
-        $quien = '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem .75rem;margin-bottom:.6rem">'
-            .'<span style="font-size:1.05rem;font-weight:600">'.e($this->nombreDelPacienteAFacturar() ?? '—').'</span>'
-            .($expediente instanceof Expediente
-                ? '<span style="font-size:.8rem;opacity:.6;font-family:ui-monospace,monospace">'.e($expediente->numero).'</span>'
-                : '')
-            .'<span style="font-size:.7rem;padding:.1rem .5rem;border-radius:999px;border:1px solid rgba(127,127,127,.35);opacity:.85">'
-            .e($cuenta->convenio->nombre).'</span>'
-            .'</div>';
+        $quien = self::quienEsLaCuenta($cuenta);
 
         $cajas = [self::cajaDeResumen('Total de la cuenta', 'L '.number_format((float) $cuenta->total, 2))];
 
@@ -3752,6 +3769,190 @@ class CuentasAbiertas extends Page
             );
 
         return new HtmlString($quien.'<div style="display:flex;flex-wrap:wrap;gap:.6rem">'.implode('', $cajas).'</div>');
+    }
+
+    /**
+     * De quién es la cuenta, en una línea: nombre, expediente y convenio.
+     * La misma arriba del modal de factura y del de abono, para que quien
+     * cobra lea al paciente igual en los dos.
+     */
+    private static function quienEsLaCuenta(Cuenta $cuenta): string
+    {
+        $expediente = Expediente::query()->withTrashed()->find($cuenta->encuentro->expediente_id);
+
+        return '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem .75rem;margin-bottom:.6rem">'
+            .'<span style="font-size:1.05rem;font-weight:600">'.e(self::nombreDelPacienteDe($cuenta) ?? '—').'</span>'
+            .($expediente instanceof Expediente
+                ? '<span style="font-size:.8rem;opacity:.6;font-family:ui-monospace,monospace">'.e($expediente->numero).'</span>'
+                : '')
+            .'<span style="font-size:.7rem;padding:.1rem .5rem;border-radius:999px;border:1px solid rgba(127,127,127,.35);opacity:.85">'
+            .e($cuenta->convenio->nombre).'</span>'
+            .'</div>';
+    }
+
+    /**
+     * La franja de arriba del modal de abono: de quién es la cuenta,
+     * cuánto es, cuánto dejó ya y cuánto falta.
+     *
+     * Se mide contra el TOTAL, como el saldo de la cuenta (ADR-0008). Con
+     * seguro se muestra aparte lo que pone la aseguradora y, debajo de lo
+     * que falta, cuánto de eso es del paciente: en la ventanilla se le
+     * pide eso, no lo que la aseguradora paga a treinta días.
+     */
+    private function encabezadoDelAbono(): HtmlString
+    {
+        $cuenta = $this->cuentaAbonando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return new HtmlString('&nbsp;');
+        }
+
+        $saldo = $cuenta->saldoPendiente();
+        $abonado = $cuenta->abonado();
+        $conSeguro = ! $cuenta->saldoDeLaAseguradora()->esCero();
+
+        $cajas = [self::cajaDeResumen('Total de la cuenta', 'L '.number_format((float) $cuenta->total, 2))];
+
+        if ($conSeguro) {
+            $cajas[] = self::cajaDeResumen(
+                'Lo pone el seguro',
+                'L '.number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2),
+                nota: 'Se factura y queda por cobrar',
+            );
+        }
+
+        if ($abonado->mayorQue('0')) {
+            $cajas[] = self::cajaDeResumen('Ya abonado', 'L '.number_format((float) $abonado->redondeado(2), 2), 'rgb(22 163 74)');
+        }
+
+        if ($saldo->esNegativo()) {
+            $cajas[] = self::cajaDeResumen(
+                'A favor del paciente',
+                'L '.number_format((float) $cuenta->saldoAFavor()->redondeado(2), 2),
+                'rgb(22 163 74)',
+                'Dejó más de lo que suma la cuenta',
+            );
+        } elseif ($saldo->esCero()) {
+            $cajas[] = self::cajaDeResumen('La cuenta', 'Está saldada', 'rgb(22 163 74)');
+        } else {
+            $delPaciente = $cuenta->saldoPendienteDelPaciente();
+            $nota = null;
+
+            if ($conSeguro) {
+                $nota = $delPaciente->mayorQue('0')
+                    ? 'Del paciente: L '.number_format((float) $delPaciente->redondeado(2), 2)
+                    : 'Lo del paciente ya está; el resto es del seguro';
+            }
+
+            $cajas[] = self::cajaDeResumen('Falta por pagar', 'L '.number_format((float) $saldo->redondeado(2), 2), 'rgb(217 119 6)', $nota);
+        }
+
+        return new HtmlString(self::quienEsLaCuenta($cuenta).'<div style="display:flex;flex-wrap:wrap;gap:.6rem">'.implode('', $cajas).'</div>');
+    }
+
+    /**
+     * Lo que se está recibiendo y cómo queda la cuenta si se aprieta
+     * Recibir: la resta que la cajera hacía de cabeza con el paciente
+     * esperando. Es de pantalla, no de dominio: el servicio vuelve a
+     * sumar desde los medios ya validados.
+     */
+    private function comoQuedaConElAbono(Get $get): HtmlString
+    {
+        $cuenta = $this->cuentaAbonando();
+        $suma = $this->sumaDeMedios($get('medios'));
+
+        if (! $cuenta instanceof Cuenta || $suma->esCero()) {
+            return new HtmlString('');
+        }
+
+        $queda = $cuenta->saldoPendiente()->restar($suma);
+
+        /*
+         * Dejar de más no es un error —la cuenta todavía puede crecer—,
+         * pero tampoco es lo normal: va en ámbar para que se vea antes de
+         * apretar Recibir.
+         */
+        if ($queda->esNegativo()) {
+            $color = '217 119 6';
+            $despues = 'Quedarían L '.number_format((float) Decimal::cero()->restar($queda)->redondeado(2), 2).' a favor del paciente';
+        } elseif ($queda->esCero()) {
+            $color = '22 163 74';
+            $despues = 'La cuenta queda saldada';
+        } else {
+            $color = '22 163 74';
+            $despues = 'Faltarían L '.number_format((float) $queda->redondeado(2), 2);
+        }
+
+        return new HtmlString(
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.35rem 1rem;'
+            .'padding:.6rem .85rem;border-radius:.75rem;border:1px solid rgb('.$color.' / .35);background:rgb('.$color.' / .08)">'
+            .'<div>'
+            .'<div style="font-size:.7rem;letter-spacing:.03em;text-transform:uppercase;opacity:.7">Recibe ahora</div>'
+            .'<div style="font-size:1.25rem;font-weight:700;line-height:1.3;font-variant-numeric:tabular-nums;color:rgb('.$color.')">L '
+            .number_format((float) $suma->redondeado(2), 2).'</div>'
+            .'</div>'
+            .'<div style="font-size:.9rem;font-weight:600;text-align:right;font-variant-numeric:tabular-nums">'.e($despues).'</div>'
+            .'</div>'
+        );
+    }
+
+    /**
+     * Pone `$objetivo` en la ÚLTIMA forma de pago, descontando lo que ya
+     * tienen las otras: «300 en efectivo y el resto con tarjeta» es
+     * agregar la fila de la tarjeta y un clic.
+     *
+     * Si las otras ya cubren el objetivo no toca nada: restar ahí dejaría
+     * un monto en cero o negativo que el recibo rechaza.
+     */
+    private function completarHasta(Decimal $objetivo, Get $get, Set $set): void
+    {
+        $medios = $get('medios');
+
+        if (! is_array($medios) || $medios === []) {
+            $set('medios', [
+                (string) Str::uuid() => [
+                    'forma' => FormaDePago::Efectivo->value,
+                    'monto' => $objetivo->redondeado(2),
+                    'banco' => null,
+                ],
+            ]);
+
+            return;
+        }
+
+        $ultima = array_key_last($medios);
+        $otras = $medios;
+        unset($otras[$ultima]);
+
+        $falta = $objetivo->restar($this->sumaDeMedios($otras));
+
+        if ($falta->esCero() || $falta->esNegativo()) {
+            Notification::make()
+                ->warning()
+                ->title('Las otras formas de pago ya cubren ese monto')
+                ->send();
+
+            return;
+        }
+
+        $set('medios.'.$ultima.'.monto', $falta->redondeado(2));
+    }
+
+    /**
+     * ¿Hay una porción del paciente distinta de lo que falta? Solo con
+     * seguro, y solo si al paciente todavía le falta algo.
+     */
+    private function hayPorcionDelPacienteAparte(): bool
+    {
+        $cuenta = $this->cuentaAbonando();
+
+        if (! $cuenta instanceof Cuenta || $cuenta->saldoDeLaAseguradora()->esCero()) {
+            return false;
+        }
+
+        $delPaciente = $cuenta->saldoPendienteDelPaciente();
+
+        return $delPaciente->mayorQue('0') && ! $delPaciente->igualA($cuenta->saldoPendiente());
     }
 
     /**
@@ -4615,7 +4816,13 @@ class CuentasAbiertas extends Page
             ->label('Abonar')
             ->icon(Heroicon::OutlinedBanknotes)
             ->color('success')
-            ->modalWidth('3xl')
+            /*
+             * Ancho con lista de recibos, angosto sin ella: el primer
+             * abono de una cuenta no tiene nada que mostrar a la derecha,
+             * y media pantalla vacía solo aleja el botón de Recibir.
+             */
+            ->modalWidth(fn (): string => $this->recibosDeLaCuenta() === [] ? '3xl' : '5xl')
+            ->stickyModalFooter()
             ->modalHeading(function (array $arguments): string {
                 $cuenta = $this->cuentaDe($arguments);
 
@@ -4626,190 +4833,136 @@ class CuentasAbiertas extends Page
             ->schema([
                 /*
                  * ─────────────────────────────────────────────────────
-                 * LOS TRES NÚMEROS, ARRIBA Y GRANDES
+                 * LA FRANJA DE ARRIBA, LA MISMA DE LA FACTURA (12-oct-2026)
                  * ─────────────────────────────────────────────────────
                  *
-                 * Antes iban en una frase en la descripción del modal.
-                 * Quien está cobrando con la familia enfrente no lee una
-                 * frase: mira el número que falta y teclea. Estos tres
-                 * son los que decide todo lo demás.
+                 * Mauricio: «se puede mejorar esa vista». Los tres
+                 * números sueltos en una sección gris pasan a la franja
+                 * del modal de factura —quién es, cuánto es, cuánto
+                 * dejó, cuánto falta—: quien cobra lee las dos pantallas
+                 * igual, y con seguro ve qué parte es del paciente.
                  *
-                 * ⚠️ Los estilos van EN LÍNEA. El CSS de Filament viene
-                 * precompilado y las clases que el panel no usa no
-                 * existen (§9.A7); dentro de un modal no hay dónde poner
-                 * un `<style>` propio.
+                 * ⚠️ Estilos en línea: el CSS de Filament viene
+                 * precompilado (§9.A7).
                  */
-                Section::make('Cómo va la cuenta')
-                    ->compact()
-                    ->columns(3)
-                    ->schema([
-                        Placeholder::make('resumen_total')
-                            ->label('Total de la cuenta')
-                            ->content(function (): HtmlString {
-                                $cuenta = $this->cuentaAbonando();
-
-                                return self::numeroGrande($cuenta instanceof Cuenta ? $cuenta->total : '0');
-                            }),
-
-                        Placeholder::make('resumen_abonado')
-                            ->label('Ya abonado')
-                            ->content(function (): HtmlString {
-                                $cuenta = $this->cuentaAbonando();
-
-                                return self::numeroGrande(
-                                    $cuenta instanceof Cuenta ? $cuenta->abonado()->redondeado(2) : '0',
-                                    'rgb(22 163 74)',
-                                );
-                            }),
-
-                        Placeholder::make('resumen_saldo')
-                            ->label(function (): string {
-                                $cuenta = $this->cuentaAbonando();
-
-                                return $cuenta instanceof Cuenta && $cuenta->saldoPendiente()->esNegativo()
-                                    ? 'A favor del paciente'
-                                    : 'Falta por pagar';
-                            })
-                            ->content(function (): HtmlString {
-                                $cuenta = $this->cuentaAbonando();
-
-                                if (! $cuenta instanceof Cuenta) {
-                                    return self::numeroGrande('0');
-                                }
-
-                                $saldo = $cuenta->saldoPendiente();
-
-                                return $saldo->esNegativo()
-                                    ? self::numeroGrande($cuenta->saldoAFavor()->redondeado(2), 'rgb(22 163 74)')
-                                    : self::numeroGrande($saldo->redondeado(2), 'rgb(217 119 6)');
-                            }),
-                    ]),
+                Placeholder::make('encabezado_del_abono')
+                    ->hiddenLabel()
+                    ->content(fn (): HtmlString => $this->encabezadoDelAbono()),
 
                 /*
-                 * ─────────────────────────────────────────────────────
-                 * EL REPETIDOR, EN TABLA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Cada forma de pago era una tarjeta gris enorme con su
-                 * manija de arrastre: dos formas llenaban la pantalla y
-                 * el botón de Recibir quedaba abajo del pliegue. En
-                 * tabla, tres filas ocupan lo que antes ocupaba una.
-                 *
-                 * Sin reordenar: el orden de las formas de pago dentro
-                 * de un recibo no significa nada, y la manija sobraba.
+                 * A la izquierda lo que se hace en el mostrador; a la
+                 * derecha lo que ya entró, para corregir el recibo mal
+                 * hecho con la familia enfrente.
                  */
-                Repeater::make('medios')
-                    ->label('¿Con qué paga?')
-                    ->table([
-                        TableColumn::make('Forma de pago')->width('38%')->markAsRequired(),
-                        TableColumn::make('Monto')->width('27%')->markAsRequired(),
-                        TableColumn::make('¿A qué banco?')->width('35%'),
-                    ])
-                    ->addActionLabel('Agregar otra forma de pago')
-                    ->reorderable(false)
-                    ->defaultItems(1)
-                    ->minItems(1)
-                    ->live()
+                Grid::make(['default' => 1, 'lg' => 5])
                     ->schema([
-                        Select::make('forma')
-                            ->hiddenLabel()
-                            ->options(FormaDePago::paraSelector())
-                            ->default(FormaDePago::Efectivo->value)
-                            ->native(false)
-                            ->required()
-                            ->live(),
+                        Section::make('Lo que deja ahora')
+                            ->icon(Heroicon::OutlinedBanknotes)
+                            ->compact()
+                            ->columnSpan(fn (): array => [
+                                'default' => 1,
+                                'lg'      => $this->recibosDeLaCuenta() === [] ? 5 : 3,
+                            ])
+                            ->schema([
+                                /*
+                                 * El monto que la pantalla ya sabe, a un
+                                 * clic. Con seguro, también solo lo del
+                                 * paciente: es lo que se le pide en la
+                                 * ventanilla.
+                                 */
+                                Actions::make([
+                                    Action::make('ponerLoQueFalta')
+                                        ->label(fn (): string => 'Poner lo que falta · L '
+                                            .number_format((float) ($this->cuentaAbonando()?->saldoPendiente()->redondeado(2) ?? '0'), 2))
+                                        ->tooltip('Va en la última forma de pago. Si hay varias, completa lo que les falta a las otras.')
+                                        ->link()
+                                        ->size(Size::Small)
+                                        ->visible(fn (): bool => $this->cuentaAbonando()?->saldoPendiente()->mayorQue('0') ?? false)
+                                        ->action(function (Get $get, Set $set): void {
+                                            $cuenta = $this->cuentaAbonando();
 
-                        TextInput::make('monto')
-                            ->hiddenLabel()
-                            ->prefix('L')
-                            ->inputMode('decimal')
-                            ->required()
-                            ->live(onBlur: true),
+                                            if ($cuenta instanceof Cuenta) {
+                                                $this->completarHasta($cuenta->saldoPendiente(), $get, $set);
+                                            }
+                                        }),
+
+                                    Action::make('ponerLoDelPaciente')
+                                        ->label(fn (): string => 'Solo lo del paciente · L '
+                                            .number_format((float) ($this->cuentaAbonando()?->saldoPendienteDelPaciente()->redondeado(2) ?? '0'), 2))
+                                        ->tooltip('Lo que le toca de su bolsillo. Lo del seguro se factura y se cobra después.')
+                                        ->link()
+                                        ->color('gray')
+                                        ->size(Size::Small)
+                                        ->visible(fn (): bool => $this->hayPorcionDelPacienteAparte())
+                                        ->action(function (Get $get, Set $set): void {
+                                            $cuenta = $this->cuentaAbonando();
+
+                                            if ($cuenta instanceof Cuenta) {
+                                                $this->completarHasta($cuenta->saldoPendienteDelPaciente(), $get, $set);
+                                            }
+                                        }),
+                                ]),
+
+                                $this->camposDeLosMedios(),
+
+                                /*
+                                 * El vuelto, igual que al facturar: no se
+                                 * guarda —el recibo dice lo que se aplicó,
+                                 * no el billete—; es para que nadie haga la
+                                 * resta de cabeza con la fila esperando.
+                                 */
+                                Grid::make(2)
+                                    ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get))
+                                    ->schema([
+                                        TextInput::make('paga_con')
+                                            ->label('Paga con')
+                                            ->prefix('L')
+                                            ->inputMode('decimal')
+                                            ->placeholder('Lo que entrega')
+                                            ->dehydrated(false)
+                                            ->live(debounce: 400),
+
+                                        Placeholder::make('vuelto')
+                                            ->label('Vuelto')
+                                            ->content(fn (Get $get): HtmlString => $this->vueltoDe($get)),
+                                    ]),
+
+                                Placeholder::make('recibiendo')
+                                    ->hiddenLabel()
+                                    ->visible(fn (Get $get): bool => ! $this->sumaDeMedios($get('medios'))->esCero())
+                                    ->content(fn (Get $get): HtmlString => $this->comoQuedaConElAbono($get)),
+
+                                $this->camposDeQuienEntrega(),
+                            ]),
 
                         /*
-                         * 🔴 SE DESHABILITA, NO SE ESCONDE.
+                         * ─────────────────────────────────────────────
+                         * LOS RECIBOS QUE YA TIENE LA CUENTA (12-oct-2026)
+                         * ─────────────────────────────────────────────
                          *
-                         * En una tabla, un campo que aparece y desaparece
-                         * desalinea la fila con su encabezado. Y un campo
-                         * deshabilitado no se deshidrata: el banco nunca
-                         * llega al recibo cuando la forma no lo pide, que
-                         * es justo lo que el CHECK de la base exige.
+                         * Mauricio: «que haya historial de los abonos que
+                         * se han hecho y poder anular algún abono o
+                         * editarlo». «Editar» es corregir: se anula y sale
+                         * uno nuevo, en un paso
+                         * (`ReceptorDeAbono::corregir()`). Solo con el
+                         * turno en que se recibió todavía abierto;
+                         * cerrado, la plata ya se contó y eso es una
+                         * devolución.
                          */
-                        Select::make('banco')
-                            ->hiddenLabel()
-                            ->options(self::bancos())
-                            ->native(false)
-                            ->searchable()
-                            ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
-                                ? 'Elegí el banco'
-                                : '—')
-                            ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
-                            ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
-                    ]),
-
-                /*
-                 * Lo que se está recibiendo AHORA y cómo queda la cuenta
-                 * si se aprieta Recibir. Es la verificación que hoy la
-                 * cajera hace de cabeza con el paciente esperando.
-                 */
-                Placeholder::make('recibiendo')
-                    ->hiddenLabel()
-                    ->content(function (Get $get): HtmlString {
-                        $cuenta = $this->cuentaAbonando();
-                        $suma = $this->sumaDeMedios($get('medios'));
-
-                        if (! $cuenta instanceof Cuenta || $suma->esCero()) {
-                            return new HtmlString('&nbsp;');
-                        }
-
-                        $queda = $cuenta->saldoPendiente()->restar($suma);
-
-                        $texto = 'Recibiendo <strong>L '.number_format((float) $suma->redondeado(2), 2).'</strong> · ';
-
-                        $texto .= $queda->esNegativo()
-                            ? 'quedarían L '.number_format((float) Decimal::cero()->restar($queda)->redondeado(2), 2).' a favor del paciente'
-                            : ($queda->esCero()
-                                ? 'la cuenta queda saldada'
-                                : 'faltarían L '.number_format((float) $queda->redondeado(2), 2));
-
-                        return new HtmlString(
-                            '<span style="font-size:.95rem">'.$texto.'</span>'
-                        );
-                    }),
-
-                /*
-                 * Casi siempre lo deja el paciente, así que ese es el
-                 * default y no hay nada que teclear. Cuando lo deja otro
-                 * —la hija, el patrón, el vecino— ahí sí se pide el
-                 * nombre: es la primera pregunta cuando alguien reclama
-                 * un recibo perdido.
-                 */
-                Section::make()
-                    ->compact()
-                    ->columns(2)
-                    ->schema([
-                        Select::make('quien_entrega')
-                            ->label('¿Quién deja la plata?')
-                            ->options([
-                                'paciente' => 'El paciente',
-                                'otro'     => 'Otra persona',
-                            ])
-                            ->default('paciente')
-                            ->native(false)
-                            ->live(),
-
-                        CampoMayusculas::make('entregado_por')
-                            ->label('¿Quién?')
-                            ->maxLength(120)
-                            ->required()
-                            ->placeholder('Nombre de quien deja el dinero')
-                            ->visible(fn (Get $get): bool => $get('quien_entrega') === 'otro'),
-
-                        CampoMayusculas::area('nota')
-                            ->label('Nota')
-                            ->rows(2)
-                            ->maxLength(300)
-                            ->columnSpanFull(),
+                        Section::make(fn (): string => 'Recibos de esta cuenta · '.count($this->recibosDeLaCuenta()))
+                            ->icon(Heroicon::OutlinedClock)
+                            ->compact()
+                            ->columnSpan(['default' => 1, 'lg' => 2])
+                            ->visible(fn (): bool => $this->recibosDeLaCuenta() !== [])
+                            ->schema([
+                                Placeholder::make('recibos_de_la_cuenta')
+                                    ->hiddenLabel()
+                                    ->content(fn (): HtmlString => new HtmlString(
+                                        view('filament.pages.partials.recibos-de-la-cuenta', [
+                                            'recibos' => $this->recibosDeLaCuenta(),
+                                        ])->render()
+                                    )),
+                            ]),
                     ]),
             ])
             ->action(function (array $arguments, array $data): void {
@@ -4865,21 +5018,351 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Un monto en grande, para los tres números de arriba del modal.
+     * Anular un recibo desde la lista del modal de abono.
      *
-     * ⚠️ Estilo en línea a propósito: el CSS de Filament viene
-     * precompilado y las clases de Tailwind que el panel no usa no
-     * existen (§9.A7).
+     * No tiene botón propio: lo monta la lista de recibos, encima del
+     * modal de abono, y al terminar se vuelve a él.
      */
-    private static function numeroGrande(string $monto, ?string $color = null): HtmlString
+    public function anularAbonoAction(): Action
     {
-        $estilo = 'font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums';
+        return Action::make('anularAbono')
+            ->modalHeading(function (array $arguments): string {
+                $recibo = $this->reciboDe($arguments);
 
-        if ($color !== null) {
-            $estilo .= ';color:'.$color;
+                return $recibo instanceof Abono ? 'Anular el recibo '.$recibo->numero : 'Anular el recibo';
+            })
+            ->modalDescription(function (array $arguments): string {
+                $recibo = $this->reciboDe($arguments);
+
+                return ($recibo instanceof Abono ? 'L '.number_format((float) $recibo->total, 2).' salen de la gaveta: devolvéselos a quien los dejó. ' : '')
+                    .'El recibo queda en la bitácora, tachado, con el motivo.';
+            })
+            ->modalSubmitActionLabel('Anular el recibo')
+            ->color('danger')
+            ->schema([
+                CampoMayusculas::area('motivo')
+                    ->label('¿Por qué se anula?')
+                    ->placeholder('Se recibió dos veces.')
+                    ->required()
+                    ->minLength(10)
+                    ->maxLength(200)
+                    ->rows(2),
+            ])
+            ->action(function (array $arguments, array $data): void {
+                $recibo = $this->reciboDe($arguments);
+
+                if (! $recibo instanceof Abono) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('update', $recibo), 403);
+
+                try {
+                    app(ReceptorDeAbono::class)->anular(
+                        $recibo,
+                        is_string($data['motivo'] ?? null) ? $data['motivo'] : '',
+                        UsuarioAutenticado::id(),
+                    );
+                } catch (SihlaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo anular el recibo')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                $this->recibosLeidos = null;
+
+                Notification::make()
+                    ->success()
+                    ->title('Recibo '.$recibo->numero.' anulado')
+                    ->body('L '.number_format((float) $recibo->total, 2).' salen de la gaveta: devolvéselos a quien los dejó.')
+                    ->send();
+            });
+    }
+
+    /**
+     * «Editar» un recibo: se anula y sale uno nuevo con lo correcto, en
+     * un paso (`ReceptorDeAbono::corregir()`). El formulario viene lleno
+     * con lo que dice el recibo, para cambiar solo lo que estaba mal.
+     */
+    public function corregirAbonoAction(): Action
+    {
+        return Action::make('corregirAbono')
+            ->modalHeading(function (array $arguments): string {
+                $recibo = $this->reciboDe($arguments);
+
+                return $recibo instanceof Abono ? 'Corregir el recibo '.$recibo->numero : 'Corregir el recibo';
+            })
+            ->modalDescription('Se anula y sale uno nuevo con lo correcto, en un solo paso. El viejo queda en la bitácora, tachado; el nuevo dice a cuál corrige.')
+            ->modalWidth('3xl')
+            ->modalSubmitActionLabel('Corregir el recibo')
+            ->fillForm(function (array $arguments): array {
+                $recibo = $this->reciboDe($arguments);
+
+                if (! $recibo instanceof Abono) {
+                    return [];
+                }
+
+                $medios = [];
+
+                foreach ($recibo->medios()->orderBy('id')->get() as $medio) {
+                    $medios[] = [
+                        'forma' => $medio->forma->value,
+                        'monto' => Decimal::de($medio->monto)->redondeado(2),
+                        'banco' => $medio->banco,
+                    ];
+                }
+
+                return [
+                    'medios'        => $medios,
+                    'quien_entrega' => $recibo->entregado_por === null ? 'paciente' : 'otro',
+                    'entregado_por' => $recibo->entregado_por,
+                    'nota'          => $recibo->nota,
+                ];
+            })
+            ->schema([
+                $this->camposDeLosMedios(),
+                $this->camposDeQuienEntrega(),
+
+                CampoMayusculas::area('motivo')
+                    ->label('¿Qué se corrige?')
+                    ->placeholder('Era tarjeta, no efectivo.')
+                    ->required()
+                    ->minLength(10)
+                    ->maxLength(160)
+                    ->rows(2),
+            ])
+            ->action(function (array $arguments, array $data): void {
+                $recibo = $this->reciboDe($arguments);
+                $usuario = Auth::user();
+
+                if (! $recibo instanceof Abono || ! $usuario instanceof User) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('update', $recibo) && Gate::allows('create', Abono::class), 403);
+
+                try {
+                    $nuevo = app(ReceptorDeAbono::class)->corregir(
+                        original: $recibo,
+                        medios: $this->mediosDelFormulario($data['medios'] ?? []),
+                        quienCorrige: $usuario,
+                        entregadoPor: ($data['quien_entrega'] ?? 'paciente') === 'otro'
+                            && is_string($data['entregado_por'] ?? null)
+                                ? $data['entregado_por']
+                                : null,
+                        nota: is_string($data['nota'] ?? null) ? $data['nota'] : null,
+                        motivo: is_string($data['motivo'] ?? null) ? $data['motivo'] : '',
+                    );
+                } catch (SihlaException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se pudo corregir el recibo')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                $this->recibosLeidos = null;
+
+                Notification::make()
+                    ->success()
+                    ->title('Recibo corregido')
+                    ->body('Se anuló el '.$recibo->numero.' y quedó el '.$nuevo->numero
+                        .' por L '.number_format((float) $nuevo->total, 2).'.')
+                    ->send();
+            });
+    }
+
+    /**
+     * El recibo de los argumentos, si existe y quien mira lo puede ver.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    private function reciboDe(array $arguments): ?Abono
+    {
+        $id = $arguments['recibo'] ?? null;
+
+        if (! is_numeric($id)) {
+            return null;
         }
 
-        return new HtmlString('<span style="'.$estilo.'">L '.number_format((float) $monto, 2).'</span>');
+        $recibo = Abono::query()->find((int) $id);
+
+        return $recibo instanceof Abono && Gate::allows('view', $recibo) ? $recibo : null;
+    }
+
+    /**
+     * Los recibos de la cuenta del modal, el último arriba, listos para
+     * la lista: qué entró, cuándo, quién lo recibió y si todavía se puede
+     * anular o corregir.
+     *
+     * @return list<array{id: int, numero: string, cuando: string, medios: string, total: string, quien: string, entrego: string|null, nota: string|null, anulado: bool, motivo: string|null, tocable: bool}>
+     */
+    private function recibosDeLaCuenta(): array
+    {
+        $cuenta = $this->cuentaAbonando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return [];
+        }
+
+        if ($this->recibosLeidos !== null && $this->recibosLeidos['cuenta'] === $cuenta->id) {
+            return $this->recibosLeidos['filas'];
+        }
+
+        $recibos = Abono::query()
+            ->where('cuenta_id', $cuenta->id)
+            ->with(['medios', 'turno', 'recibidoPor'])
+            ->orderByDesc('id')
+            ->get();
+
+        $filas = [];
+
+        foreach ($recibos as $recibo) {
+            $quien = $recibo->recibidoPor;
+
+            $filas[] = [
+                'id'      => $recibo->id,
+                'numero'  => $recibo->numero,
+                'cuando'  => $recibo->recibido_en->format('d/m/Y H:i'),
+                'medios'  => $recibo->resumenDeMedios(),
+                'total'   => number_format((float) $recibo->total, 2),
+                'quien'   => $quien instanceof User ? $quien->name : '—',
+                'entrego' => $recibo->entregado_por,
+                'nota'    => $recibo->nota,
+                'anulado' => $recibo->estado === EstadoAbono::Anulado,
+                'motivo'  => $recibo->motivo_anulacion,
+                'tocable' => $recibo->sePuedeAnular() && Gate::allows('update', $recibo),
+            ];
+        }
+
+        $this->recibosLeidos = ['cuenta' => $cuenta->id, 'filas' => $filas];
+
+        return $filas;
+    }
+
+    /**
+     * Con qué paga: el mismo repetidor al recibir un abono y al corregirlo.
+     */
+    private function camposDeLosMedios(): Repeater
+    {
+        /*
+         * ─────────────────────────────────────────────────────
+         * EL REPETIDOR, EN TABLA
+         * ─────────────────────────────────────────────────────
+         *
+         * Cada forma de pago era una tarjeta gris enorme con su
+         * manija de arrastre: dos formas llenaban la pantalla y
+         * el botón de Recibir quedaba abajo del pliegue. En
+         * tabla, tres filas ocupan lo que antes ocupaba una.
+         *
+         * Sin reordenar: el orden de las formas de pago dentro
+         * de un recibo no significa nada, y la manija sobraba.
+         */
+        return Repeater::make('medios')
+            ->label('¿Con qué paga?')
+            ->table([
+                TableColumn::make('Forma de pago')->width('38%')->markAsRequired(),
+                TableColumn::make('Monto')->width('27%')->markAsRequired(),
+                TableColumn::make('¿A qué banco?')->width('35%'),
+            ])
+            ->addActionLabel('Agregar otra forma de pago')
+            ->reorderable(false)
+            ->defaultItems(1)
+            ->minItems(1)
+            ->live()
+            ->schema([
+                Select::make('forma')
+                    ->hiddenLabel()
+                    ->options(FormaDePago::paraSelector())
+                    ->default(FormaDePago::Efectivo->value)
+                    ->native(false)
+                    ->required()
+                    ->live(),
+
+                TextInput::make('monto')
+                    ->hiddenLabel()
+                    ->prefix('L')
+                    ->inputMode('decimal')
+                    ->required()
+                    ->live(onBlur: true),
+
+                /*
+                 * 🔴 SE DESHABILITA, NO SE ESCONDE.
+                 *
+                 * En una tabla, un campo que aparece y desaparece
+                 * desalinea la fila con su encabezado. Y un campo
+                 * deshabilitado no se deshidrata: el banco nunca
+                 * llega al recibo cuando la forma no lo pide, que
+                 * es justo lo que el CHECK de la base exige.
+                 */
+                Select::make('banco')
+                    ->hiddenLabel()
+                    ->options(self::bancos())
+                    ->native(false)
+                    ->searchable()
+                    ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
+                        ? 'Elegí el banco'
+                        : '—')
+                    ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
+                    ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
+            ]);
+    }
+
+    /**
+     * Quién deja la plata y la nota: lo mismo al recibir y al corregir.
+     */
+    private function camposDeQuienEntrega(): Grid
+    {
+        /*
+         * Casi siempre lo deja el paciente, así que ese es el
+         * default y no hay nada que teclear. Cuando lo deja otro
+         * —la hija, el patrón, el vecino— ahí sí se pide el
+         * nombre: es la primera pregunta cuando alguien reclama
+         * un recibo perdido.
+         */
+        return Grid::make(2)
+            ->schema([
+                Select::make('quien_entrega')
+                    ->label('¿Quién deja la plata?')
+                    ->options([
+                        'paciente' => 'El paciente',
+                        'otro'     => 'Otra persona',
+                    ])
+                    ->default('paciente')
+                    ->native(false)
+                    ->live(),
+
+                CampoMayusculas::make('entregado_por')
+                    ->label('¿Quién?')
+                    ->maxLength(120)
+                    ->required()
+                    ->placeholder('Nombre de quien deja el dinero')
+                    ->visible(fn (Get $get): bool => $get('quien_entrega') === 'otro'),
+
+                /*
+                 * Al lado de la pregunta cuando lo deja el paciente —no
+                 * hay nombre que pedir y la mitad derecha quedaba
+                 * vacía—; abajo, a todo el ancho, cuando lo deja otro.
+                 */
+                CampoMayusculas::area('nota')
+                    ->label('Nota')
+                    ->placeholder('Opcional')
+                    ->rows(1)
+                    ->autosize()
+                    ->maxLength(300)
+                    ->columnSpan(fn (Get $get): array => [
+                        'default' => 1,
+                        'lg'      => $get('quien_entrega') === 'otro' ? 2 : 1,
+                    ]),
+            ]);
     }
 
     /**
@@ -5381,15 +5864,13 @@ class CuentasAbiertas extends Page
             $this->cuentaDelDescuento = null;
             $this->descuentoDeLaTanda = null;
             $this->motivoDeLaTanda = null;
-            $this->descuentoServicios = null;
-            $this->motivoServicios = null;
-            $this->modoServicios = 'porcentaje';
+            $this->cargarLosDescuentosPorRubroDe(null);
 
             return;
         }
 
         $this->cuentaDelDescuento = $cuenta->id;
-        $this->cargarElDescuentoEnServiciosDe($cuenta);
+        $this->cargarLosDescuentosPorRubroDe($cuenta);
 
         /*
          * De fracción a porcentaje: 0.3000 → «30». La pantalla habla en
@@ -5490,50 +5971,85 @@ class CuentasAbiertas extends Page
         $this->rehacerLasLineasConElDescuento($cuenta);
     }
 
-    // ── Descuento en servicios ────────────────────────────────────────
+    // ── Descuentos por rubro: servicios y honorarios ──────────────────
 
     /**
-     * Lo que muestra la banda del descuento en servicios.
+     * Lo que muestra la sección de descuentos para un rubro.
      *
-     * Los topes se dicen ANTES de teclear, agrupados por cuánto aguanta
-     * cada cosa: «20 % hospitalización, consulta general». Teclear 30 y
-     * enterarse después de que quedó en 20 parece un error del sistema.
+     * El tope se dice ANTES de teclear y en una línea: «Hasta 20 %» si es
+     * uno solo, «Entre 20 % y 30 %, según el servicio» si varía. El detalle
+     * por categoría va aparte, en la ayuda que aparece al pasar por encima:
+     * teclear 30 y ver que quedó en 20 parece un error si nadie lo avisó.
      *
-     * @return array{grupos: list<array{tope: string, que: string}>, maximo: string|null, puede: bool, valor: string|null, modo: string, motivo: string|null}
+     * @return array{valor: string|null, modo: string, motivo: string|null, ayuda: string, detalle: string, maximo: string|null, puede: bool, aplicado: string|null}
      */
-    public function datosDelDescuentoEnServicios(?Cuenta $cuenta): array
+    public function datosDelDescuento(?Cuenta $cuenta, RubroDeDescuento $rubro): array
     {
-        $base = [
-            'valor'  => $this->descuentoServicios,
-            'modo'   => $this->modoServicios,
-            'motivo' => $this->motivoServicios,
+        $enPantalla = [
+            'valor'  => $this->valorDelDescuento($rubro),
+            'modo'   => $this->modoDelDescuento($rubro),
+            'motivo' => $this->motivoDelDescuento($rubro),
         ];
 
         if (! $cuenta instanceof Cuenta) {
-            return ['grupos' => [], 'maximo' => null, 'puede' => false, ...$base];
+            return [...$enPantalla, 'ayuda' => '', 'detalle' => '', 'maximo' => null, 'puede' => false, 'aplicado' => null];
         }
 
-        $aplicador = app(AplicadorDeDescuentoEnServicios::class);
+        $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
         $porTope = [];
-        $puede = false;
+        $soloLey = [];
+        $menor = null;
+        $mayor = null;
 
-        foreach ($aplicador->topesDe($cuenta, now()) as $fila) {
-            $tope = $fila['tope']->esCero() ? 'Solo ley' : $fila['tope']->comoPorcentaje(0);
-            $puede = $puede || ! $fila['tope']->esCero();
-            $porTope[$tope][] = self::nombreCortoDeLaCategoria($fila['categoria']);
+        foreach ($aplicador->topesDe($cuenta, $rubro, now()) as $fila) {
+            $nombre = self::nombreCortoDeLaCategoria($fila['categoria']);
+
+            if ($fila['tope']->esCero()) {
+                $soloLey[] = $nombre;
+
+                continue;
+            }
+
+            $porTope[$fila['tope']->comoPorcentaje(0)][] = $nombre;
+            $menor = $menor === null || $fila['tope']->menorQue($menor) ? $fila['tope'] : $menor;
+            $mayor = $mayor === null || $fila['tope']->mayorQue($mayor) ? $fila['tope'] : $mayor;
         }
 
-        $grupos = [];
+        $detalle = [];
 
-        foreach ($porTope as $tope => $que) {
-            $grupos[] = ['tope' => (string) $tope, 'que' => implode(', ', $que)];
+        foreach ($porTope as $tope => $nombres) {
+            $detalle[] = $tope.': '.implode(', ', $nombres);
         }
+
+        if ($soloLey !== []) {
+            $detalle[] = 'Solo la de ley: '.implode(', ', $soloLey);
+        }
+
+        if (! $mayor instanceof Decimal || ! $menor instanceof Decimal) {
+            $ayuda = 'Ya lleva el descuento de ley.';
+        } elseif ($soloLey !== []) {
+            $ayuda = 'Hasta '.$mayor->comoPorcentaje(0).' en '.implode(', ', array_merge(...array_values($porTope)))
+                .'; lo demás, solo la de ley.';
+        } elseif ($menor->igualA($mayor)) {
+            $ayuda = 'Hasta '.$mayor->comoPorcentaje(0).'.';
+        } else {
+            $ayuda = 'Entre '.$menor->comoPorcentaje(0).' y '.$mayor->comoPorcentaje(0).', según el '.$rubro->enSingular().'.';
+        }
+
+        $monto = AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro);
+        $fraccion = AplicadorDeDescuentoDeLaCuenta::fraccionDe($cuenta, $rubro);
 
         return [
-            'grupos' => $grupos,
-            'maximo' => $aplicador->maximoEnLempiras($cuenta)->redondeado(2),
-            'puede'  => $puede,
-            ...$base,
+            ...$enPantalla,
+            'ayuda'    => $ayuda,
+            'detalle'  => implode("\n", $detalle),
+            'maximo'   => $aplicador->maximoEnLempiras($cuenta, $rubro)->redondeado(2),
+            'puede'    => $mayor instanceof Decimal,
+            'aplicado' => match (true) {
+                $monto instanceof Decimal    => 'L '.number_format((float) $monto->redondeado(2), 2),
+                $fraccion instanceof Decimal => self::comoPorcentajeCorto($fraccion),
+                default                      => null,
+            },
         ];
     }
 
@@ -5551,35 +6067,91 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * De la cuenta a la banda. Igual que el de farmacia: se lee de la
-     * cuenta cada vez que se abre el modal, no se confía en lo que quedó
-     * en la memoria de Livewire.
+     * 0.1000 → «10 %», 0.1250 → «12.5 %». Sin ceros de relleno.
      */
-    private function cargarElDescuentoEnServiciosDe(Cuenta $cuenta): void
+    private static function comoPorcentajeCorto(Decimal $fraccion): string
     {
-        $this->motivoServicios = $cuenta->motivo_descuento_servicios;
+        return rtrim(rtrim($fraccion->por('100')->redondeado(2), '0'), '.').' %';
+    }
 
-        if ($cuenta->descuento_servicios_monto !== null) {
-            $this->modoServicios = 'monto';
-            $this->descuentoServicios = Decimal::de($cuenta->descuento_servicios_monto)->redondeado(2);
+    private function valorDelDescuento(RubroDeDescuento $rubro): ?string
+    {
+        return $rubro === RubroDeDescuento::Servicios ? $this->descuentoServicios : $this->descuentoHonorarios;
+    }
+
+    private function modoDelDescuento(RubroDeDescuento $rubro): string
+    {
+        return $rubro === RubroDeDescuento::Servicios ? $this->modoServicios : $this->modoHonorarios;
+    }
+
+    private function motivoDelDescuento(RubroDeDescuento $rubro): ?string
+    {
+        return $rubro === RubroDeDescuento::Servicios ? $this->motivoServicios : $this->motivoHonorarios;
+    }
+
+    private function ponerEnLaSeccion(RubroDeDescuento $rubro, ?string $valor, string $modo, ?string $motivo): void
+    {
+        if ($rubro === RubroDeDescuento::Servicios) {
+            $this->descuentoServicios = $valor;
+            $this->modoServicios = $modo;
+            $this->motivoServicios = $motivo;
 
             return;
         }
 
-        $this->modoServicios = 'porcentaje';
-        $this->descuentoServicios = $cuenta->descuento_servicios === null
-            ? null
-            : rtrim(rtrim(Decimal::de($cuenta->descuento_servicios)->por('100')->redondeado(2), '0'), '.');
+        $this->descuentoHonorarios = $valor;
+        $this->modoHonorarios = $modo;
+        $this->motivoHonorarios = $motivo;
+    }
+
+    /**
+     * De la cuenta a la sección. Igual que el de farmacia: se lee de la
+     * cuenta cada vez que se abre el modal, no se confía en lo que quedó
+     * en la memoria de Livewire.
+     */
+    private function cargarLosDescuentosPorRubroDe(?Cuenta $cuenta): void
+    {
+        foreach (RubroDeDescuento::cases() as $rubro) {
+            if (! $cuenta instanceof Cuenta) {
+                $this->ponerEnLaSeccion($rubro, null, 'porcentaje', null);
+
+                continue;
+            }
+
+            $monto = AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro);
+            $fraccion = AplicadorDeDescuentoDeLaCuenta::fraccionDe($cuenta, $rubro);
+
+            $this->ponerEnLaSeccion(
+                $rubro,
+                match (true) {
+                    $monto instanceof Decimal    => $monto->redondeado(2),
+                    $fraccion instanceof Decimal => rtrim(rtrim($fraccion->por('100')->redondeado(2), '0'), '.'),
+                    default                      => null,
+                },
+                $monto instanceof Decimal ? 'monto' : 'porcentaje',
+                AplicadorDeDescuentoDeLaCuenta::motivoDe($cuenta, $rubro),
+            );
+        }
     }
 
     public function updatedDescuentoServicios(): void
     {
-        $this->guardarElDescuentoEnServicios();
+        $this->guardarElDescuento(RubroDeDescuento::Servicios);
     }
 
     public function updatedMotivoServicios(): void
     {
-        $this->guardarElDescuentoEnServicios();
+        $this->guardarElDescuento(RubroDeDescuento::Servicios);
+    }
+
+    public function updatedDescuentoHonorarios(): void
+    {
+        $this->guardarElDescuento(RubroDeDescuento::Honorarios);
+    }
+
+    public function updatedMotivoHonorarios(): void
+    {
+        $this->guardarElDescuento(RubroDeDescuento::Honorarios);
     }
 
     /**
@@ -5589,21 +6161,24 @@ class CuentasAbiertas extends Page
      * y espera el número nuevo; lo que está guardado en la cuenta no se
      * toca hasta que se escriba.
      */
-    public function cambiarModoDeServicios(string $modo): void
+    public function cambiarModoDelDescuento(string $rubro, string $modo): void
     {
-        if (! in_array($modo, ['porcentaje', 'monto'], true) || $modo === $this->modoServicios) {
+        $elRubro = RubroDeDescuento::tryFrom($rubro);
+
+        if (! $elRubro instanceof RubroDeDescuento
+            || ! in_array($modo, ['porcentaje', 'monto'], true)
+            || $modo === $this->modoDelDescuento($elRubro)) {
             return;
         }
 
-        $this->modoServicios = $modo;
-        $this->descuentoServicios = null;
+        $this->ponerEnLaSeccion($elRubro, null, $modo, $this->motivoDelDescuento($elRubro));
     }
 
     /**
      * Igual que el de farmacia: el número y el motivo valen juntos, y
      * vaciar el número lo quita.
      */
-    private function guardarElDescuentoEnServicios(): void
+    private function guardarElDescuento(RubroDeDescuento $rubro): void
     {
         $cuenta = $this->cuentaDelDescuento === null
             ? null
@@ -5613,20 +6188,21 @@ class CuentasAbiertas extends Page
             return;
         }
 
-        $aplicador = app(AplicadorDeDescuentoEnServicios::class);
-        $valor = NumeroDeFormulario::aDecimal($this->descuentoServicios);
+        $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
+        $valor = NumeroDeFormulario::aDecimal($this->valorDelDescuento($rubro));
 
         if (! $valor instanceof Decimal || $valor->esCero() || $valor->esNegativo()) {
-            if ($cuenta->descuento_servicios === null && $cuenta->descuento_servicios_monto === null) {
+            if (! AplicadorDeDescuentoDeLaCuenta::fraccionDe($cuenta, $rubro) instanceof Decimal
+                && ! AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro) instanceof Decimal) {
                 return;
             }
 
             try {
-                $aplicador->quitar($cuenta);
+                $aplicador->quitar($cuenta, $rubro);
             } catch (SihlaException $e) {
                 Notification::make()
                     ->danger()
-                    ->title('No se pudo quitar el descuento en servicios')
+                    ->title('No se pudo quitar el descuento en '.$rubro->enPlural())
                     ->body($e->getMessage())
                     ->persistent()
                     ->send();
@@ -5634,28 +6210,29 @@ class CuentasAbiertas extends Page
                 return;
             }
 
-            $this->motivoServicios = null;
+            $this->ponerEnLaSeccion($rubro, null, $this->modoDelDescuento($rubro), null);
 
             Notification::make()
                 ->success()
-                ->title('Descuento en servicios quitado')
-                ->body('Los servicios volvieron a su precio.')
+                ->title('Descuento en '.$rubro->enPlural().' quitado')
+                ->body('Volvieron a su precio.')
                 ->send();
 
             return;
         }
 
-        $motivo = is_string($this->motivoServicios) ? $this->motivoServicios : '';
+        $motivo = $this->motivoDelDescuento($rubro) ?? '';
 
         if (mb_strlen(trim($motivo)) < 10) {
             return;
         }
 
-        $enLempiras = $this->modoServicios === 'monto';
+        $enLempiras = $this->modoDelDescuento($rubro) === 'monto';
 
         try {
             $topadas = $aplicador->fijar(
                 $cuenta,
+                $rubro,
                 $enLempiras ? null : $valor->entre('100'),
                 $enLempiras ? $valor : null,
                 $motivo,
@@ -5664,7 +6241,7 @@ class CuentasAbiertas extends Page
         } catch (SihlaException $e) {
             Notification::make()
                 ->danger()
-                ->title('No se aplicó el descuento en servicios')
+                ->title('No se aplicó el descuento en '.$rubro->enPlural())
                 ->body($e->getMessage())
                 ->persistent()
                 ->send();
@@ -5672,44 +6249,46 @@ class CuentasAbiertas extends Page
             return;
         }
 
-        $this->cargarElDescuentoEnServiciosDe($cuenta->refresh());
+        $this->cargarLosDescuentosPorRubroDe($cuenta->refresh());
 
         Notification::make()
             ->success()
-            ->title('Descuento en servicios aplicado')
+            ->title('Descuento en '.$rubro->enPlural().' aplicado')
             ->body($topadas === []
-                ? 'Farmacia, honorarios y paquetes no se tocan.'
-                : self::dichoDeLasTopadas($topadas))
+                ? 'Quedó en todo lo cargado y en lo que se cargue.'
+                : self::dichoDeLasTopadas($topadas, $rubro))
             ->send();
     }
 
     /**
-     * Con el descuento en lempiras, el reparto depende de qué servicios
-     * hay: si entra o sale uno, «L 500 en servicios» se vuelve a repartir
-     * entre los que quedan.
+     * Con el descuento en lempiras, el reparto depende de qué renglones
+     * hay: si entra o sale uno, «L 500» se vuelve a repartir entre los
+     * que quedan del mismo rubro.
      *
      * 🔴 NUNCA BLOQUEA LO QUE YA PASÓ. La línea ya entró (o ya salió); si
      * el monto no cabe en lo que quedó, se avisa y se sigue.
      */
-    private function repartirDeNuevoLosServicios(Cuenta $cuenta, Item $item): void
+    private function repartirDeNuevoElRubroDe(Cuenta $cuenta, Item $item): void
     {
-        if (! AplicadorDeDescuentoEnServicios::aplicaAlItem($item)) {
+        $rubro = AplicadorDeDescuentoDeLaCuenta::rubroDe($item);
+
+        if (! $rubro instanceof RubroDeDescuento) {
             return;
         }
 
         $cuenta->refresh();
 
-        if ($cuenta->descuento_servicios_monto === null) {
+        if (! AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro) instanceof Decimal) {
             return;
         }
 
         try {
-            app(AplicadorDeDescuentoEnServicios::class)->ponerAlDia($cuenta);
+            app(AplicadorDeDescuentoDeLaCuenta::class)->ponerAlDia($cuenta, $rubro);
         } catch (SihlaException $e) {
             Notification::make()
                 ->warning()
-                ->title('El descuento en servicios quedó sin repartir')
-                ->body($e->getMessage().' Cambialo arriba, en «Descuento en servicios».')
+                ->title('El descuento en '.$rubro->enPlural().' quedó sin repartir')
+                ->body($e->getMessage().' Cambialo arriba, en «Descuentos de la cuenta».')
                 ->persistent()
                 ->send();
         }
@@ -5718,14 +6297,14 @@ class CuentasAbiertas extends Page
     /**
      * @param list<string> $topadas
      */
-    private static function dichoDeLasTopadas(array $topadas): string
+    private static function dichoDeLasTopadas(array $topadas, RubroDeDescuento $rubro): string
     {
         $nombres = array_slice($topadas, 0, 3);
         $resto = count($topadas) - count($nombres);
         $lista = implode(', ', $nombres).($resto > 0 ? " y {$resto} más" : '');
 
         return (count($topadas) === 1 ? "{$lista} quedó en su tope" : "{$lista} quedaron en su tope")
-            .': cada servicio rebaja hasta lo que su categoría permite.';
+            .': cada '.$rubro->enSingular().' rebaja hasta lo que su categoría permite.';
     }
 
     /**
@@ -5974,12 +6553,12 @@ class CuentasAbiertas extends Page
          * escrito que se rehizo.
          */
         if (! $caso instanceof RangoEdad || ! $caso->tieneDescuentoLegal() || ! $cuenta instanceof Cuenta) {
-            return 'Hasta '.$tope->comoPorcentaje().'. Solo medicamentos y materiales.';
+            return 'Hasta '.$tope->comoPorcentaje().'.';
         }
 
         return $cuenta->convenio->aplicaDescuentoLegal()
-            ? 'Hasta '.$tope->comoPorcentaje().', además del de ley. Solo medicamentos y materiales.'
-            : 'Hasta '.$tope->comoPorcentaje().'. Este pagador no da el de ley: es todo su descuento. Solo medicamentos y materiales.';
+            ? 'Hasta '.$tope->comoPorcentaje().', además del de ley.'
+            : 'Hasta '.$tope->comoPorcentaje().'. Este pagador no da el de ley: es todo su descuento.';
     }
 
     /**
@@ -6299,139 +6878,6 @@ class CuentasAbiertas extends Page
         }
 
         return $item->unidadDispensacion->etiqueta();
-    }
-
-    /**
-     * Los ocho ítems que más se cargaron últimamente en esta sede.
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * POR QUÉ ESTO AHORRA MÁS TIEMPO QUE CUALQUIER OTRA COSA
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * Una ronda de medicamentos son veinte líneas y casi siempre las
-     * mismas seis cosas. Buscarlas por nombre veinte veces es el trabajo;
-     * apretarlas es el atajo. Sale de lo que el hospital REALMENTE carga,
-     * no de una lista que alguien tenga que mantener.
-     *
-     * Con la base recién sembrada todavía no hay historial, así que cae
-     * en los primeros ítems con precio de lista vigente: el día uno la
-     * pantalla ya sirve para algo.
-     *
-     * @param array<string, mixed> $arguments
-     *
-     * @return ColeccionDeModelos<int, Item>
-     */
-    public function itemsFrecuentes(array $arguments): ColeccionDeModelos
-    {
-        $cuenta = $this->cuentaDe($arguments);
-
-        if (! $cuenta instanceof Cuenta) {
-            return new ColeccionDeModelos;
-        }
-
-        $ids = Cargo::query()
-            ->where('sede_id', $cuenta->sede_id)
-            ->where('fecha_operacion', '>=', now()->subDays(60)->toDateString())
-            ->where('estado', '<>', EstadoCargo::Anulado->value)
-            ->selectRaw('item_id, count(*) as veces')
-            ->groupBy('item_id')
-            ->orderByDesc('veces')
-            ->limit(8)
-            ->pluck('item_id');
-
-        /*
-         * 🔴 Los atajos también respetan la vigencia. Un ítem retirado
-         * —el nombre mal escrito que alguien creó por error— fue de lo
-         * más cargado justamente PORQUE se estuvo cobrando, así que sin
-         * este filtro se quedaría de botón en la banda: el lugar de la
-         * pantalla donde cobrarlo cuesta un solo clic.
-         */
-        if ($ids->isEmpty()) {
-            $consulta = Item::query()
-                ->whereHas('precios', fn ($precios) => $precios->whereNull('convenio_id'))
-                ->vigentesEn(now());
-
-            CatalogoDelRol::filtrar($consulta);
-
-            return $consulta->orderBy('nombre')->limit(8)->get();
-        }
-
-        $consulta = Item::query()
-            ->whereIn('id', $ids)
-            ->vigentesEn(now());
-
-        /*
-         * 🔴 Y también por área. Los atajos salen de lo que MÁS se cargó
-         * en la sede, o sea de lo que carga caja: medicamentos, estancias,
-         * consultas. Sin este filtro, el laboratorista abría la cuenta y
-         * la banda de arriba le ofrecía ocho botones de un solo clic para
-         * cobrar exactamente lo que no le corresponde.
-         */
-        CatalogoDelRol::filtrar($consulta);
-
-        return $consulta->orderBy('nombre')->get();
-    }
-
-    /**
-     * Un clic = una unidad. El atajo de «lo más usado».
-     *
-     * ⚠️ Es un método público de Livewire, así que **se puede invocar
-     * desde el cliente aunque el botón no exista**. La autorización se
-     * verifica acá adentro, no en la vista.
-     */
-    public function agregarRapido(int $cuenta, int $item): void
-    {
-        abort_unless(Gate::allows('create', Cargo::class), 403);
-
-        $laCuenta = $this->cuentaDe(['cuenta' => $cuenta]);
-        $elItem = $this->itemDe($item);
-
-        if (! $laCuenta instanceof Cuenta || ! $elItem instanceof Item) {
-            return;
-        }
-
-        abort_unless(Gate::allows('update', $laCuenta), 403);
-
-        /*
-         * El botón puede no existir en la pantalla y este método sigue
-         * siendo invocable desde el cliente: la verificación de área va
-         * acá, igual que la de permisos.
-         */
-        if (! CatalogoDelRol::puedeCargar($elItem)) {
-            Notification::make()
-                ->danger()
-                ->title('Eso no se carga desde tu área')
-                ->body(CargoException::noEsDeSuArea($elItem->nombre, $elItem->tipo->etiqueta())->getMessage())
-                ->persistent()
-                ->send();
-
-            return;
-        }
-
-        /*
-         * Lo que mueve inventario NO se carga de un clic: hay que decir de
-         * qué almacén sale, y adivinarlo sería inventar un faltante en el
-         * estante equivocado. Se deja el ítem puesto en el formulario y se
-         * pide lo único que falta.
-         */
-        if ($elItem->mueveInventario()) {
-            Notification::make()
-                ->info()
-                ->title($elItem->nombre)
-                ->body('Decí de qué almacén sale y presioná Agregar.')
-                ->send();
-
-            $this->replaceMountedAction('cargarEnCuenta', [
-                'cuenta' => $laCuenta->id,
-                'item'   => $elItem->id,
-            ]);
-
-            return;
-        }
-
-        $this->agregar($laCuenta, ['item_id' => $elItem->id, 'cantidad' => 1]);
-
-        $this->replaceMountedAction('cargarEnCuenta', ['cuenta' => $laCuenta->id]);
     }
 
     private function itemDe(mixed $valor): ?Item

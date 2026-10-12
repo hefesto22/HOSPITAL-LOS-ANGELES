@@ -189,4 +189,54 @@ final class ReceptorDeAbono
             return $bloqueado->refresh();
         });
     }
+
+    /**
+     * Corrige un recibo: lo anula y emite uno nuevo con lo correcto, en
+     * UNA transacción.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * POR QUÉ NO SE EDITA (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio pidió poder «editar» un abono. Un recibo no se edita: el
+     * paciente se lleva el número en la mano, el arqueo del turno lo
+     * suma, y el trigger `abonos_inmutables` no deja tocar el monto ni el
+     * turno. Corregir es lo que pasaría en papel: se anula el malo y se
+     * hace uno bueno. Los dos quedan —el viejo tachado con el motivo, el
+     * nuevo diciendo a cuál corrige—, y para quien cobra es un solo paso.
+     *
+     * Si cualquiera de las dos mitades falla —el turno del recibo viejo
+     * ya cerró, quien corrige no tiene turno abierto—, no queda ninguna:
+     * ni un recibo anulado sin su reemplazo, ni dos recibos vivos.
+     *
+     * @param list<MedioDePago> $medios
+     */
+    public function corregir(
+        Abono $original,
+        array $medios,
+        User $quienCorrige,
+        ?string $entregadoPor,
+        ?string $nota,
+        string $motivo,
+    ): Abono {
+        $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
+
+        if (mb_strlen($motivo) < 10) {
+            throw CajaException::faltaElMotivo();
+        }
+
+        $cuenta = Cuenta::query()->findOrFail($original->cuenta_id);
+
+        return DB::transaction(function () use ($original, $medios, $quienCorrige, $entregadoPor, $nota, $motivo, $cuenta): Abono {
+            $this->anular(
+                $original,
+                mb_substr('SE CORRIGE CON UN RECIBO NUEVO: '.$motivo, 0, 200),
+                $quienCorrige->id,
+            );
+
+            $suNota = trim(($nota ?? '')."\n".'CORRIGE EL RECIBO '.$original->numero.'.');
+
+            return $this->recibir($cuenta->refresh(), $medios, $quienCorrige, $entregadoPor, mb_substr($suNota, 0, 300));
+        });
+    }
 }

@@ -346,18 +346,20 @@
                     </div>
                 @endif
 
-                {{-- El de servicios se lee de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
-                @if ($cuenta->descuento_servicios_monto !== null)
-                    <div class="sihla-pie-linea sihla-pie-armado">
-                        <span>Descuento en servicios · L {{ number_format((float) $cuenta->descuento_servicios_monto, 2) }}</span>
-                        <span>repartido entre los servicios</span>
-                    </div>
-                @elseif ($cuenta->descuento_servicios !== null)
-                    <div class="sihla-pie-linea sihla-pie-armado">
-                        <span>Descuento en servicios · {{ rtrim(rtrim(number_format((float) $cuenta->descuento_servicios * 100, 2), '0'), '.') }} %</span>
-                        <span>cada servicio hasta su tope</span>
-                    </div>
-                @endif
+                {{-- Los de servicios y honorarios se leen de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
+                @foreach (['servicios', 'honorarios'] as $rubroDelPie)
+                    @if ($cuenta->{'descuento_'.$rubroDelPie.'_monto'} !== null)
+                        <div class="sihla-pie-linea sihla-pie-armado">
+                            <span>Descuento en {{ $rubroDelPie }} · L {{ number_format((float) $cuenta->{'descuento_'.$rubroDelPie.'_monto'}, 2) }}</span>
+                            <span>repartido entre lo cargado</span>
+                        </div>
+                    @elseif ($cuenta->{'descuento_'.$rubroDelPie} !== null)
+                        <div class="sihla-pie-linea sihla-pie-armado">
+                            <span>Descuento en {{ $rubroDelPie }} · {{ rtrim(rtrim(number_format((float) $cuenta->{'descuento_'.$rubroDelPie} * 100, 2), '0'), '.') }} %</span>
+                            <span>cada renglón hasta su tope</span>
+                        </div>
+                    @endif
+                @endforeach
 
                 @if (! $cuenta->saldoDeLaAseguradora()->esCero())
                     <div class="sihla-pie-linea sihla-pie-division">

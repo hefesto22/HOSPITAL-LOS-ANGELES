@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\OrigenDelPrecio;
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\CuentaException;
 use App\Domain\ValueObjects\Decimal;
@@ -23,19 +24,22 @@ use Illuminate\Support\Str;
 
 /**
  * ─────────────────────────────────────────────────────────────────────
- * EL DESCUENTO DEL HOSPITAL EN LO QUE NO SALE DE FARMACIA (11-oct-2026)
+ * EL DESCUENTO DEL HOSPITAL EN LO QUE NO SALE DE FARMACIA
  * ─────────────────────────────────────────────────────────────────────
  *
- * Mauricio: «si se aplica un descuento por monto o por porcentaje, se
- * aplicaría a todo lo que no sea materiales y medicamentos, ya que ese
- * es descuento exclusivo de medicamentos y materiales».
+ * Mauricio (11-oct-2026): «si se aplica un descuento por monto o por
+ * porcentaje, se aplicaría a todo lo que no sea materiales y
+ * medicamentos, ya que ese es descuento exclusivo de medicamentos y
+ * materiales». Y al día siguiente: «también hacían descuentos en
+ * honorarios». Son dos rubros (`RubroDeDescuento`), cada uno con su
+ * campo, su motivo y sus columnas en la cuenta. El de farmacia vive
+ * aparte, en `CuentasAbiertas::rehacerLasLineasConElDescuento()`.
  *
- * Es el hermano del descuento de farmacia de la cuenta, con tres
- * diferencias:
+ * Lo mismo para los dos rubros:
  *
- *   · Va en porcentaje O en lempiras. «Rebájele L 500 en servicios» se
- *     reparte entre los renglones en proporción a lo que vale cada uno,
- *     y el residuo de redondeo cae en el más grande (§8.6.2-4).
+ *   · Va en porcentaje O en lempiras. «Rebájele L 500» se reparte entre
+ *     los renglones del rubro en proporción a lo que vale cada uno, y el
+ *     residuo de redondeo cae en el más grande (§8.6.2-4).
  *   · Cada renglón se topa con SU categoría del Art. 30
  *     (`PoliticaDeDescuentoComercial::topeDeLaCategoria()`): la
  *     alimentación aguanta 20 % a un joven y el laboratorio 25 %. En
@@ -44,21 +48,12 @@ use Illuminate\Support\Str;
  *     entre todos no alcanza, no se aplica y se dice hasta cuánto se puede.
  *   · Lo que entra después también lo lleva. En porcentaje, la línea
  *     nueva nace con su parte; en lempiras, el monto se vuelve a repartir
- *     entre todos, porque «L 500 en servicios» sigue siendo L 500.
+ *     entre todos, porque «L 500» sigue siendo L 500.
  *
- * ─────────────────────────────────────────────────────────────────────
- * LO QUE NO TOCA, Y POR QUÉ
- * ─────────────────────────────────────────────────────────────────────
- *
- *   · Lo de farmacia (`se_almacena`): tiene su propio descuento.
- *   · Los honorarios médicos: es plata del médico. Rebajarla desde caja
- *     es regalar algo que no es del hospital, y la liquidación al doctor
- *     saldría menor sin que él lo decidiera.
- *   · El paquete quirúrgico y lo que va adentro: tiene un precio
- *     acordado con la familia, y su única rebaja es la de los
- *     medicamentos entregados (ADR-0009).
- *   · Lo que no se cobra (`IncluidoEnTarifa`, `GastoDelServicio`) y lo
- *     que ya se facturó.
+ * Ningún rubro toca el paquete quirúrgico ni lo que va adentro: tiene un
+ * precio acordado con la familia, y su única rebaja es la de los
+ * medicamentos entregados (ADR-0009). Tampoco lo que no se cobra ni lo
+ * que ya se facturó.
  *
  * ─────────────────────────────────────────────────────────────────────
  * REHACER ES REHACER IGUAL (§9.M-12)
@@ -66,18 +61,18 @@ use Illuminate\Support\Str;
  *
  * Un renglón asentado no se edita: se anula y se vuelve a cargar con la
  * rebaja, y la bitácora lo cuenta. Vuelve con la misma fecha del
- * servicio —el precio se resuelve por esa fecha (§8.5-3) y la
- * alimentación del lunes sigue siendo del lunes—, el mismo médico, el
- * mismo servicio y el mismo texto. Solo se rehace lo que no tiene ya lo
- * que le toca: salir del campo dos veces no anula la cuenta entera.
+ * servicio —el precio se resuelve por esa fecha (§8.5-3)—, el mismo
+ * médico, el mismo servicio y el mismo texto. El honorario con el precio
+ * del médico vuelve con ESE precio: sin él, el motor cobraría el de lista
+ * del hospital. Solo se rehace lo que no tiene ya lo que le toca.
  */
-final class AplicadorDeDescuentoEnServicios
+final class AplicadorDeDescuentoDeLaCuenta
 {
     /**
      * Topes ya leídos en esta vuelta, por cuenta, categoría y día.
      *
      * Cada tope lee la edad del paciente y la tabla de la ley; repartir
-     * entre veinte renglones o dibujar la banda en cada render lo pediría
+     * entre veinte renglones o dibujar la sección en cada render lo pediría
      * veinte veces para tres o cuatro respuestas distintas (§13.2).
      *
      * @var array<string, Decimal>
@@ -91,17 +86,21 @@ final class AplicadorDeDescuentoEnServicios
     ) {}
 
     /**
-     * ¿Este ítem entra en el descuento de servicios?
+     * A qué rubro pertenece un ítem. Nulo para farmacia y el paquete.
      */
-    public static function aplicaAlItem(Item $item): bool
+    public static function rubroDe(Item $item): ?RubroDeDescuento
     {
-        return ! $item->se_almacena
-            && $item->tipo !== TipoItem::Honorario
-            && $item->tipo !== TipoItem::Paquete;
+        if ($item->se_almacena || $item->tipo === TipoItem::Paquete) {
+            return null;
+        }
+
+        return $item->tipo === TipoItem::Honorario
+            ? RubroDeDescuento::Honorarios
+            : RubroDeDescuento::Servicios;
     }
 
     /**
-     * Fija el descuento en la cuenta y deja sus renglones al día.
+     * Fija el descuento de un rubro en la cuenta y deja sus renglones al día.
      *
      * Uno de los dos: `$fraccion` (0.10 = 10 %) o `$monto` en lempiras.
      *
@@ -109,10 +108,16 @@ final class AplicadorDeDescuentoEnServicios
      *
      * @throws CuentaException
      */
-    public function fijar(Cuenta $cuenta, ?Decimal $fraccion, ?Decimal $monto, string $motivo, ?int $quien): array
-    {
+    public function fijar(
+        Cuenta $cuenta,
+        RubroDeDescuento $rubro,
+        ?Decimal $fraccion,
+        ?Decimal $monto,
+        string $motivo,
+        ?int $quien,
+    ): array {
         if (($fraccion === null) === ($monto === null)) {
-            throw CuentaException::descuentoEnServiciosEnUnaForma();
+            throw CuentaException::descuentoEnUnaForma($rubro->enPlural());
         }
 
         $pedido = $fraccion ?? $monto;
@@ -121,7 +126,7 @@ final class AplicadorDeDescuentoEnServicios
             || $pedido->esCero()
             || $pedido->esNegativo()
             || ($fraccion instanceof Decimal && $fraccion->mayorQue('1'))) {
-            throw CuentaException::descuentoEnServiciosInvalido();
+            throw CuentaException::descuentoInvalido($rubro->enPlural());
         }
 
         $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
@@ -131,7 +136,7 @@ final class AplicadorDeDescuentoEnServicios
         }
 
         /** @var list<string> $topadas */
-        $topadas = DB::transaction(function () use ($cuenta, $fraccion, $monto, $motivo, $quien): array {
+        $topadas = DB::transaction(function () use ($cuenta, $rubro, $fraccion, $monto, $motivo, $quien): array {
             $bloqueada = Cuenta::query()->whereKey($cuenta->id)->lockForUpdate()->firstOrFail();
 
             if (! $bloqueada->estado->estaViva()) {
@@ -144,57 +149,57 @@ final class AplicadorDeDescuentoEnServicios
              * mensaje dice hasta cuánto se puede.
              */
             if ($monto instanceof Decimal) {
-                $this->repartir($bloqueada, $this->lineasDe($bloqueada), $monto);
+                $this->repartir($bloqueada, $rubro, $this->lineasDe($bloqueada, $rubro), $monto);
             }
 
             $bloqueada->forceFill([
-                'descuento_servicios'        => $fraccion?->redondeado(4),
-                'descuento_servicios_monto'  => $monto?->redondeado(2),
-                'motivo_descuento_servicios' => $motivo,
-                'descuento_servicios_por'    => $quien,
-                'descuento_servicios_en'     => now(),
+                $rubro->columnaFraccion() => $fraccion?->redondeado(4),
+                $rubro->columnaMonto()    => $monto?->redondeado(2),
+                $rubro->columnaMotivo()   => $motivo,
+                $rubro->columnaPor()      => $quien,
+                $rubro->columnaEn()       => now(),
             ])->save();
 
-            return $this->ponerAlDia($bloqueada);
+            return $this->ponerAlDia($bloqueada, $rubro);
         });
 
         return $topadas;
     }
 
     /**
-     * Quita el descuento y devuelve los renglones a precio lleno.
+     * Quita el descuento de un rubro y devuelve sus renglones a precio lleno.
      */
-    public function quitar(Cuenta $cuenta): void
+    public function quitar(Cuenta $cuenta, RubroDeDescuento $rubro): void
     {
-        DB::transaction(function () use ($cuenta): void {
+        DB::transaction(function () use ($cuenta, $rubro): void {
             $bloqueada = Cuenta::query()->whereKey($cuenta->id)->lockForUpdate()->firstOrFail();
 
             $bloqueada->forceFill([
-                'descuento_servicios'        => null,
-                'descuento_servicios_monto'  => null,
-                'motivo_descuento_servicios' => null,
-                'descuento_servicios_por'    => null,
-                'descuento_servicios_en'     => null,
+                $rubro->columnaFraccion() => null,
+                $rubro->columnaMonto()    => null,
+                $rubro->columnaMotivo()   => null,
+                $rubro->columnaPor()      => null,
+                $rubro->columnaEn()       => null,
             ])->save();
 
-            $this->ponerAlDia($bloqueada);
+            $this->ponerAlDia($bloqueada, $rubro);
         });
     }
 
     /**
-     * Rehace los renglones que no tienen lo que les toca.
+     * Rehace los renglones del rubro que no tienen lo que les toca.
      *
      * Se llama al fijar, al quitar, y —con el descuento en lempiras— cada
-     * vez que entra o sale un servicio, porque el reparto cambia.
+     * vez que entra o sale un renglón del rubro, porque el reparto cambia.
      *
      * @return list<string> los renglones que quedaron en su tope
      */
-    public function ponerAlDia(Cuenta $cuenta): array
+    public function ponerAlDia(Cuenta $cuenta, RubroDeDescuento $rubro): array
     {
         /** @var list<string> $topadas */
-        $topadas = DB::transaction(function () use ($cuenta): array {
-            $lineas = $this->lineasDe($cuenta);
-            $objetivos = $this->objetivos($cuenta, $lineas);
+        $topadas = DB::transaction(function () use ($cuenta, $rubro): array {
+            $lineas = $this->lineasDe($cuenta, $rubro);
+            $objetivos = $this->objetivos($cuenta, $rubro, $lineas);
             $topadas = [];
 
             foreach ($lineas as $cargo) {
@@ -208,7 +213,7 @@ final class AplicadorDeDescuentoEnServicios
                     continue;
                 }
 
-                $this->rehacer($cuenta, $cargo, $objetivo['monto']);
+                $this->rehacer($cuenta, $rubro, $cargo, $objetivo['monto']);
             }
 
             return $topadas;
@@ -220,18 +225,20 @@ final class AplicadorDeDescuentoEnServicios
     /**
      * La rebaja con la que nace una línea nueva, en porcentaje.
      *
-     * Nula si la cuenta no tiene descuento en servicios, si está en
-     * lempiras —ahí se reparte después con `ponerAlDia()`— o si el ítem
-     * no entra. Topada con la categoría del ítem: al laboratorio de un
+     * Nula si el rubro del ítem no tiene descuento en la cuenta, si está en
+     * lempiras —ahí se reparte después con `ponerAlDia()`— o si el ítem es
+     * de farmacia. Topada con la categoría del ítem: al laboratorio de un
      * joven el 30 % pedido le llega como 25 %.
      */
     public function fraccionParaLaLineaNueva(Cuenta $cuenta, Item $item, CarbonInterface $fecha): ?Decimal
     {
-        if ($cuenta->descuento_servicios === null || ! self::aplicaAlItem($item)) {
+        $rubro = self::rubroDe($item);
+        $pedida = $rubro instanceof RubroDeDescuento ? self::fraccionDe($cuenta, $rubro) : null;
+
+        if (! $pedida instanceof Decimal) {
             return null;
         }
 
-        $pedida = Decimal::de($cuenta->descuento_servicios);
         $tope = $this->topeEnLaCategoria($cuenta, $item->categoria_legal_descuento, $fecha);
         $aplica = $pedida->mayorQue($tope) ? $tope : $pedida;
 
@@ -239,42 +246,31 @@ final class AplicadorDeDescuentoEnServicios
     }
 
     /**
-     * Hasta cuánto se le puede rebajar a este paciente, por categoría.
-     *
-     * Para que la pantalla lo diga antes de que alguien teclee un número
-     * que después se recorta. Solo las categorías que de verdad aparecen
-     * en el hospital, en el orden en que se cobran más seguido.
+     * Hasta cuánto se le puede rebajar a este paciente en cada categoría
+     * del rubro, para decirlo antes de que alguien teclee un número que
+     * después se recorta.
      *
      * @return list<array{categoria: CategoriaLegalDeDescuento, tope: Decimal}>
      */
-    public function topesDe(Cuenta $cuenta, CarbonInterface $fecha): array
+    public function topesDe(Cuenta $cuenta, RubroDeDescuento $rubro, CarbonInterface $fecha): array
     {
-        $categorias = [
-            CategoriaLegalDeDescuento::ServicioHospitalario,
-            CategoriaLegalDeDescuento::ConsultaGeneral,
-            CategoriaLegalDeDescuento::ConsultaEspecializada,
-            CategoriaLegalDeDescuento::IntervencionQuirurgica,
-            CategoriaLegalDeDescuento::RadiologiaYLaboratorio,
-            CategoriaLegalDeDescuento::SinDescuentoLegal,
-        ];
-
         return array_map(
             fn (CategoriaLegalDeDescuento $categoria): array => [
                 'categoria' => $categoria,
                 'tope'      => $this->topeEnLaCategoria($cuenta, $categoria, $fecha),
             ],
-            $categorias,
+            $rubro->categorias(),
         );
     }
 
     /**
-     * Cuánto se le puede rebajar en lempiras a lo que ya está cargado.
+     * Cuánto se le puede rebajar en lempiras a lo que ya está cargado del rubro.
      */
-    public function maximoEnLempiras(Cuenta $cuenta): Decimal
+    public function maximoEnLempiras(Cuenta $cuenta, RubroDeDescuento $rubro): Decimal
     {
         $maximo = Decimal::cero();
 
-        foreach ($this->lineasDe($cuenta) as $cargo) {
+        foreach ($this->lineasDe($cuenta, $rubro) as $cargo) {
             $maximo = $maximo->sumar($this->topeEnLempiras($cuenta, $cargo));
         }
 
@@ -282,11 +278,11 @@ final class AplicadorDeDescuentoEnServicios
     }
 
     /**
-     * Los renglones a los que alcanza el descuento.
+     * Los renglones del rubro a los que alcanza el descuento.
      *
      * @return Collection<int, Cargo>
      */
-    public function lineasDe(Cuenta $cuenta): Collection
+    public function lineasDe(Cuenta $cuenta, RubroDeDescuento $rubro): Collection
     {
         return $cuenta->cargos()
             ->with(['item', 'almacen', 'lote', 'presentacion'])
@@ -294,12 +290,39 @@ final class AplicadorDeDescuentoEnServicios
             ->get()
             ->filter(fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta()
                 && $cargo->item instanceof Item
-                && self::aplicaAlItem($cargo->item)
+                && self::rubroDe($cargo->item) === $rubro
                 && $cargo->presupuesto_id === null
-                && $cargo->origen_precio !== OrigenDelPrecio::Presupuestado
                 && $cargo->politica_cargo === PoliticaCargo::Cobrable
                 && Decimal::de($cargo->bruto)->mayorQue('0'))
             ->values();
+    }
+
+    public static function fraccionDe(Cuenta $cuenta, RubroDeDescuento $rubro): ?Decimal
+    {
+        $valor = $cuenta->getAttribute($rubro->columnaFraccion());
+
+        return is_numeric($valor) ? Decimal::de((string) $valor) : null;
+    }
+
+    public static function montoDe(Cuenta $cuenta, RubroDeDescuento $rubro): ?Decimal
+    {
+        $valor = $cuenta->getAttribute($rubro->columnaMonto());
+
+        return is_numeric($valor) ? Decimal::de((string) $valor) : null;
+    }
+
+    public static function motivoDe(Cuenta $cuenta, RubroDeDescuento $rubro): ?string
+    {
+        $valor = $cuenta->getAttribute($rubro->columnaMotivo());
+
+        return is_string($valor) ? $valor : null;
+    }
+
+    public static function quienLoDio(Cuenta $cuenta, RubroDeDescuento $rubro): ?int
+    {
+        $valor = $cuenta->getAttribute($rubro->columnaPor());
+
+        return is_numeric($valor) ? (int) $valor : null;
     }
 
     /**
@@ -309,14 +332,16 @@ final class AplicadorDeDescuentoEnServicios
      *
      * @return array<int, array{monto: Decimal, topada: bool}>
      */
-    private function objetivos(Cuenta $cuenta, Collection $lineas): array
+    private function objetivos(Cuenta $cuenta, RubroDeDescuento $rubro, Collection $lineas): array
     {
-        if ($cuenta->descuento_servicios_monto !== null) {
-            return $this->repartir($cuenta, $lineas, Decimal::de($cuenta->descuento_servicios_monto));
+        $monto = self::montoDe($cuenta, $rubro);
+
+        if ($monto instanceof Decimal) {
+            return $this->repartir($cuenta, $rubro, $lineas, $monto);
         }
 
         $objetivos = [];
-        $pedida = $cuenta->descuento_servicios === null ? null : Decimal::de($cuenta->descuento_servicios);
+        $pedida = self::fraccionDe($cuenta, $rubro);
 
         foreach ($lineas as $cargo) {
             if (! $pedida instanceof Decimal) {
@@ -362,12 +387,12 @@ final class AplicadorDeDescuentoEnServicios
      *
      * @throws CuentaException
      */
-    private function repartir(Cuenta $cuenta, Collection $lineas, Decimal $monto): array
+    private function repartir(Cuenta $cuenta, RubroDeDescuento $rubro, Collection $lineas, Decimal $monto): array
     {
         $pedido = self::aCentavos($monto);
 
         if ($lineas->isEmpty()) {
-            throw CuentaException::noHayServiciosParaRepartir($monto->redondeado(2));
+            throw CuentaException::noHayNadaParaRepartir($rubro->enPlural(), $monto->redondeado(2));
         }
 
         $bruto = [];
@@ -381,7 +406,8 @@ final class AplicadorDeDescuentoEnServicios
         $cabe = array_sum($tope);
 
         if ($pedido > $cabe) {
-            throw CuentaException::descuentoEnServiciosMayorQueElTope(
+            throw CuentaException::descuentoMayorQueElTope(
+                $rubro->enPlural(),
                 $monto->redondeado(2),
                 self::deCentavos($cabe)->redondeado(2),
             );
@@ -492,7 +518,7 @@ final class AplicadorDeDescuentoEnServicios
     /**
      * Anula el renglón y lo vuelve a cargar igual, con la rebaja nueva.
      */
-    private function rehacer(Cuenta $cuenta, Cargo $cargo, Decimal $rebaja): void
+    private function rehacer(Cuenta $cuenta, RubroDeDescuento $rubro, Cargo $cargo, Decimal $rebaja): void
     {
         $item = $cargo->item;
 
@@ -502,9 +528,18 @@ final class AplicadorDeDescuentoEnServicios
 
         $conRebaja = ! $rebaja->esCero();
 
+        /*
+         * El precio que no salió de un tarifario —el honorario con la
+         * lista del médico— vuelve tal cual. Sin esto el motor lo
+         * resolvería de nuevo y cobraría el de lista del hospital.
+         */
+        $acordado = $cargo->origen_precio === OrigenDelPrecio::Presupuestado
+            ? Monto::de(Decimal::de($cargo->precio_unitario)->redondeado(2))
+            : null;
+
         $this->anulador->anular(
             $cargo,
-            'Se rehace con el descuento en servicios de la cuenta '.$cuenta->numero,
+            'Se rehace con el descuento en '.$rubro->enPlural().' de la cuenta '.$cuenta->numero,
         );
 
         $this->registrador->registrar($cuenta, new LineaDeCargo(
@@ -514,10 +549,11 @@ final class AplicadorDeDescuentoEnServicios
             almacen: $cargo->almacen,
             lote: $cargo->lote_id === null ? null : $cargo->lote,
             descuentoComercial: $conRebaja ? Monto::de($rebaja->redondeado(2)) : null,
-            motivoDescuento: $conRebaja ? $cuenta->motivo_descuento_servicios : null,
-            autorizadoPor: $conRebaja ? $cuenta->descuento_servicios_por : null,
+            motivoDescuento: $conRebaja ? self::motivoDe($cuenta, $rubro) : null,
+            autorizadoPor: $conRebaja ? self::quienLoDio($cuenta, $rubro) : null,
             servicioId: $cargo->servicio_id,
             ocurridoEn: $cargo->ocurrido_en,
+            precioAcordado: $acordado,
             medicoId: $cargo->medico_id,
             presentacion: $cargo->presentacion,
             envases: is_numeric($cargo->cantidad_presentacion)

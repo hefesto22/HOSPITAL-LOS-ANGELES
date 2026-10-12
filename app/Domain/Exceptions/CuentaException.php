@@ -105,18 +105,18 @@ final class CuentaException extends SihlaException
         );
     }
 
-    public static function descuentoEnServiciosEnUnaForma(): self
+    public static function descuentoEnUnaForma(string $rubro): self
     {
         return new self(
-            'El descuento en servicios va en porcentaje o en lempiras, uno de los dos. '
+            "El descuento en {$rubro} va en porcentaje o en lempiras, uno de los dos. "
             .'«10 % y L 500» no dice cuánto se le rebajó.'
         );
     }
 
-    public static function descuentoEnServiciosInvalido(): self
+    public static function descuentoInvalido(string $rubro): self
     {
         return new self(
-            'El descuento en servicios tiene que ser mayor que cero, y en porcentaje no puede pasar de 100 %.'
+            "El descuento en {$rubro} tiene que ser mayor que cero, y en porcentaje no puede pasar de 100 %."
         );
     }
 
@@ -127,19 +127,19 @@ final class CuentaException extends SihlaException
         );
     }
 
-    public static function noHayServiciosParaRepartir(string $monto): self
+    public static function noHayNadaParaRepartir(string $rubro, string $monto): self
     {
         return new self(
-            "En la cuenta no hay servicios entre los que repartir L {$monto}. "
+            "En la cuenta no hay {$rubro} entre los que repartir L {$monto}. "
             .'El descuento en lempiras se reparte entre lo que ya está cargado: cargá primero y rebajá después.'
         );
     }
 
-    public static function descuentoEnServiciosMayorQueElTope(string $monto, string $maximo): self
+    public static function descuentoMayorQueElTope(string $rubro, string $monto, string $maximo): self
     {
         return new self(
-            "A este paciente se le pueden rebajar hasta L {$maximo} en servicios, y se pidieron L {$monto}. "
-            .'Cada servicio tiene su tope según la ley: nadie más joven puede quedar pagando menos que un adulto mayor.'
+            "A este paciente se le pueden rebajar hasta L {$maximo} en {$rubro}, y se pidieron L {$monto}. "
+            .'Cada renglón tiene su tope según la ley: nadie más joven puede quedar pagando menos que un adulto mayor.'
         );
     }
 
