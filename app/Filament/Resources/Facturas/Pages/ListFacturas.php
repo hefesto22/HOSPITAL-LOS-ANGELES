@@ -63,6 +63,16 @@ class ListFacturas extends ListRecords
                 ->badge(fn (): int => $this->contar(fn (Builder $query): Builder => self::vigentes($query)))
                 ->modifyQueryUsing(fn (Builder $query): Builder => self::vigentes($query)),
 
+            /*
+             * Lo de hoy, con su número: es lo que se revisa al cerrar el
+             * turno. Antes era un interruptor en un recuadro de filtros
+             * con su botón «Aplicar» (12-oct-2026).
+             */
+            'hoy' => Tab::make('Hoy')
+                ->icon(Heroicon::OutlinedCalendarDays)
+                ->badge(fn (): int => $this->contar(fn (Builder $query): Builder => self::deHoy($query)))
+                ->modifyQueryUsing(fn (Builder $query): Builder => self::deHoy($query)),
+
             'declaradas' => Tab::make('Declaradas')
                 ->icon(Heroicon::OutlinedLockClosed)
                 ->modifyQueryUsing(fn (Builder $query): Builder => self::declaradas($query)),
@@ -74,6 +84,18 @@ class ListFacturas extends ListRecords
 
             'todas' => Tab::make('Todas'),
         ];
+    }
+
+    /**
+     * Las emitidas hoy, vivas o anuladas: lo que se cuenta al cerrar.
+     *
+     * @param Builder<Factura> $query
+     *
+     * @return Builder<Factura>
+     */
+    private static function deHoy(Builder $query): Builder
+    {
+        return $query->whereDate('fecha_operacion', now()->toDateString());
     }
 
     /**
@@ -125,10 +147,10 @@ class ListFacturas extends ListRecords
     }
 
     /**
-     * El número de la pestaña de vigentes: es el único que hay que mirar
-     * todos los días —lo que todavía se puede corregir— y por eso es el
-     * único que lleva contador. Contar los otros dos son dos consultas
-     * por pintada para números que nadie necesita al segundo.
+     * Los números de las pestañas de vigentes y de hoy: son los que se
+     * miran todos los días —lo que todavía se puede corregir y lo que
+     * entró en el turno—. Contar las otras son consultas por pintada
+     * para números que nadie necesita al segundo.
      *
      * @param Closure(Builder<Factura>): Builder<Factura> $criterio
      */

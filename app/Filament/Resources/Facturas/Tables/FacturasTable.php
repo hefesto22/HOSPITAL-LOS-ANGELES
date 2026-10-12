@@ -21,14 +21,15 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Notifications\Notification;
 use Filament\Support\Enums\FontFamily;
+use Filament\Support\Enums\Size;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Enums\FiltersLayout;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Table;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 
 class FacturasTable
 {
@@ -39,25 +40,33 @@ class FacturasTable
             ->striped()
             ->columns([
                 /*
-                 * ⚠️ Igual que en el resto: TODA columna lleva
-                 * `grow(false)` salvo el cliente. Filament reparte el
-                 * ancho sobrante en partes iguales, y con el CAI de 37
-                 * caracteres creciendo, el nombre del cliente se partía
-                 * en cinco renglones.
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 SEIS COLUMNAS QUE SE LEEN DE UN VISTAZO (12-oct-2026)
+                 * ─────────────────────────────────────────────────────
                  *
-                 * El CAI va en monoespaciada y en gris: es un dato de
-                 * auditoría, no algo que se lea todos los días.
+                 * Mauricio: «mejoremos el diseño, está muy feo». Eran
+                 * nueve columnas y la de Imprimir se salía de la
+                 * pantalla. El CAI —37 caracteres, el mismo en todo el
+                 * rango— se comía la mitad del ancho: pasa al globo del
+                 * número. La fecha va debajo del número. Estado y período
+                 * se dicen en UNA etiqueta: vigente, declarada o anulada.
+                 *
+                 * ⚠️ TODA columna lleva `grow(false)` salvo el cliente y
+                 * el paciente: Filament reparte el ancho sobrante entre
+                 * las que crecen. Con el paciente fijo, el nombre salía
+                 * cortado y la cuenta partida en tres renglones.
                  */
                 TextColumn::make('numero')
-                    ->label('Número')
-                    ->badge()
-                    ->color('warning')
+                    ->label('Factura')
                     ->fontFamily(FontFamily::Mono)
+                    ->weight('semibold')
                     ->searchable()
                     ->copyable()
                     ->copyMessage('Número copiado')
+                    ->tooltip(fn (Factura $record): string => 'CAI '.$record->cai)
                     ->grow(false)
-                    ->description(fn (Factura $record): string => $record->cai),
+                    ->description(fn (Factura $record): string => $record->fecha_operacion->format('d/m/Y')
+                        .' · '.$record->emitida_en->format('H:i')),
 
                 TextColumn::make('cliente_nombre')
                     ->label('Cliente')
@@ -72,105 +81,77 @@ class FacturasTable
                      * de un vistazo, sin abrir nada.
                      */
                     ->description(fn (Factura $record): string => $record->esConsumidorFinal()
-                        ? 'sin documento'
+                        ? 'Sin documento'
                         : $record->rotuloDelDocumento().' '.$record->cliente_documento),
 
                 /*
-                 * Quién se atendió, aparte de quién paga (11-oct-2026).
-                 * Las facturas de antes de ese día lo llevan dentro del
-                 * nombre del cliente y acá salen con la raya.
+                 * Quién se atendió, aparte de quién paga (11-oct-2026),
+                 * con su cuenta debajo. Las facturas de antes de ese día
+                 * lo llevan dentro del nombre del cliente y acá salen con
+                 * la raya.
                  */
                 TextColumn::make('paciente_nombre')
                     ->label('Paciente')
-                    ->searchable()
                     ->placeholder('—')
                     ->wrap()
                     ->lineClamp(2)
-                    ->toggleable(),
-
-                TextColumn::make('cuenta.numero')
-                    ->label('Cuenta')
-                    ->fontFamily(FontFamily::Mono)
-                    ->searchable()
-                    ->grow(false)
-                    ->toggleable(),
+                    ->grow()
+                    ->searchable(query: fn (Builder $query, string $search): Builder => $query->where(
+                        fn (Builder $donde): Builder => $donde
+                            ->where('paciente_nombre', 'ilike', '%'.$search.'%')
+                            ->orWhereHas('cuenta', fn (Builder $cuenta): Builder => $cuenta->where('numero', 'ilike', '%'.$search.'%')),
+                    ))
+                    ->description(fn (Factura $record): ?string => $record->cuenta instanceof Cuenta ? $record->cuenta->numero : null),
 
                 TextColumn::make('total')
                     ->label('Total')
-                    ->money('HNL')
+                    ->formatStateUsing(fn (mixed $state): string => 'L '.number_format(is_numeric($state) ? (float) $state : 0.0, 2))
                     ->alignEnd()
                     ->weight('bold')
                     ->sortable()
                     ->grow(false),
 
-                TextColumn::make('fecha_operacion')
-                    ->label('Fecha')
-                    ->date('d/m/Y')
-                    ->sortable()
-                    ->grow(false)
-                    ->description(fn (Factura $record): string => $record->emitida_en->format('H:i')),
-
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 VIGENTE, DECLARADA O ANULADA
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * El hospital declara el mes anterior el día 10: lo de
+                 * julio se anula hasta el 9 de agosto. Vigente es lo que
+                 * todavía se puede corregir; declarada, lo que ya quedó
+                 * firme —«eso ya no se puede, va nota de crédito»—.
+                 *
+                 * Es DERIVADO de `fecha_operacion` contra hoy, no una
+                 * columna: guardarlo obligaría a un proceso que lo
+                 * actualice cada día 10, y el día que no corra la
+                 * pantalla mentiría.
+                 */
                 TextColumn::make('estado')
                     ->label('Estado')
                     ->badge()
-                    ->formatStateUsing(fn (EstadoFactura $state): string => $state->etiqueta())
-                    ->color(fn (EstadoFactura $state): string => $state->color())
+                    ->state(fn (Factura $record): string => self::situacion($record))
+                    ->color(fn (Factura $record): string => self::colorDeLaSituacion($record))
+                    ->icon(fn (Factura $record): Heroicon => self::iconoDeLaSituacion($record))
                     ->grow(false)
-                    ->description(fn (Factura $record): ?string => $record->motivo_anulacion),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 DECLARADA = YA NO SE TOCA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * El hospital declara el mes anterior el día 10, así que
-                 * lo de julio se puede anular hasta el 9 de agosto. Esta
-                 * columna dice de un vistazo cuáles ya quedaron firmes,
-                 * que es la diferencia entre «pedile la anulación a
-                 * caja» y «eso ya no se puede, va nota de crédito».
-                 *
-                 * Es DERIVADA, no una columna de la base: se calcula de
-                 * `fecha_operacion` contra hoy. Guardarla obligaría a un
-                 * proceso que la actualice cada día 10 —y el día que ese
-                 * proceso no corra, la pantalla mentiría—.
-                 */
-                TextColumn::make('declarada')
-                    ->label('Período')
-                    ->badge()
-                    ->grow(false)
-                    ->state(fn (Factura $record): string => $record->yaSeDeclaro()
-                        ? 'Declarado'
-                        : 'Se puede anular')
-                    ->color(fn (Factura $record): string => $record->yaSeDeclaro() ? 'gray' : 'success')
-                    ->tooltip(fn (Factura $record): string => $record->yaSeDeclaro()
-                        ? $record->periodoFiscal().' se declaró el '
-                            .$record->limiteParaAnular()->copy()->addDay()->format('d/m/Y')
-                        : 'Hasta el '.$record->limiteParaAnular()->format('d/m/Y'))
-                    ->toggleable(),
+                    ->description(fn (Factura $record): ?string => self::detalleDeLaSituacion($record))
+                    ->tooltip(fn (Factura $record): ?string => $record->estado === EstadoFactura::Anulada
+                        ? $record->motivo_anulacion
+                        : null),
             ])
             ->filters([
                 /*
-                 * ⚠️ Vigentes / declaradas / anuladas NO están acá: son
-                 * PESTAÑAS, arriba de la tabla (`ListFacturas::getTabs`).
-                 * No son filtros porque no se combinan entre sí — son
-                 * tres montones distintos, y quien entra ya sabe cuál
-                 * quiere ver.
+                 * ⚠️ Vigentes, de hoy, declaradas y anuladas NO están
+                 * acá: son PESTAÑAS, arriba de la tabla
+                 * (`ListFacturas::getTabs`). Lo que queda acá es el
+                 * recorte que se combina con cualquiera de ellas, y va
+                 * en el menú del embudo: un recuadro entero con un
+                 * botón «Aplicar» para un solo interruptor empujaba la
+                 * tabla media pantalla hacia abajo.
                  *
-                 * Lo que queda acá son recortes que SÍ se combinan con
-                 * cualquiera de los tres.
-                 *
-                 * ⚠️ `$query` en los cierres. Con otro nombre Filament
+                 * ⚠️ `$query` en el cierre. Con otro nombre Filament
                  * entrega un Builder vacío del contenedor y el filtro
                  * deja de filtrar EN SILENCIO.
-                 */
-                Filter::make('hoy')
-                    ->label('Solo las de hoy')
-                    ->toggle()
-                    ->query(function (Builder $query): void {
-                        self::soloDeHoy($query);
-                    }),
-
-                /*
+                 *
                  * 🔴 «CONSUMIDOR FINAL» arriba del umbral es lo primero
                  * que busca una revisión del SAR.
                  */
@@ -180,7 +161,8 @@ class FacturasTable
                     ->query(function (Builder $query): void {
                         self::sinDocumento($query);
                     }),
-            ], layout: FiltersLayout::AboveContent)
+            ])
+            ->deferFilters(false)
             ->recordActions([
                 /*
                  * ─────────────────────────────────────────────────────
@@ -203,6 +185,9 @@ class FacturasTable
                 Action::make('imprimir')
                     ->label('Imprimir')
                     ->icon(Heroicon::OutlinedPrinter)
+                    ->button()
+                    ->outlined()
+                    ->size(Size::Small)
                     ->color('gray')
                     ->modalHeading(fn (Factura $record): string => 'Factura '.$record->numero)
                     ->modalDescription('Sale tal como se guardó el día de la emisión.')
@@ -228,6 +213,8 @@ class FacturasTable
                 Action::make('anular')
                     ->label('Anular')
                     ->icon(Heroicon::OutlinedXCircle)
+                    ->iconButton()
+                    ->tooltip('Anular la factura')
                     ->color('danger')
                     ->modalHeading('Anular la factura')
                     ->modalDescription(fn (Factura $record): string => 'El número queda consumido: no se '
@@ -319,11 +306,51 @@ class FacturasTable
     }
 
     /**
-     * @param Builder<Factura> $consulta
+     * Vigente, declarada o anulada: lo único que decide qué se puede
+     * hacer con el papel.
      */
-    private static function soloDeHoy(Builder $consulta): void
+    private static function situacion(Factura $factura): string
     {
-        $consulta->whereDate('fecha_operacion', now()->toDateString());
+        if ($factura->estado === EstadoFactura::Anulada) {
+            return 'Anulada';
+        }
+
+        return $factura->yaSeDeclaro() ? 'Declarada' : 'Vigente';
+    }
+
+    private static function colorDeLaSituacion(Factura $factura): string
+    {
+        if ($factura->estado === EstadoFactura::Anulada) {
+            return 'danger';
+        }
+
+        return $factura->yaSeDeclaro() ? 'gray' : 'success';
+    }
+
+    private static function iconoDeLaSituacion(Factura $factura): Heroicon
+    {
+        if ($factura->estado === EstadoFactura::Anulada) {
+            return Heroicon::OutlinedXCircle;
+        }
+
+        return $factura->yaSeDeclaro() ? Heroicon::OutlinedLockClosed : Heroicon::OutlinedCheckCircle;
+    }
+
+    /**
+     * La línea de abajo de la etiqueta: hasta cuándo se puede anular, en
+     * qué declaración viajó, o por qué se anuló.
+     */
+    private static function detalleDeLaSituacion(Factura $factura): ?string
+    {
+        if ($factura->estado === EstadoFactura::Anulada) {
+            return $factura->motivo_anulacion === null
+                ? null
+                : Str::limit($factura->motivo_anulacion, 40);
+        }
+
+        return $factura->yaSeDeclaro()
+            ? 'En la de '.$factura->periodoFiscal()
+            : 'Anulable hasta el '.$factura->limiteParaAnular()->format('d/m');
     }
 
     /**

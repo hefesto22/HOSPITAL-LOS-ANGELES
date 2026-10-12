@@ -122,6 +122,24 @@ class Sede extends Model
     }
 
     /**
+     * El teléfono como se lee en un papel: «3300-3300». Ocho dígitos
+     * pegados se leen mal y se marcan mal; cualquier otra cosa sale tal
+     * cual se guardó.
+     */
+    public function telefonoImpreso(): ?string
+    {
+        if ($this->telefono === null || trim($this->telefono) === '') {
+            return null;
+        }
+
+        $digitos = preg_replace('/\D/', '', $this->telefono) ?? '';
+
+        return strlen($digitos) === 8
+            ? substr($digitos, 0, 4).'-'.substr($digitos, 4)
+            : $this->telefono;
+    }
+
+    /**
      * Reemplaza al mutator `codigo()` que vivia aca.
      *
      * Eran dos mecanismos para la misma regla; ahora es uno solo y cubre

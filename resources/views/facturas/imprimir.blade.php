@@ -88,54 +88,60 @@
         table { border-collapse: collapse; width: 100%; }
         td, th { vertical-align: top; }
 
-        .marco td, .marco th { border: 1px solid #000; padding: 3px 5px; }
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EL MISMO FORMULARIO, MEJOR VESTIDO (12-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: «que el logo se vea más grande, que se vea mejor».
+         * Los recuadros siguen donde estaban —la cajera, el contador y
+         * el SAR ya saben dónde mirar—; lo que cambia es cómo se leen:
+         * los rótulos en gris claro y los datos en blanco, el
+         * encabezado de la tabla y el TOTAL A PAGAR con fondo, y el
+         * membrete separado del resto por una raya.
+         *
+         * ⚠️ Los grises se imprimen aunque el diálogo tenga apagado
+         * «Gráficos en segundo plano»: `print-color-adjust: exact`. Sin
+         * eso el papel sale sin fondos y se pierde qué es rótulo y qué
+         * es dato.
+         */
+        html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-        .emisor h1 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.15; }
-        .emisor p { margin: 0; font-size: 9px; line-height: 1.35; }
+        .marco td, .marco th { border: 1px solid #1f1f1f; padding: 3px 6px; }
+        .marco td.etiqueta { background: #f0f0f0; }
+
+        .encabezado { padding-bottom: 4mm; margin-bottom: 3mm; border-bottom: 2px solid #111; }
 
         /*
          * ─────────────────────────────────────────────────────────────
-         * EL LOGO Y LA RAZÓN SOCIAL SON UNA SOLA COSA: EL MEMBRETE
+         * EL MEMBRETE: EL LOGO ARRIBA, GRANDE; LA RAZÓN SOCIAL DEBAJO
          * ─────────────────────────────────────────────────────────────
          *
-         * El logo iba en su propia columna del encabezado, en el medio
-         * de la hoja: quedaba flotando lejos del nombre al que
-         * pertenece, apretado en una franja angosta, y con el nombre a
-         * un lado y el CAI al otro el encabezado se leía en tres
-         * pedazos que no se hablaban.
-         *
-         * Acá el logo y la razón social son UNA cosa —membrete— y el
-         * lado derecho queda entero para lo fiscal: rótulo, R.T.N. y
-         * CAI, que es lo que se busca con el dedo.
+         * Al lado del nombre el logo no podía pasar de 52 px sin partir
+         * la razón social en dos renglones. Encima del nombre tiene todo
+         * el ancho del membrete, y la columna queda del mismo alto que
+         * la del CAI.
          *
          * 🔴 EL NOMBRE SE IMPRIME AUNQUE HAYA LOGO. La razón social del
          * emisor es obligatoria en el papel; un logotipo no la
          * sustituye ante el SAR ni aunque la lleve dibujada adentro.
-         */
-        /*
-         * ⚠️ FLEX Y NO UNA TABLA ADENTRO DE LA CELDA.
          *
-         * Se probó con `<table>`: un logo SVG —que trae `viewBox` y no
-         * `width`— sale de 0×0 adentro de una celda. El layout de tabla
-         * calcula el ancho mínimo antes de resolver la proporción de la
-         * imagen, y como no hay ancho intrínseco le da cero: la factura
-         * salía impresa SIN logo y sin ningún error a la vista.
-         *
-         * Fuera de la tabla el navegador resuelve la proporción y el
-         * `max-height` manda. Vale para los WebP y para los SVG.
+         * ⚠️ FLEX Y NO UNA TABLA ADENTRO DE LA CELDA. Un logo SVG —que
+         * trae `viewBox` y no `width`— sale de 0×0 adentro de una celda
+         * de tabla: el navegador calcula el ancho mínimo antes de
+         * resolver la proporción. La factura salía SIN logo y sin error.
          */
-        .membrete { display: flex; align-items: center; gap: 8px; }
+        .membrete { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+        .logo { display: block; max-height: 22mm; max-width: 85mm; flex: none; }
 
-        /*
-         * Alto tope y no ancho: el membrete tiene que ocupar siempre la
-         * misma franja para que el encabezado no se mueva entre una
-         * factura y otra. El ancho lo decide la proporción del logo.
-         */
-        .logo { display: block; max-height: 52px; max-width: 40mm; flex: none; }
-        .rotulo-factura { text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .12em; }
+        .emisor h1 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .02em; line-height: 1.25; }
+        .membrete.sin-logo h1 { font-size: 18px; }
+        .emisor p { margin: 0; font-size: 9px; line-height: 1.45; color: #333; }
 
-        .rtn-emisor { text-align: right; font-size: 10px; font-weight: 700; }
-        .cai { text-align: center; font-weight: 700; letter-spacing: .02em; }
+        .rotulo-factura { text-align: right; font-size: 20px; font-weight: 700; letter-spacing: .3em; margin-right: -.3em; }
+        .rtn-emisor { margin: 2px 0 6px; text-align: right; font-size: 10.5px; font-weight: 700; }
+        .cai { text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; }
+        .cai .rotulo-cai { display: block; font-size: 7.5px; font-weight: 400; letter-spacing: .12em; color: #444; }
 
         .etiqueta { font-size: 9px; }
         .dato { font-weight: 700; }
@@ -143,9 +149,10 @@
         .centro { text-align: center; }
 
         .detalle thead th {
-            border: 1px solid #000; padding: 4px; font-size: 9px; text-align: center; font-weight: 700;
+            border: 1px solid #1f1f1f; padding: 5px 4px; font-size: 8.5px; text-align: center;
+            font-weight: 700; background: #e6e6e6;
         }
-        .detalle tbody td { border-left: 1px solid #000; border-right: 1px solid #000; padding: 2px 5px; }
+        .detalle tbody td { border-left: 1px solid #1f1f1f; border-right: 1px solid #1f1f1f; padding: 3px 6px; }
 
         /*
          * El renglón que nombra una cirugía desglosada. Va en negrita y
@@ -155,23 +162,25 @@
          * `factura_lineas_encabezado_no_cobra`, no esta hoja de estilo.
          */
         .detalle tbody tr.titulo td { font-weight: 700; }
-        .detalle tbody tr:last-child td { border-bottom: 1px solid #000; }
+        .detalle tbody tr:last-child td { border-bottom: 1px solid #1f1f1f; }
 
-        .detalle tfoot td {
-            border: 1px solid #000; padding: 3px 5px; font-weight: 700;
-        }
+        .detalle tfoot td { border: 1px solid #1f1f1f; padding: 4px 6px; font-weight: 700; background: #f0f0f0; }
         .detalle .rotulo-sumas { text-align: right; font-size: 9px; letter-spacing: .08em; }
 
-        .totales td { border: 1px solid #000; padding: 3px 5px; }
-        .totales .rot { text-align: right; font-size: 9px; }
+        .totales td { border: 1px solid #1f1f1f; padding: 3px 6px; }
+        .totales .rot { text-align: right; font-size: 9px; background: #f0f0f0; }
+        .totales tr.final td { padding: 5px 6px; font-size: 11.5px; font-weight: 700; background: #dedede; }
 
-        .letras { margin-top: 6px; text-align: center; font-size: 10px; }
-        .rango { margin-top: 4px; font-size: 9px; }
+        .letras { margin-top: 8px; text-align: center; font-size: 10px; }
+        .rango { margin-top: 6px; font-size: 9px; }
         .copias { margin-top: 2px; font-size: 9px; }
-        .exijala { margin-top: 4px; text-align: center; font-size: 11px; font-weight: 700; }
+        .exijala {
+            margin-top: 8px; padding-top: 5px; border-top: 1px solid #bbb;
+            text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+        }
 
         .firmas td { padding-top: 14mm; font-size: 9px; text-align: center; }
-        .firmas .linea { border-top: 1px solid #000; }
+        .firmas .linea { border-top: 1px solid #000; margin: 0 4mm; padding-top: 2px; }
 
         .anulada {
             margin: 6px 0; padding: 4px; border: 2px solid #b91c1c; color: #b91c1c;
@@ -189,69 +198,85 @@
 
     <div class="hoja">
         {{-- ── Encabezado ───────────────────────────────────────────── --}}
-        <table>
-            <tr>
-                <td style="width: 58%; padding-right: 6px" class="emisor">
-                    {{--
-                        🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO.
+        <div class="encabezado">
+            <table>
+                <tr>
+                    <td style="width: 56%; padding-right: 8mm" class="emisor">
+                        {{--
+                            🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO.
 
-                        La factura se imprime desde un iframe y el
-                        navegador abre el diálogo apenas carga: una
-                        imagen que todavía se está descargando sale como
-                        un hueco blanco en el papel. En base64 ya está
-                        ahí. Si no hay logo o el archivo desapareció, el
-                        membrete se imprime solo con el nombre — una
-                        factura no se cae por una imagen.
-                    --}}
-                    @php($logo = $sede->logoIncrustado())
+                            La factura se imprime desde un iframe y el
+                            navegador abre el diálogo apenas carga: una
+                            imagen que todavía se está descargando sale
+                            como un hueco blanco en el papel. En base64 ya
+                            está ahí. Si no hay logo o el archivo
+                            desapareció, el membrete se imprime solo con el
+                            nombre, más grande — una factura no se cae por
+                            una imagen.
+                        --}}
+                        @php($logo = $sede->logoIncrustado())
+                        @php($telefono = $sede->telefonoImpreso())
 
-                    <div class="membrete">
-                        @if ($logo)
-                            <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
-                        @endif
+                        <div @class(['membrete', 'sin-logo' => ! $logo])>
+                            @if ($logo)
+                                <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
+                            @endif
 
-                        <div>
-                            <h1>{{ mb_strtoupper($sede->razon_social) }}</h1>
-                            @if ($sede->direccion)
-                                <p>{{ $sede->direccion }}</p>
-                            @endif
-                            @if ($sede->telefono)
-                                <p>Tel.: {{ $sede->telefono }}</p>
-                            @endif
-                            @if ($sede->email)
-                                <p>Correo Electrónico: {{ $sede->email }}</p>
-                            @endif
+                            <div>
+                                <h1>{{ mb_strtoupper($sede->razon_social) }}</h1>
+                                @if ($sede->direccion)
+                                    <p>{{ $sede->direccion }}</p>
+                                @endif
+                                @if ($telefono || $sede->email)
+                                    <p>
+                                        @if ($telefono)
+                                            Tel. {{ $telefono }}
+                                        @endif
+                                        @if ($telefono && $sede->email)
+                                            &nbsp;·&nbsp;
+                                        @endif
+                                        @if ($sede->email)
+                                            {{ $sede->email }}
+                                        @endif
+                                    </p>
+                                @endif
+                            </div>
                         </div>
-                    </div>
-                </td>
+                    </td>
 
-                <td style="width: 42%">
-                    <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
-                    <p class="rtn-emisor">R.T.N.: {{ $sede->rtn ?? '—' }}</p>
+                    <td style="width: 44%">
+                        <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
+                        <p class="rtn-emisor">R.T.N. {{ $sede->rtn ?? '—' }}</p>
 
-                    {{--
-                        🔴 EL CAI VA ARRIBA DEL NÚMERO, EN SU RECUADRO.
-                        Sin él impreso, el documento no es una factura:
-                        es un papel sin valor fiscal.
-                    --}}
-                    <table class="marco" style="margin-top: 2px">
-                        <tr><td colspan="2" class="cai">{{ $factura->cai }}</td></tr>
-                        <tr>
-                            <td class="etiqueta">Número Factura</td>
-                            <td class="dato centro">{{ $factura->numero }}</td>
-                        </tr>
-                        <tr>
-                            <td class="etiqueta">Fecha</td>
-                            <td class="centro">{{ $factura->emitida_en->format('d/m/Y') }}</td>
-                        </tr>
-                        <tr>
-                            <td class="etiqueta">Vencimiento</td>
-                            <td class="centro">{{ $factura->vence_el?->format('d/m/Y') ?? $factura->emitida_en->format('d/m/Y') }}</td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-        </table>
+                        {{--
+                            🔴 EL CAI VA ARRIBA DEL NÚMERO, EN SU RECUADRO.
+                            Sin él impreso, el documento no es una factura:
+                            es un papel sin valor fiscal.
+                        --}}
+                        <table class="marco">
+                            <tr>
+                                <td colspan="2" class="cai">
+                                    <span class="rotulo-cai">C.A.I.</span>
+                                    {{ $factura->cai }}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="etiqueta">Número Factura</td>
+                                <td class="dato centro">{{ $factura->numero }}</td>
+                            </tr>
+                            <tr>
+                                <td class="etiqueta">Fecha</td>
+                                <td class="centro">{{ $factura->emitida_en->format('d/m/Y') }}</td>
+                            </tr>
+                            <tr>
+                                <td class="etiqueta">Vencimiento</td>
+                                <td class="centro">{{ $factura->vence_el?->format('d/m/Y') ?? $factura->emitida_en->format('d/m/Y') }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </div>
 
         @if (! $factura->estaViva())
             <p class="anulada">ANULADA — {{ $factura->motivo_anulacion }}</p>
@@ -468,7 +493,7 @@
                             <td class="rot">ISV 18% L.</td>
                             <td class="num">{{ number_format((float) $factura->isv_18, 2) }}</td>
                         </tr>
-                        <tr>
+                        <tr class="final">
                             <td class="rot dato">T O T A L &nbsp; A &nbsp; P A G A R &nbsp; L.</td>
                             <td class="num dato">{{ number_format((float) $factura->total, 2) }}</td>
                         </tr>
@@ -478,7 +503,7 @@
         </table>
 
         {{-- El total en letras: la defensa contra el dígito alterado. --}}
-        <p class="letras">La Cantidad de: {{ $enLetras }}</p>
+        <p class="letras">La Cantidad de: <strong>{{ $enLetras }}</strong></p>
 
         <p class="rango">
             Rango Autorizado de Facturas: {{ $rango }} &nbsp;
