@@ -4,14 +4,20 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Facturas\Tables;
 
+use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\EstadoFactura;
+use App\Domain\Enums\EstadoTurnoDeCaja;
 use App\Domain\Exceptions\SihlaException;
+use App\Models\Abono;
+use App\Models\AbonoMedio;
 use App\Models\Cuenta;
 use App\Models\Factura;
+use App\Models\TurnoDeCaja;
 use App\Services\EmisorDeFactura;
 use App\Support\UsuarioAutenticado;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Enums\FontFamily;
@@ -68,6 +74,19 @@ class FacturasTable
                     ->description(fn (Factura $record): string => $record->esConsumidorFinal()
                         ? 'sin documento'
                         : $record->rotuloDelDocumento().' '.$record->cliente_documento),
+
+                /*
+                 * Quién se atendió, aparte de quién paga (11-oct-2026).
+                 * Las facturas de antes de ese día lo llevan dentro del
+                 * nombre del cliente y acá salen con la raya.
+                 */
+                TextColumn::make('paciente_nombre')
+                    ->label('Paciente')
+                    ->searchable()
+                    ->placeholder('—')
+                    ->wrap()
+                    ->lineClamp(2)
+                    ->toggleable(),
 
                 TextColumn::make('cuenta.numero')
                     ->label('Cuenta')
@@ -233,13 +252,52 @@ class FacturasTable
                             ->minLength(10)
                             ->rows(2)
                             ->maxLength(200),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 ¿SE LE DEVOLVIÓ LA PLATA? (11-oct-2026)
+                         * ─────────────────────────────────────────────
+                         *
+                         * Mauricio: «facturé y la anulé, y dice que ya
+                         * abonó». Emitir con «Cobrar ahora» deja un
+                         * recibo, y anular la factura no lo toca: la
+                         * plata entró y, si se vuelve a facturar, ese
+                         * recibo sigue pagando la cuenta.
+                         *
+                         * Pero si la plata SE DEVOLVIÓ, el recibo tiene
+                         * que caer con la factura. Se pregunta acá, con
+                         * los recibos a la vista, y sin nada marcado:
+                         * anular un recibo es sacar plata del arqueo, y
+                         * eso no puede pasar sin que alguien lo decida.
+                         */
+                        CheckboxList::make('devueltos')
+                            ->label('¿Se le devolvió la plata?')
+                            ->options(fn (Factura $record): array => self::recibosQueSePuedenDevolver($record))
+                            ->helperText('Marcá solo el recibo cuya plata salió de la gaveta de vuelta. Sin marcar, '
+                                .'el recibo sigue pagando la cuenta y al volver a facturar no se cobra dos veces.')
+                            ->visible(fn (Factura $record): bool => self::recibosQueSePuedenDevolver($record) !== []),
                     ])
                     ->action(function (Factura $record, array $data): void {
+                        /*
+                         * Solo los que la pantalla ofreció: de esta
+                         * cuenta, con el turno abierto y que quien anula
+                         * puede tocar. Un id armado a mano no pasa.
+                         */
+                        $ofrecidos = array_keys(self::recibosQueSePuedenDevolver($record));
+                        $devueltos = [];
+
+                        foreach (is_array($data['devueltos'] ?? null) ? $data['devueltos'] : [] as $id) {
+                            if (is_numeric($id) && in_array((int) $id, $ofrecidos, true)) {
+                                $devueltos[] = (int) $id;
+                            }
+                        }
+
                         try {
                             app(EmisorDeFactura::class)->anular(
                                 $record,
                                 is_string($data['motivo'] ?? null) ? $data['motivo'] : '',
                                 UsuarioAutenticado::id(),
+                                $devueltos,
                             );
                         } catch (SihlaException $e) {
                             Notification::make()->danger()->title('No se pudo anular')->body($e->getMessage())->persistent()->send();
@@ -251,6 +309,9 @@ class FacturasTable
                             ->success()
                             ->title('Factura anulada')
                             ->body($record->numero.' queda anulada, con su número consumido y tu motivo escrito. '
+                                .($devueltos === []
+                                    ? ''
+                                    : count($devueltos).' recibo(s) anulado(s) por devolución: ya no cuentan en el saldo ni en el arqueo. ')
                                 .self::comoQuedoLaCuenta($record))
                             ->send();
                     }),
@@ -271,6 +332,44 @@ class FacturasTable
     private static function sinDocumento(Builder $consulta): void
     {
         $consulta->whereNull('cliente_documento');
+    }
+
+    /**
+     * Los recibos vivos de la cuenta de esta factura que todavía se
+     * pueden anular —su turno sigue abierto— y que quien anula puede
+     * tocar: «REC-HLA-2026-000002 · Efectivo · L 26.95 · 11/10 19:02».
+     *
+     * Con el turno cerrado ese efectivo ya se contó y se entregó: no se
+     * ofrece, porque devolverlo es otro hecho.
+     *
+     * @return array<int, string>
+     */
+    private static function recibosQueSePuedenDevolver(Factura $factura): array
+    {
+        $recibos = Abono::query()
+            ->where('cuenta_id', $factura->cuenta_id)
+            ->where('estado', EstadoAbono::Aplicado->value)
+            ->whereIn('turno_id', TurnoDeCaja::query()
+                ->where('estado', EstadoTurnoDeCaja::Abierto->value)
+                ->select('id'))
+            ->with('medios')
+            ->orderBy('id')
+            ->get();
+
+        $opciones = [];
+
+        foreach ($recibos as $recibo) {
+            if (! Gate::allows('update', $recibo)) {
+                continue;
+            }
+
+            $opciones[$recibo->id] = $recibo->numero
+                .' · '.$recibo->medios->map(static fn (AbonoMedio $medio): string => $medio->descripcion())->implode(' + ')
+                .' · L '.number_format((float) $recibo->total, 2)
+                .' · '.$recibo->recibido_en->format('d/m H:i');
+        }
+
+        return $opciones;
     }
 
     /**

@@ -261,13 +261,26 @@
         <table style="margin-top: 4px">
             <tr>
                 <td style="width: 55%; padding-right: 4px">
+                    {{--
+                        🔴 El cliente es QUIEN PAGA; el paciente va aparte
+                        (Mauricio, 11-oct-2026). Con seguro el cliente es la
+                        aseguradora, sin seguro suele ser «CONSUMIDOR FINAL»,
+                        y el paciente está siempre en su propio renglón, con
+                        su identidad y su póliza si las tiene. El «Código de
+                        Cliente» de abajo es su número de expediente.
+
+                        Las facturas emitidas antes de ese día no tienen
+                        paciente congelado —lo llevaban dentro del nombre del
+                        cliente— y salen sin el renglón, como se emitieron.
+                    --}}
                     <table class="marco">
                         <tr>
                             <td>
                                 <span class="etiqueta">Nombre Cliente:</span><br>
-                                <span class="dato">{{ $factura->cliente_nombre }}</span><br>
-                                {{ $factura->cliente_direccion }}<br>
-                                / {{ $factura->cliente_telefono }}
+                                <span class="dato">{{ $factura->cliente_nombre }}</span>
+                                @if (filled($factura->cliente_direccion) || filled($factura->cliente_telefono))
+                                    <br>{{ $factura->cliente_direccion }}{{ filled($factura->cliente_direccion) && filled($factura->cliente_telefono) ? ' / ' : '' }}{{ $factura->cliente_telefono }}
+                                @endif
                             </td>
                         </tr>
                         <tr>
@@ -276,6 +289,28 @@
                                 <span class="dato">{{ $factura->cliente_documento }}</span>
                             </td>
                         </tr>
+                        @if (filled($factura->paciente_nombre))
+                            <tr>
+                                <td>
+                                    <span class="etiqueta">Paciente:</span>
+                                    <span class="dato">{{ $factura->paciente_nombre }}</span>
+                                    @if (filled($factura->paciente_documento) || filled($factura->paciente_poliza))
+                                        <br>
+                                        @if (filled($factura->paciente_documento))
+                                            <span class="etiqueta">{{ $factura->rotuloDelDocumentoDelPaciente() }}:</span>
+                                            <span class="dato">{{ $factura->documentoDelPacienteImpreso() }}</span>
+                                        @endif
+                                        @if (filled($factura->paciente_documento) && filled($factura->paciente_poliza))
+                                            &nbsp;&nbsp;&nbsp;
+                                        @endif
+                                        @if (filled($factura->paciente_poliza))
+                                            <span class="etiqueta">Póliza:</span>
+                                            <span class="dato">{{ $factura->paciente_poliza }}</span>
+                                        @endif
+                                    @endif
+                                </td>
+                            </tr>
+                        @endif
                     </table>
                 </td>
 

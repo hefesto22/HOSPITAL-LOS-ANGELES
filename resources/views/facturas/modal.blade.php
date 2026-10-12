@@ -53,10 +53,20 @@
     la factura pasa de una página, que es justo lo que empezó a pasar con
     las cirugías desglosadas.
 --}}
+{{--
+    🔴 Recién emitida, la ventana de imprimir se abre SOLA (Mauricio,
+    11-oct-2026): `imprimirAlAbrir` lo manda `CuentasAbiertas` al terminar
+    de emitir. Se dispara una sola vez, cuando el iframe terminó de cargar
+    —antes la hoja saldría en blanco—; si se cierra la ventana, el botón
+    «Imprimir» la vuelve a abrir. Desde la lista de Facturas no se manda,
+    y ahí la factura solo se muestra.
+--}}
 <div
     x-data="{
         /** Una carta: 216 mm a 96 dpi. */
         ANCHO: 816,
+
+        imprimirAlCargar: @js($imprimirAlAbrir ?? false),
 
         escala: 1,
         alto: 1056,
@@ -103,6 +113,15 @@
              * pantalla: ancho del marco menos la hoja YA escalada.
              */
             this.desplazamiento = Math.max(0, (marco.clientWidth - this.ANCHO * this.escala) / 2);
+        },
+
+        alCargarLaHoja() {
+            if (! this.imprimirAlCargar) {
+                return;
+            }
+
+            this.imprimirAlCargar = false;
+            this.imprimir();
         },
 
         imprimir() {
@@ -169,6 +188,7 @@
             x-ref="papel"
             src="{{ route('facturas.imprimir', ['factura' => $factura, 'incrustada' => 1]) }}"
             title="Factura {{ $factura->numero }}"
+            x-on:load="alCargarLaHoja()"
             class="sihla-papel"
             :style="`width: ${ANCHO}px; height: ${alto}px; transform: translateX(${desplazamiento}px) scale(${escala});`"
         ></iframe>

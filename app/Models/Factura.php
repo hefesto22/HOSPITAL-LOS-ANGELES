@@ -47,6 +47,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $cliente_orden_exenta
  * @property string|null $cliente_constancia_exonerado
  * @property string|null $cliente_registro_sag
+ * @property string|null $paciente_nombre
+ * @property string|null $paciente_documento
+ * @property TipoIdentificador|null $paciente_documento_tipo
+ * @property string|null $paciente_poliza
  * @property CarbonInterface $emitida_en
  * @property CarbonInterface $fecha_operacion
  * @property CarbonInterface|null $vence_el
@@ -88,6 +92,7 @@ class Factura extends Model
         'cai', 'fecha_limite_emision', 'cuenta_id', 'encuentro_id', 'persona_id', 'convenio_id',
         'cliente_nombre', 'cliente_documento', 'cliente_documento_tipo', 'cliente_direccion', 'cliente_telefono',
         'cliente_codigo', 'cliente_orden_exenta', 'cliente_constancia_exonerado', 'cliente_registro_sag',
+        'paciente_nombre', 'paciente_documento', 'paciente_documento_tipo', 'paciente_poliza',
         'emitida_en', 'fecha_operacion', 'vence_el', 'terminos', 'facturador',
         'bruto', 'descuento_legal', 'descuento_comercial',
         'exonerado', 'exento', 'gravado', 'gravado_15', 'gravado_18', 'isv', 'isv_15', 'isv_18', 'total',
@@ -100,18 +105,19 @@ class Factura extends Model
     protected function casts(): array
     {
         return [
-            'tipo'                   => TipoDocumentoDeVenta::class,
-            'cliente_documento_tipo' => TipoIdentificador::class,
-            'estado'                 => EstadoFactura::class,
-            'fecha_limite_emision'   => 'date',
-            'emitida_en'             => 'datetime',
-            'fecha_operacion'        => 'date',
-            'vence_el'               => 'date',
-            'anulada_en'             => 'datetime',
-            'correlativo'            => 'integer',
-            'lineas'                 => 'integer',
-            'paquetes_desglosados'   => 'boolean',
-            'anulada_por'            => 'integer',
+            'tipo'                    => TipoDocumentoDeVenta::class,
+            'cliente_documento_tipo'  => TipoIdentificador::class,
+            'paciente_documento_tipo' => TipoIdentificador::class,
+            'estado'                  => EstadoFactura::class,
+            'fecha_limite_emision'    => 'date',
+            'emitida_en'              => 'datetime',
+            'fecha_operacion'         => 'date',
+            'vence_el'                => 'date',
+            'anulada_en'              => 'datetime',
+            'correlativo'             => 'integer',
+            'lineas'                  => 'integer',
+            'paquetes_desglosados'    => 'boolean',
+            'anulada_por'             => 'integer',
         ];
     }
 
@@ -245,6 +251,36 @@ class Factura extends Model
             TipoIdentificador::Pasaporte => 'Pasaporte',
             default                      => 'RTN',
         };
+    }
+
+    /**
+     * Cómo se rotula la identidad del paciente en el papel. «Identidad»
+     * y no «DNI»: es como la conoce la gente y como la pide el seguro.
+     */
+    public function rotuloDelDocumentoDelPaciente(): string
+    {
+        $tipo = $this->paciente_documento_tipo;
+
+        if ($tipo === TipoIdentificador::Dni) {
+            return 'Identidad';
+        }
+
+        return $tipo instanceof TipoIdentificador ? $tipo->etiqueta() : 'Documento';
+    }
+
+    /**
+     * La identidad del paciente como se escribe a mano: 0801-1990-12345.
+     */
+    public function documentoDelPacienteImpreso(): ?string
+    {
+        $documento = $this->paciente_documento;
+        $tipo = $this->paciente_documento_tipo;
+
+        if ($documento === null || ! $tipo instanceof TipoIdentificador) {
+            return $documento;
+        }
+
+        return $tipo->formatear($documento);
     }
 
     public function etiqueta(): string

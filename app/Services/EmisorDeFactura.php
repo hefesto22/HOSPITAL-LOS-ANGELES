@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\EstadoFactura;
@@ -15,10 +16,14 @@ use App\Domain\Enums\TipoIdentificador;
 use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
+use App\Models\Abono;
 use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
+use App\Models\Expediente;
 use App\Models\Factura;
+use App\Models\Persona;
+use App\Models\PersonaIdentificador;
 use App\Models\RangoCai;
 use App\Models\User;
 use Carbon\CarbonInterface;
@@ -62,7 +67,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class EmisorDeFactura
 {
-    public function __construct(private readonly DesglosadorDePaquete $desglosador) {}
+    public function __construct(
+        private readonly DesglosadorDePaquete $desglosador,
+        private readonly ReceptorDeAbono $caja,
+    ) {}
 
     public function emitir(
         Cuenta $cuenta,
@@ -70,8 +78,9 @@ final class EmisorDeFactura
         ?int $quien = null,
         ?string $nota = null,
         ?bool $desglosar = null,
+        ?string $poliza = null,
     ): Factura {
-        return DB::transaction(function () use ($cuenta, $cliente, $quien, $nota, $desglosar): Factura {
+        return DB::transaction(function () use ($cuenta, $cliente, $quien, $nota, $desglosar, $poliza): Factura {
             /** @var Cuenta $bloqueada */
             $bloqueada = Cuenta::query()->whereKey($cuenta->id)->lockForUpdate()->firstOrFail();
 
@@ -138,6 +147,14 @@ final class EmisorDeFactura
 
             $cliente = $this->conElRtnDelPagador($bloqueada, $cliente);
 
+            /*
+             * El paciente se lee ACÁ, antes del lock del correlativo: son
+             * lecturas, y no tienen por qué hacer esperar a las cajas.
+             */
+            $paciente = $this->elPacienteDe($bloqueada);
+
+            $cliente = $this->conElCodigoDelPaciente($cliente, $paciente['expediente']);
+
             $this->exigirDocumentoSiCorresponde($cliente, $totales['total']);
 
             /*
@@ -168,6 +185,22 @@ final class EmisorDeFactura
                 'encuentro_id' => $bloqueada->encuentro_id,
                 'persona_id'   => $bloqueada->encuentro->persona_id ?? null,
                 'convenio_id'  => $bloqueada->convenio_id,
+
+                /*
+                 * El paciente va en su propio renglón, aparte del
+                 * cliente: con seguro el cliente es la aseguradora y sin
+                 * seguro suele ser «CONSUMIDOR FINAL», pero el paciente
+                 * está siempre, con su identidad si la tiene registrada
+                 * (Mauricio, 11-oct-2026). Lo pone el motor y no la
+                 * pantalla: quién fue atendido no se teclea en la caja.
+                 *
+                 * La póliza va con él porque es suya: el «Código de
+                 * Cliente» del papel ahora es el expediente.
+                 */
+                'paciente_nombre'         => $paciente['nombre'],
+                'paciente_documento'      => $paciente['documento'],
+                'paciente_documento_tipo' => $paciente['tipo'],
+                'paciente_poliza'         => $this->polizaDe($bloqueada, $poliza),
 
                 'emitida_en' => $ahora,
 
@@ -285,10 +318,19 @@ final class EmisorDeFactura
      *
      * NO SE DESHACEN los abonos. La plata entró de verdad y sigue
      * abonada a la cuenta, así que al volver a facturar la cuenta ya
-     * está saldada y no hay que cobrar dos veces. Devolver plata es
-     * anular el abono: otro hecho, con el turno de caja abierto.
+     * está saldada y no hay que cobrar dos veces.
+     *
+     * 🔴 SALVO LOS QUE SE DEVOLVIERON (Mauricio, 11-oct-2026). «Facturé
+     * y la anulé, y dice que ya abonó»: emitir con «Cobrar ahora» deja
+     * un recibo, y anular la factura lo dejaba vivo aunque la plata se
+     * le hubiera devuelto. Los recibos de `$recibosDevueltos` se anulan
+     * EN LA MISMA TRANSACCIÓN que la factura: si uno no se puede —el
+     * turno ya cerró—, la factura tampoco se anula, y nadie queda con
+     * la mitad hecha. Solo cuentan los de ESTA cuenta.
+     *
+     * @param list<int> $recibosDevueltos
      */
-    public function anular(Factura $factura, string $motivo, ?int $quien = null): Factura
+    public function anular(Factura $factura, string $motivo, ?int $quien = null, array $recibosDevueltos = []): Factura
     {
         if (mb_strlen(trim($motivo)) < 10) {
             throw FacturaException::faltaElMotivo();
@@ -303,7 +345,7 @@ final class EmisorDeFactura
             throw FacturaException::sinQuienAnula();
         }
 
-        return DB::transaction(function () use ($factura, $motivo, $quien): Factura {
+        return DB::transaction(function () use ($factura, $motivo, $quien, $recibosDevueltos): Factura {
             /** @var Factura $bloqueada */
             $bloqueada = Factura::query()->whereKey($factura->id)->lockForUpdate()->firstOrFail();
 
@@ -343,8 +385,42 @@ final class EmisorDeFactura
 
             $this->devolverLaCuentaAComoEstaba($bloqueada);
 
+            $this->anularLosRecibosDevueltos($bloqueada, $recibosDevueltos, trim($motivo), $quien);
+
             return $bloqueada->refresh();
         });
+    }
+
+    /**
+     * Los recibos de la cuenta cuya plata se le devolvió al anular.
+     *
+     * Por `ReceptorDeAbono::anular()`, la misma puerta que usa la caja:
+     * exige el turno abierto, porque cerrado el turno ese efectivo ya se
+     * contó y se entregó, y eso es otro hecho.
+     *
+     * @param list<int> $ids
+     */
+    private function anularLosRecibosDevueltos(Factura $factura, array $ids, string $motivo, ?int $quien): void
+    {
+        if ($ids === []) {
+            return;
+        }
+
+        $recibos = Abono::query()
+            ->where('cuenta_id', $factura->cuenta_id)
+            ->where('estado', EstadoAbono::Aplicado->value)
+            ->whereIn('id', $ids)
+            ->with('turno')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($recibos as $recibo) {
+            $this->caja->anular(
+                $recibo,
+                mb_substr('Se devolvió al anular la factura '.$factura->numero.': '.$motivo, 0, 200),
+                $quien,
+            );
+        }
     }
 
     /**
@@ -839,6 +915,115 @@ final class EmisorDeFactura
             constanciaExonerado: $cliente->constanciaExonerado,
             registroSag: $cliente->registroSag,
         );
+    }
+
+    /**
+     * El paciente como está HOY en el expediente, para congelarlo en el
+     * papel: nombre, identidad y número de expediente.
+     *
+     * Se lee al emitir y no se vuelve a leer: si mañana se le corrige un
+     * apellido o la identidad, la factura de hoy sigue diciendo lo que
+     * dijo el día que se entregó. Por eso está en el trigger de
+     * inmutabilidad, igual que el cliente.
+     *
+     * @return array{nombre: string|null, documento: string|null, tipo: string|null, expediente: string|null}
+     */
+    private function elPacienteDe(Cuenta $cuenta): array
+    {
+        $encuentro = $cuenta->encuentro;
+
+        $persona = Persona::query()->find($encuentro->persona_id);
+
+        /*
+         * `withTrashed`: un expediente archivado sigue siendo el número
+         * por el que se busca a esa persona en el hospital.
+         */
+        $expediente = Expediente::query()->withTrashed()->find($encuentro->expediente_id);
+
+        $nombre = $persona instanceof Persona ? trim($persona->nombreCompleto()) : '';
+        $identidad = $persona instanceof Persona ? $this->identidadDe($persona) : null;
+
+        return [
+            'nombre'     => $nombre === '' ? null : mb_substr($nombre, 0, 200),
+            'documento'  => $identidad?->valor,
+            'tipo'       => $identidad?->tipo->value,
+            'expediente' => $expediente instanceof Expediente ? $expediente->numero : null,
+        ];
+    }
+
+    /**
+     * El documento que identifica a la PERSONA: la identidad y, si es
+     * extranjera, el pasaporte o el carné de residencia. El RTN no va
+     * acá —ese identifica al contribuyente y es del cliente— ni el
+     * carné del IHSS, que identifica al afiliado.
+     */
+    private function identidadDe(Persona $persona): ?PersonaIdentificador
+    {
+        $preferidos = [
+            TipoIdentificador::Dni,
+            TipoIdentificador::Pasaporte,
+            TipoIdentificador::CarnetResidencia,
+        ];
+
+        $tiene = PersonaIdentificador::query()
+            ->where('persona_id', $persona->id)
+            ->sinConflicto()
+            ->whereIn('tipo', array_map(static fn (TipoIdentificador $tipo): string => $tipo->value, $preferidos))
+            ->get();
+
+        foreach ($preferidos as $tipo) {
+            $identificador = $tiene->first(
+                static fn (PersonaIdentificador $uno): bool => $uno->tipo === $tipo,
+            );
+
+            if ($identificador instanceof PersonaIdentificador) {
+                return $identificador;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL CÓDIGO DE CLIENTE ES EL EXPEDIENTE (Mauricio, 11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «En código de cliente, el código que tiene el paciente en el
+     * sistema.» Lo pone el motor, como el RTN del pagador: es un número
+     * que el sistema ya sabe y que nadie debería teclear en la caja.
+     *
+     * Sin expediente —no debería pasar, pero los datos viejos existen—
+     * queda lo que haya llegado.
+     */
+    private function conElCodigoDelPaciente(ClienteDeFactura $cliente, ?string $expediente): ClienteDeFactura
+    {
+        if ($expediente === null || trim($expediente) === '') {
+            return $cliente;
+        }
+
+        return new ClienteDeFactura(
+            nombre: $cliente->nombre,
+            documento: $cliente->documento,
+            tipoDocumento: $cliente->tipoDocumento,
+            direccion: $cliente->direccion,
+            telefono: $cliente->telefono,
+            codigo: $expediente,
+            ordenExenta: $cliente->ordenExenta,
+            constanciaExonerado: $cliente->constanciaExonerado,
+            registroSag: $cliente->registroSag,
+        );
+    }
+
+    /**
+     * La póliza que se imprime junto al paciente: la que se escribió al
+     * facturar, o la de la cuenta si no llegó ninguna.
+     */
+    private function polizaDe(Cuenta $cuenta, ?string $escrita): ?string
+    {
+        $poliza = trim((string) ($escrita ?? $cuenta->numero_poliza));
+
+        return $poliza === '' ? null : mb_substr($poliza, 0, 40);
     }
 
     /**
