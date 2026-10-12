@@ -7,11 +7,11 @@ namespace App\Filament\Resources\Compras\Schemas;
 use App\Domain\Enums\CategoriaDeGasto;
 use App\Domain\Enums\TipoDocumentoFiscal;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Proveedor;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\ToggleButtons;
 use Filament\Schemas\Components\Section;
@@ -220,7 +220,7 @@ final class CompraForm
         return Section::make('Notas')
             ->collapsed()
             ->schema([
-                Textarea::make('notas')
+                CampoMayusculas::area('notas')
                     ->hiddenLabel()
                     ->rows(3)
                     ->placeholder('Opcional: número de orden, a qué área se entregó, cualquier cosa que sirva después.'),

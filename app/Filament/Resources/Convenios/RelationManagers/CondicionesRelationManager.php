@@ -6,13 +6,13 @@ namespace App\Filament\Resources\Convenios\RelationManagers;
 
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Convenio;
 use App\Models\ConvenioCondicion;
 use App\Services\FijadorDeCondicion;
 use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -147,7 +147,7 @@ class CondicionesRelationManager extends RelationManager
                     ->displayFormat('d/m/Y')
                     ->helperText('Tiene que ser posterior a todo lo que ya se pactó con este convenio.'),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué')
                     ->required()
                     ->minLength(10)

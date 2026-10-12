@@ -6,7 +6,6 @@ namespace App\Filament\Resources\PlantillasPresupuesto\Schemas;
 
 use App\Filament\Schemas\Components\CampoMayusculas;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -56,7 +55,7 @@ class PlantillaPresupuestoForm
                             ->maxLength(150)
                             ->placeholder('APENDICECTOMIA'),
 
-                        Textarea::make('descripcion')
+                        CampoMayusculas::area('descripcion')
                             ->label('Qué cubre')
                             ->maxLength(300)
                             ->rows(2)

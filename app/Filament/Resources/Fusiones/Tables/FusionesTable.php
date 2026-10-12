@@ -6,13 +6,13 @@ namespace App\Filament\Resources\Fusiones\Tables;
 
 use App\Domain\Enums\EstadoFusion;
 use App\Domain\Exceptions\FusionInvalidaException;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\FusionDePersona;
 use App\Models\User;
 use App\Services\FusionadorDePersonas;
 use Carbon\CarbonInterface;
 use Closure;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Filament\Tables\Columns\TextColumn;
@@ -109,7 +109,7 @@ final class FusionesTable
                 .'dos pacientes unidos comparten alergias y medicación.'
             )
             ->schema([
-                Textarea::make('nota')
+                CampoMayusculas::area('nota')
                     ->label('Cómo lo verificaste')
                     ->placeholder('Comparé el DNI y la fecha de nacimiento contra el documento físico.')
                     ->rows(2),
@@ -135,7 +135,7 @@ final class FusionesTable
             ->modalHeading('Rechazar la propuesta')
             ->modalDescription('No se une nada. La persona queda libre para que se proponga otra fusión.')
             ->schema([
-                Textarea::make('nota')
+                CampoMayusculas::area('nota')
                     ->label('Por qué no son la misma persona')
                     ->placeholder('Son dos hermanos con el mismo nombre; fechas de nacimiento distintas.')
                     ->required()
@@ -165,7 +165,7 @@ final class FusionesTable
                 .'puntero y deshacerla lo borra.'
             )
             ->schema([
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué se deshace')
                     ->placeholder('Se confirmó con el RNP que son dos personas distintas.')
                     ->required()

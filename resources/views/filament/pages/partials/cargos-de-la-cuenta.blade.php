@@ -219,6 +219,7 @@
                                                     wire:model="motivoDeQuitar"
                                                     wire:keydown.enter="quitarConMotivo"
                                                     class="sihla-motivo-campo"
+                                                    style="text-transform: uppercase"
                                                     placeholder="El paciente pidió traslado y no se le administró."
                                                     autofocus
                                                 >

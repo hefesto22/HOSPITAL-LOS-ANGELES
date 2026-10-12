@@ -9,6 +9,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioDeForma;
 use App\Domain\ValueObjects\PreciosPorForma;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Sede;
@@ -22,7 +23,6 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -151,7 +151,7 @@ final class FijarPrecioDeVentaAction
                         self::calcular($livewire, $get('minimo'), $get('recargo_envase'), $get('recargo_suelta'), $get('vigencia_desde')),
                     )),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué')
                     ->columnSpanFull()
                     ->required()

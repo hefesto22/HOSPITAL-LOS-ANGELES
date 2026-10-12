@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\TipoAlmacen;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Ajuste;
 use App\Models\Almacen;
 use App\Models\Existencia;
@@ -20,7 +21,6 @@ use App\Support\NumeroDeFormulario;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -599,7 +599,7 @@ class Existencias extends Page implements HasTable
                         $get('cantidad'),
                     )),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Nota (opcional)')
                     ->rows(2)
                     ->maxLength(200)

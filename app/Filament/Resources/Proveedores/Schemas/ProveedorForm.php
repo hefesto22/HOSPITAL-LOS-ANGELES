@@ -7,7 +7,6 @@ namespace App\Filament\Resources\Proveedores\Schemas;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Filament\Schemas\Components\RTNField;
 use App\Filament\Schemas\Components\TelefonoHondurasField;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
@@ -67,7 +66,7 @@ final class ProveedorForm
                 ->columns(2)
                 ->collapsed()
                 ->schema([
-                    TextInput::make('contacto')
+                    CampoMayusculas::make('contacto')
                         ->label('Persona de contacto')
                         ->maxLength(120)
                         ->helperText('Se guarda tal cual se escribe: un nombre en mayúsculas se lee como un grito.'),
@@ -79,7 +78,7 @@ final class ProveedorForm
                         ->email()
                         ->maxLength(120),
 
-                    Textarea::make('notas')
+                    CampoMayusculas::area('notas')
                         ->label('Notas')
                         ->rows(3)
                         ->columnSpanFull(),

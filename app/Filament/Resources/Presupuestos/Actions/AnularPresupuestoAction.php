@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Presupuestos\Actions;
 
 use App\Domain\Enums\EstadoPresupuesto;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Presupuesto;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Gate;
@@ -35,7 +35,7 @@ class AnularPresupuestoAction
             ->modalHeading('Anular el presupuesto')
             ->modalSubmitActionLabel('Anular')
             ->schema([
-                Textarea::make('motivo_anulacion')
+                CampoMayusculas::area('motivo_anulacion')
                     ->label('¿Por qué se anula?')
                     ->required()
                     ->minLength(10)

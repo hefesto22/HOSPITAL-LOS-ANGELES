@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Prestamos\Actions;
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Prestamo;
 use App\Services\RegistradorDePrestamo;
 use App\Support\NumeroDeFormulario;
@@ -64,7 +65,7 @@ final class DevolverPrestamoAction
                         .$record->saldoPendiente()->redondeado(2).' pendientes de '
                         .Decimal::de($record->cantidad)->redondeado(2).'.'),
 
-                TextInput::make('referencia')
+                CampoMayusculas::make('referencia')
                     ->label('Referencia')
                     ->maxLength(255)
                     ->placeholder('Quién la llevó, número de remisión…')

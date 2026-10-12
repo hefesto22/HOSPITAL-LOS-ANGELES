@@ -118,7 +118,7 @@ it('el hospital le hace 30 por ciento a un paciente sin descuento de ley', funct
         ->and($cargo->descuento_legal)->toBe('0.00')
         ->and($cargo->descuento_comercial)->toBe('30.00')
         ->and($cargo->subtotal)->toBe('70.00')
-        ->and($cargo->motivo_descuento)->toBe('Paciente frecuente del hospital');
+        ->and($cargo->motivo_descuento)->toBe('PACIENTE FRECUENTE DEL HOSPITAL');
 })->note('El porcentaje se convierte a lempiras donde el bruto existe, no en la pantalla: la pantalla no resuelve el precio y hacerlo ahí obligaría a resolverlo dos veces.');
 
 it('la tercera edad suma el 25 de ley y hasta 10 del hospital', function (): void {

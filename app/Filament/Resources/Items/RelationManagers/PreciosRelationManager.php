@@ -8,6 +8,7 @@ use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Resources\Items\Actions\FijarPrecioDeVentaAction;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
@@ -19,7 +20,6 @@ use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -392,7 +392,7 @@ class PreciosRelationManager extends RelationManager
                         ->displayFormat('d/m/Y')
                         ->helperText('Posterior a los precios que ya hay para ese pagador.'),
 
-                    Textarea::make('motivo')
+                    CampoMayusculas::area('motivo')
                         ->label('Por qué')
                         ->columnSpanFull()
                         ->required()

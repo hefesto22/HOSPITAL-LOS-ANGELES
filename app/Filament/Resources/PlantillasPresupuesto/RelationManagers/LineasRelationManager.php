@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\PlantillasPresupuesto\RelationManagers;
 
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use Filament\Actions\CreateAction;
 use Filament\Actions\DeleteAction;
@@ -99,7 +100,7 @@ class LineasRelationManager extends RelationManager
                 ->label('Es opcional')
                 ->helperText('Marcalo si puede que no se use. Igual suma al total: el presupuesto tiene que decir el techo, no el piso.'),
 
-            TextInput::make('nota')
+            CampoMayusculas::make('nota')
                 ->label('Nota interna')
                 ->maxLength(200)
                 ->columnSpanFull()

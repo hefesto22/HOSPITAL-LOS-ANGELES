@@ -18,7 +18,6 @@ use App\Support\NumeroDeFormulario;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Get;
@@ -158,7 +157,7 @@ final class RegistrarPrestamoAction
                     ->live()
                     ->helperText(fn (Get $get): string => self::ayudaDelTipo($get('presta_tipo'))),
 
-                TextInput::make('presta_nombre')
+                CampoMayusculas::make('presta_nombre')
                     ->label('Nombre')
                     ->required()
                     ->minLength(3)
@@ -190,7 +189,7 @@ final class RegistrarPrestamoAction
                         'regex' => 'Escribí solo el número, con hasta dos decimales.',
                     ]),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué se pidió')
                     ->rows(2)
                     ->maxLength(255)

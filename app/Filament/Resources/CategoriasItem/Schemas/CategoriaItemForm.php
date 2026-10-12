@@ -9,7 +9,6 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\CategoriaItem;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
@@ -88,7 +87,7 @@ final class CategoriaItemForm
                     ->required()
                     ->helperText('En qué posición aparece en la lista. El tarifario impreso tiene un orden que el personal ya conoce.'),
 
-                Textarea::make('descripcion')
+                CampoMayusculas::area('descripcion')
                     ->label('Descripción')
                     ->rows(2)
                     ->columnSpanFull()

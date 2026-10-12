@@ -102,7 +102,7 @@ it('anular deja dos filas y la cuenta vuelve a cero', function (): void {
 
     expect($cargo->estado)->toBe(EstadoCargo::Anulado)
         ->and($cargo->total)->toBe('850.00')
-        ->and($cargo->motivo_anulacion)->toBe(MOTIVO_VALIDO)
+        ->and($cargo->motivo_anulacion)->toBe('SE CARGÓ DOS VECES POR DOBLE ESCANEO DEL CÓDIGO')
         ->and($reversa->estado)->toBe(EstadoCargo::Anulacion)
         ->and($reversa->revierte_a_id)->toBe($cargo->id)
         ->and($reversa->total)->toBe('-850.00')

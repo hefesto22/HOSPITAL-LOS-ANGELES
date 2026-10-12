@@ -15,7 +15,6 @@ use Carbon\CarbonInterface;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
@@ -123,7 +122,7 @@ final class CrearDescuentoAction
                     ->label('Exige receta original')
                     ->helperText('Art. 34: para medicamentos, firmada y sellada.'),
 
-                Textarea::make('nota')
+                CampoMayusculas::area('nota')
                     ->label('Nota')
                     ->rows(2)
                     ->columnSpanFull()

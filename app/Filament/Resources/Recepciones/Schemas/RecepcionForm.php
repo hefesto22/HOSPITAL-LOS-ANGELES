@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Recepciones\Schemas;
 
 use App\Domain\Enums\TipoAlmacen;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
@@ -21,7 +22,6 @@ use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Actions;
@@ -236,7 +236,7 @@ final class RecepcionForm
                     ->native(false)
                     ->helperText('Vacío en una donación anónima o un traslado.'),
 
-                TextInput::make('referencia')
+                CampoMayusculas::make('referencia')
                     ->label('Referencia')
                     ->maxLength(120)
                     ->placeholder('Factura 000-001-01-00000657')
@@ -603,7 +603,7 @@ final class RecepcionForm
         return Section::make('Notas')
             ->collapsed()
             ->schema([
-                Textarea::make('notas')
+                CampoMayusculas::area('notas')
                     ->hiddenLabel()
                     ->rows(3)
                     ->placeholder('Opcional: llegó una caja golpeada, faltó una del pedido, lo que sea.'),

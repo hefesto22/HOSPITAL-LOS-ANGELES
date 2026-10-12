@@ -89,6 +89,7 @@
             <input
                 type="text"
                 class="sihla-descuento-motivo"
+                style="text-transform: uppercase"
                 maxlength="200"
                 placeholder="¿Por qué? Lo puede dar cualquiera"
                 wire:model.live.blur="motivoDeLaTanda"

@@ -15,7 +15,6 @@ use App\Support\ContextoSede;
 use App\Support\NumeroDeFormulario;
 use App\Support\UsuarioAutenticado;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
@@ -163,7 +162,7 @@ trait OperaElTurnoDeCaja
                         .number_format((float) ($this->turno()?->efectivoEsperado()->redondeado(2) ?? '0'), 2)
                         .'. Contá primero y después mirá este número.'),
 
-                Textarea::make('notas_cierre')
+                CampoMayusculas::area('notas_cierre')
                     ->label('¿Pasó algo con el efectivo?')
                     ->rows(2)
                     ->maxLength(300)

@@ -134,6 +134,7 @@
                                                     wire:model="motivoDeAnular"
                                                     wire:keydown.enter="anularElAbono"
                                                     class="sihla-caja-campo"
+                                                    style="text-transform: uppercase"
                                                     placeholder="Se digitó el monto equivocado…"
                                                     autofocus
                                                 >

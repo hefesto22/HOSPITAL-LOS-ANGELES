@@ -11,6 +11,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Models\Cargo;
 use App\Models\Cuenta;
 use App\Models\MovimientoKardex;
+use App\Support\TextoCanonico;
 use Illuminate\Support\Facades\DB;
 use Ramsey\Uuid\Uuid;
 
@@ -67,7 +68,14 @@ final class AnuladorDeCargo
      */
     public function anular(Cargo $cargo, string $motivo): Cargo
     {
-        if (mb_strlen(trim($motivo)) < 10) {
+        /*
+         * En mayúsculas, como todo lo que se teclea (ver TextoCanonico).
+         * Acá y no en la pantalla: el motivo llega de la cuenta abierta,
+         * del paquete y de la consola, y la bitácora se lee pareja.
+         */
+        $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
+
+        if (mb_strlen($motivo) < 10) {
             throw CargoException::motivoDeAnulacionCorto();
         }
 

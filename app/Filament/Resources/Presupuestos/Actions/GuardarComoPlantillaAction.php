@@ -10,7 +10,6 @@ use App\Models\Presupuesto;
 use App\Services\GeneradorDePlantilla;
 use App\Support\TextoCanonico;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
@@ -90,7 +89,7 @@ class GuardarComoPlantillaAction
                     ->maxLength(150)
                     ->helperText('Como lo va a buscar quien cotice la próxima.'),
 
-                Textarea::make('descripcion')
+                CampoMayusculas::area('descripcion')
                     ->label('Descripción')
                     ->maxLength(300)
                     ->rows(2)

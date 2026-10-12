@@ -11,7 +11,6 @@ use App\Domain\Enums\TipoIdentificador;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
@@ -62,7 +61,7 @@ final class PacienteForm
                             ->live()
                             ->helperText('En emergencia, el sistema no debe frenar. Todo lo demás se completa después.'),
 
-                        Textarea::make('nota_identificacion')
+                        CampoMayusculas::area('nota_identificacion')
                             ->label('Rasgos y quién lo trajo')
                             ->placeholder('Varón, ~40 años, tatuaje en antebrazo derecho. Lo trajo la ambulancia de bomberos.')
                             ->rows(2)

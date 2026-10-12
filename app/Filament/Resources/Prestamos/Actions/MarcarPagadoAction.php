@@ -7,10 +7,10 @@ namespace App\Filament\Resources\Prestamos\Actions;
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Prestamo;
 use App\Services\RegistradorDePrestamo;
 use Filament\Actions\Action;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Gate;
@@ -51,7 +51,7 @@ final class MarcarPagadoAction
             ->modalSubmitActionLabel('Marcar pagado')
             ->modalWidth('md')
             ->schema([
-                TextInput::make('referencia')
+                CampoMayusculas::make('referencia')
                     ->label('Referencia del pago')
                     ->maxLength(255)
                     ->placeholder('Número de recibo, cheque, transferencia…')

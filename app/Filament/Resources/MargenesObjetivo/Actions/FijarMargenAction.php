@@ -7,12 +7,12 @@ namespace App\Filament\Resources\MargenesObjetivo\Actions;
 use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\MargenNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Services\FijadorDeMargenObjetivo;
 use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Get;
@@ -119,7 +119,7 @@ final class FijarMargenAction
                     ->displayFormat('d/m/Y')
                     ->helperText('Tiene que ser posterior a todos los márgenes que ya existen para ese tipo.'),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué')
                     ->required()
                     ->minLength(10)

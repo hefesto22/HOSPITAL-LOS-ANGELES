@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Schemas\Components;
 
 use App\Support\TextoCanonico;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 
 /**
@@ -38,8 +39,11 @@ use Filament\Forms\Components\TextInput;
  * Las tres delegan en `App\Support\TextoCanonico`, que es donde vive la
  * regla. Tres copias de la misma lógica es cómo empiezan a diferir.
  *
- * ⚠️ NO USAR en correos, contraseñas, notas clínicas, códigos de barras,
- * ni códigos LOINC / ATC / CIE-10.
+ * Para un área de texto —motivos, notas, observaciones— está `area()`,
+ * que guarda igual pero respeta los renglones.
+ *
+ * ⚠️ NO USAR en correos, contraseñas, códigos de barras, ni códigos
+ * LOINC / ATC / CIE-10.
  *
  * Y sobre todo NO en unidades de dosis: **`mg` y `Mg` no son lo mismo, y
  * en una dosis esa diferencia mata.**
@@ -52,6 +56,22 @@ final class CampoMayusculas
             ->extraInputAttributes(['style' => 'text-transform: uppercase'])
             ->dehydrateStateUsing(
                 fn (?string $state): ?string => TextoCanonico::mayusculas($state)
+            );
+    }
+
+    /**
+     * El área de texto: motivos, notas, observaciones.
+     *
+     * Lo que se teclea va en mayúsculas desde el 11-oct-2026 (ver
+     * `TextoCanonico`). Guarda con `parrafoEnMayusculas()`: un motivo de
+     * tres renglones sigue teniendo tres renglones.
+     */
+    public static function area(string $name): Textarea
+    {
+        return Textarea::make($name)
+            ->extraInputAttributes(['style' => 'text-transform: uppercase'])
+            ->dehydrateStateUsing(
+                fn (?string $state): ?string => TextoCanonico::parrafoEnMayusculas($state)
             );
     }
 }

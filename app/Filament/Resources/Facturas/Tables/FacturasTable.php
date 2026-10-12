@@ -9,6 +9,7 @@ use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\EstadoFactura;
 use App\Domain\Enums\EstadoTurnoDeCaja;
 use App\Domain\Exceptions\SihlaException;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
 use App\Models\AbonoMedio;
 use App\Models\Cuenta;
@@ -18,7 +19,6 @@ use App\Services\EmisorDeFactura;
 use App\Support\UsuarioAutenticado;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
@@ -246,7 +246,7 @@ class FacturasTable
                     ->visible(fn (Factura $record): bool => $record->sePuedeAnular()
                         && Gate::allows('update', $record))
                     ->schema([
-                        Textarea::make('motivo')
+                        CampoMayusculas::area('motivo')
                             ->label('¿Por qué se anula?')
                             ->required()
                             ->minLength(10)

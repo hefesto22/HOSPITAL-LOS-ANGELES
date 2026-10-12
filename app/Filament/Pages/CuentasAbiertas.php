@@ -76,6 +76,7 @@ use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
 use App\Support\NumeroDeFormulario;
+use App\Support\TextoCanonico;
 use App\Support\UsuarioAutenticado;
 use BackedEnum;
 use Carbon\CarbonInterface;
@@ -86,7 +87,6 @@ use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\ToggleButtons;
@@ -697,16 +697,16 @@ class CuentasAbiertas extends Page
                                 .'como contado: cambiarla después no pierde ningún cargo.'
                             ),
 
-                        TextInput::make('numero_poliza')
+                        CampoMayusculas::make('numero_poliza')
                             ->label('Número de póliza')
                             ->maxLength(60),
 
-                        TextInput::make('numero_autorizacion')
+                        CampoMayusculas::make('numero_autorizacion')
                             ->label('Número de autorización')
                             ->maxLength(60)
                             ->helperText('Si el seguro ya la dio. Se puede cargar después.'),
 
-                        Textarea::make('motivo')
+                        CampoMayusculas::area('motivo')
                             ->label('Motivo de la atención')
                             ->maxLength(200)
                             ->columnSpanFull()
@@ -2485,7 +2485,7 @@ class CuentasAbiertas extends Page
                             ? QuienPresta::from($get('presta_tipo'))->ayuda()
                             : 'De quién salió lo que no había.'),
 
-                TextInput::make('presta_nombre')
+                CampoMayusculas::make('presta_nombre')
                     ->label('Nombre')
                     ->required()
                     ->minLength(3)
@@ -2515,7 +2515,7 @@ class CuentasAbiertas extends Page
                         'regex' => 'Escribí solo el número, con hasta dos decimales.',
                     ]),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué se pidió')
                     ->rows(2)
                     ->maxLength(255)
@@ -4080,7 +4080,7 @@ class CuentasAbiertas extends Page
                                  * la excepción más común —pide la factura a
                                  * su nombre— y la empresa se escribe encima.
                                  */
-                                TextInput::make('cliente_nombre')
+                                CampoMayusculas::make('cliente_nombre')
                                     ->label('Nombre')
                                     ->columnSpanFull()
                                     ->required()
@@ -4106,7 +4106,7 @@ class CuentasAbiertas extends Page
                                     )
                                     ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
 
-                                TextInput::make('cliente_direccion')
+                                CampoMayusculas::make('cliente_direccion')
                                     ->label('Dirección')
                                     ->columnSpanFull()
                                     ->maxLength(250)
@@ -4117,7 +4117,7 @@ class CuentasAbiertas extends Page
                                  * quien es. El «Código de Cliente» del papel es
                                  * el expediente y lo pone el sistema.
                                  */
-                                TextInput::make('poliza')
+                                CampoMayusculas::make('poliza')
                                     ->label('Póliza')
                                     ->maxLength(40)
                                     ->default(fn (): ?string => $this->cuentaFacturando()?->numero_poliza)
@@ -4130,7 +4130,7 @@ class CuentasAbiertas extends Page
                                     )
                                     ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
 
-                                TextInput::make('nota')
+                                CampoMayusculas::make('nota')
                                     ->label('Nota en la factura')
                                     ->placeholder('Opcional')
                                     ->columnSpan(fn (): array => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado
@@ -4308,7 +4308,7 @@ class CuentasAbiertas extends Page
                                                 ->content(fn (Get $get): HtmlString => $this->vueltoDe($get)),
                                         ]),
 
-                                    TextInput::make('entregado_por_factura')
+                                    CampoMayusculas::make('entregado_por_factura')
                                         ->label('Lo entrega, si no es el paciente')
                                         ->placeholder('Opcional')
                                         ->maxLength(120),
@@ -4756,14 +4756,14 @@ class CuentasAbiertas extends Page
                             ->native(false)
                             ->live(),
 
-                        TextInput::make('entregado_por')
+                        CampoMayusculas::make('entregado_por')
                             ->label('¿Quién?')
                             ->maxLength(120)
                             ->required()
                             ->placeholder('Nombre de quien deja el dinero')
                             ->visible(fn (Get $get): bool => $get('quien_entrega') === 'otro'),
 
-                        Textarea::make('nota')
+                        CampoMayusculas::area('nota')
                             ->label('Nota')
                             ->rows(2)
                             ->maxLength(300)
@@ -5009,7 +5009,7 @@ class CuentasAbiertas extends Page
                                 .'hospital cuenten casos que nunca existieron.'
                             ),
 
-                        Textarea::make('observacion')
+                        CampoMayusculas::area('observacion')
                             ->label('Observación')
                             ->rows(2)
                             ->maxLength(1000)
@@ -5418,11 +5418,15 @@ class CuentasAbiertas extends Page
             return;
         }
 
-        $motivo = is_string($this->motivoDeLaTanda) ? trim($this->motivoDeLaTanda) : '';
+        $motivo = TextoCanonico::parrafoEnMayusculas(
+            is_string($this->motivoDeLaTanda) ? $this->motivoDeLaTanda : null
+        ) ?? '';
 
         if (mb_strlen($motivo) < 10) {
             return;
         }
+
+        $this->motivoDeLaTanda = $motivo;
 
         $cuenta->forceFill([
             'descuento_hospital'        => $fraccion->redondeado(4),

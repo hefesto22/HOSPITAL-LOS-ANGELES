@@ -6,12 +6,12 @@ namespace App\Filament\Resources\Abonos\Tables;
 
 use App\Domain\Enums\EstadoAbono;
 use App\Domain\Exceptions\SihlaException;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
 use App\Models\TurnoDeCaja;
 use App\Services\ReceptorDeAbono;
 use App\Support\UsuarioAutenticado;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
@@ -119,7 +119,7 @@ class AbonosTable
                         && $record->turno->estaAbierto()
                         && Gate::allows('update', $record))
                     ->schema([
-                        Textarea::make('motivo')
+                        CampoMayusculas::area('motivo')
                             ->label('¿Por qué se anula?')
                             ->required()
                             ->minLength(10)

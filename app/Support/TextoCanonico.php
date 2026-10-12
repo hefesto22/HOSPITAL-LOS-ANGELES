@@ -35,13 +35,25 @@ namespace App\Support;
  *  ✗ **Unidades de dosis y concentración.** `mg` y `Mg` no son lo mismo,
  *    `mcg` no es `MCG` y `pH` no es `PH`. Pasar unidades a mayúsculas es
  *    una causa documentada de error de medicación.
- *  ✗ **Notas clínicas y texto libre.** Además de volverse ilegibles, son
- *    append-only (ADR-0004): si se guardan mal no se corrigen después.
  *  ✗ **Correos y contraseñas.** La parte local de un correo es sensible a
  *    mayúsculas del lado del servidor.
  *  ✗ **Códigos externos con formato ajeno** — CIE-10, LOINC, ATC, códigos
  *    de barras, UIDs de DICOM. Se guardan tal como los define quien los
  *    emite.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * Y LO QUE SE TECLEA TAMBIÉN (11-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Los motivos, las notas, los comentarios y las observaciones estuvieron
+ * en la lista de arriba hasta el 11-oct-2026, por «ilegibles». Mauricio:
+ * «que cuando escriba todo sea en mayúsculas». En la bitácora de una
+ * cuenta, «error al agregarlo» quedaba al lado de «ACETAMINOFEN 500 MG
+ * TABLETA», y se leía como dos sistemas pegados.
+ *
+ * Lo que los excluía era gusto, no seguridad. Las unidades sí son
+ * seguridad, y siguen afuera. Un área de texto va con
+ * `parrafoEnMayusculas()`, para no perder los renglones.
  */
 final class TextoCanonico
 {
@@ -57,6 +69,32 @@ final class TextoCanonico
         $limpio = self::limpio($texto);
 
         return $limpio === null ? null : mb_strtoupper($limpio, 'UTF-8');
+    }
+
+    /**
+     * Lo mismo que `mayusculas()`, pero respetando los renglones.
+     *
+     * Para lo que se escribe en un área de texto: un motivo largo, la nota
+     * del cierre de caja, la observación de un diagnóstico. `mayusculas()`
+     * colapsa todo espacio —saltos de línea incluidos— y una nota de tres
+     * renglones quedaría pegada en uno. Acá se limpia cada renglón por su
+     * lado, se quitan los vacíos de las puntas y nunca quedan dos
+     * renglones en blanco seguidos.
+     */
+    public static function parrafoEnMayusculas(?string $texto): ?string
+    {
+        if ($texto === null) {
+            return null;
+        }
+
+        $renglones = array_map(
+            static fn (string $renglon): string => trim((string) preg_replace('/[^\S\n]+/u', ' ', $renglon)),
+            explode("\n", str_replace(["\r\n", "\r"], "\n", $texto)),
+        );
+
+        $parrafo = trim((string) preg_replace("/\n{3,}/", "\n\n", implode("\n", $renglones)));
+
+        return $parrafo === '' ? null : mb_strtoupper($parrafo, 'UTF-8');
     }
 
     /**

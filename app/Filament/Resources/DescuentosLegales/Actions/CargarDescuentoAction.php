@@ -8,6 +8,7 @@ use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Exceptions\DescuentoNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\DescuentoLegal;
 use App\Services\FijadorDeDescuentoLegal;
 use App\Support\NumeroDeFormulario;
@@ -15,7 +16,6 @@ use Carbon\CarbonInterface;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
@@ -185,7 +185,7 @@ final class CargarDescuentoAction
                 ->label('Exige receta original')
                 ->helperText('Art. 34: para medicamentos, firmada y sellada.'),
 
-            Textarea::make('fundamento')
+            CampoMayusculas::area('fundamento')
                 ->label('De dónde sale')
                 ->required()
                 ->minLength(10)
@@ -197,7 +197,7 @@ final class CargarDescuentoAction
                     .'mostrar cuando llega una denuncia a la línea 115.'
                 ),
 
-            Textarea::make('nota')
+            CampoMayusculas::area('nota')
                 ->label('Nota')
                 ->rows(2)
                 ->columnSpanFull()

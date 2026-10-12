@@ -14,6 +14,7 @@ use App\Models\Cuenta;
 use App\Models\Sede;
 use App\Models\TurnoDeCaja;
 use App\Models\User;
+use App\Support\TextoCanonico;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -121,8 +122,8 @@ final class ReceptorDeAbono
                 'fecha_operacion' => $bloqueado->fecha_operacion->toDateString(),
                 'recibido_por'    => $quienRecibe->id,
 
-                'entregado_por' => $entregadoPor === null || trim($entregadoPor) === '' ? null : trim($entregadoPor),
-                'nota'          => $nota === null || trim($nota) === '' ? null : trim($nota),
+                'entregado_por' => TextoCanonico::mayusculas($entregadoPor),
+                'nota'          => TextoCanonico::parrafoEnMayusculas($nota),
             ]);
 
             $suma = Decimal::cero();
@@ -154,7 +155,9 @@ final class ReceptorDeAbono
      */
     public function anular(Abono $abono, string $motivo, ?int $quien = null): Abono
     {
-        if (mb_strlen(trim($motivo)) < 10) {
+        $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
+
+        if (mb_strlen($motivo) < 10) {
             throw CajaException::faltaElMotivo();
         }
 
@@ -180,7 +183,7 @@ final class ReceptorDeAbono
                 'estado'           => EstadoAbono::Anulado->value,
                 'anulado_en'       => now(),
                 'anulado_por'      => $quien,
-                'motivo_anulacion' => trim($motivo),
+                'motivo_anulacion' => $motivo,
             ]);
 
             return $bloqueado->refresh();

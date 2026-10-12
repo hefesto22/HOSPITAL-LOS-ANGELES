@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Presupuestos\RelationManagers;
 use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\OrigenLineaPresupuesto;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Presupuesto;
@@ -360,7 +361,7 @@ class RenglonesRelationManager extends RelationManager
                 'Para lo que no tiene precio de tarifario: el honorario que el cirujano acordó, algo que no está en el catálogo.'
             )
             ->schema([
-                TextInput::make('texto')
+                CampoMayusculas::make('texto')
                     ->label('Concepto')
                     ->required()
                     ->maxLength(200)

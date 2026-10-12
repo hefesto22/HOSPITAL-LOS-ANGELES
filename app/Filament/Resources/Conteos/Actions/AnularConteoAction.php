@@ -6,10 +6,10 @@ namespace App\Filament\Resources\Conteos\Actions;
 
 use App\Domain\Exceptions\AjusteException;
 use App\Domain\Exceptions\ConteoException;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Conteo;
 use App\Services\CerradorDeConteo;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Gate;
@@ -45,7 +45,7 @@ final class AnularConteoAction
             ->modalSubmitActionLabel('Anular')
             ->visible(fn (Conteo $record): bool => self::puedeVerse($record))
             ->schema([
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('¿Por qué se anula?')
                     ->required()
                     ->minLength(10)

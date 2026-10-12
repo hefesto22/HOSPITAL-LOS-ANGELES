@@ -12,7 +12,6 @@ use App\Models\Encuentro;
 use App\Models\Expediente;
 use App\Models\PlantillaPresupuesto;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
@@ -188,7 +187,7 @@ class PresupuestoForm
                         ->maxLength(150)
                         ->helperText('Lo que va a decir el papel: APENDICECTOMIA.'),
 
-                    Textarea::make('notas')
+                    CampoMayusculas::area('notas')
                         ->label('Notas')
                         ->maxLength(500)
                         ->rows(2)

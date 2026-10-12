@@ -6,6 +6,7 @@ namespace App\Domain\ValueObjects;
 
 use App\Domain\Enums\TipoIdentificador;
 use App\Domain\Exceptions\FacturaException;
+use App\Support\TextoCanonico;
 
 /**
  * A nombre de quién sale la factura, y con qué documento.
@@ -110,10 +111,10 @@ final readonly class ClienteDeFactura
     public function paraGuardar(): array
     {
         return [
-            'cliente_nombre'         => trim($this->nombre),
+            'cliente_nombre'         => TextoCanonico::mayusculas($this->nombre),
             'cliente_documento'      => $this->tieneDocumento() ? trim((string) $this->documento) : null,
             'cliente_documento_tipo' => $this->tieneDocumento() ? $this->tipoDocumento?->value : null,
-            'cliente_direccion'      => self::limpio($this->direccion),
+            'cliente_direccion'      => TextoCanonico::mayusculas($this->direccion),
             'cliente_telefono'       => self::limpio($this->telefono),
 
             'cliente_codigo'               => self::limpio($this->codigo),

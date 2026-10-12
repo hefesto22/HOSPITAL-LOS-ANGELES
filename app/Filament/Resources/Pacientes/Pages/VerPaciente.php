@@ -12,6 +12,7 @@ use App\Domain\Exceptions\ValueObjectInvalidoException;
 use App\Domain\ValueObjects\Coincidencia;
 use App\Domain\ValueObjects\DocumentoDeIdentidad;
 use App\Filament\Resources\Pacientes\PacienteResource;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Persona;
 use App\Models\PersonaIdentificador;
 use App\Services\AgregadorDeDocumentos;
@@ -20,7 +21,6 @@ use App\Support\BitacoraDeLectura;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
@@ -138,7 +138,7 @@ class VerPaciente extends ViewRecord
                     ->live()
                     ->helperText('Marcalo solo si verificaste que de verdad son dos personas distintas.'),
 
-                TextInput::make('conflicto_nota')
+                CampoMayusculas::make('conflicto_nota')
                     ->label('Explicá el conflicto')
                     ->maxLength(255)
                     ->visible(fn (callable $get): bool => (bool) $get('en_conflicto'))
@@ -239,7 +239,7 @@ class VerPaciente extends ViewRecord
                         ->first()?->nombreParaListado())
                     ->helperText('El otro queda apuntando a este. Es reversible.'),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Por qué son la misma persona')
                     ->placeholder('Mismo DNI y misma fecha de nacimiento; el registro de ayer se creó por error de admisión.')
                     ->required()

@@ -10,6 +10,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Filament\Resources\Conteos\Actions\AnularConteoAction;
 use App\Filament\Resources\Conteos\Actions\CerrarConteoAction;
 use App\Filament\Resources\Conteos\ConteoResource;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Conteo;
 use App\Models\ConteoLinea;
 use App\Models\Existencia;
@@ -197,7 +198,7 @@ class ContarConteo extends Page implements HasTable
                             ->step('0.0001')
                             ->helperText('Cero es válido: el estante vacío es un dato.'),
 
-                        TextInput::make('notas')
+                        CampoMayusculas::make('notas')
                             ->label('Nota')
                             ->maxLength(200)
                             ->columnSpanFull()

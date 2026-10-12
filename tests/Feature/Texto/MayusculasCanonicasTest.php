@@ -69,7 +69,7 @@ it('no toca la nota de identificacion del NN', function (): void {
     ]);
 
     expect($persona->nota_identificacion)->toBe('Varón, ~40 años, tatuaje en antebrazo derecho.');
-})->note('Es texto libre descriptivo: en mayúsculas se vuelve ilegible, igual que una nota clínica.');
+})->note('El modelo no la fuerza: un import del padrón la guarda como viene. La que se escribe en la ficha sí sale en mayúsculas desde el 11-oct-2026 (CampoMayusculas::area).');
 
 /*
 |--------------------------------------------------------------------------

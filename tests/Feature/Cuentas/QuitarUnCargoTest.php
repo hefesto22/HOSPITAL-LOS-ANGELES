@@ -142,7 +142,7 @@ it('la bitacora dice quien quito y por que', function (): void {
         ->firstOrFail();
 
     expect($reversa->created_by)->toBe($quienQuita->id);
-    expect($reversa->motivo_anulacion)->toBe('El paciente pidió traslado y no se le administró.');
+    expect($reversa->motivo_anulacion)->toBe('EL PACIENTE PIDIÓ TRASLADO Y NO SE LE ADMINISTRÓ.');
     expect($cargo->refresh()->created_by)->toBe($quienCarga->id);
 })->note('Los dos nombres, no uno. Sin quién cargó, el cambio de turno no puede preguntar; sin quién quitó y por qué, no puede responder.');
 

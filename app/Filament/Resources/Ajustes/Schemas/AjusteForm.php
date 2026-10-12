@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Ajustes\Schemas;
 
 use App\Domain\Enums\MotivoDeAjuste;
 use App\Domain\Enums\TipoDeAjuste;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
@@ -17,7 +18,6 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
@@ -108,7 +108,7 @@ final class AjusteForm
                         .'filtran por esta fecha, no por la de captura.'
                     ),
 
-                Textarea::make('motivo')
+                CampoMayusculas::area('motivo')
                     ->label('Contá qué pasó')
                     ->required()
                     ->minLength(10)
@@ -120,7 +120,7 @@ final class AjusteForm
                         .'esto dice el caso, y es lo único que va a quedar para entenderlo.'
                     ),
 
-                TextInput::make('referencia')
+                CampoMayusculas::make('referencia')
                     ->label('Referencia')
                     ->maxLength(120)
                     ->columnSpanFull()
@@ -219,7 +219,7 @@ final class AjusteForm
                 ->columnSpan(2)
                 ->helperText('Siempre en positivo: el signo lo pone el motivo.'),
 
-            TextInput::make('texto')
+            CampoMayusculas::make('texto')
                 ->label('Detalle de esta línea')
                 ->maxLength(200)
                 ->columnSpan(2)

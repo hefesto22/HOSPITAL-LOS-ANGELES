@@ -9,7 +9,6 @@ use App\Models\PrincipioActivo;
 use App\Support\CodigoDeBarras;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Placeholder;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
 use Illuminate\Support\HtmlString;
@@ -87,7 +86,7 @@ final class PrincipioActivoForm
                     ->afterOrEqual('vigencia_desde')
                     ->helperText('Dejar vacío mientras se siga usando. Acá no se borra: se retira con fecha.'),
 
-                Textarea::make('notas')
+                CampoMayusculas::area('notas')
                     ->label('Notas')
                     ->rows(2)
                     ->columnSpanFull(),

@@ -13,7 +13,6 @@ use App\Services\CopiadorDeBaseDePrecios;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Group;
@@ -259,7 +258,7 @@ final class ConvenioForm
                         ->all())
                     ->required(),
 
-                Textarea::make('fundamento_descuento')
+                CampoMayusculas::area('fundamento_descuento')
                     ->label('Con qué criterio se decidió')
                     ->required()
                     ->minLength(10)
@@ -322,7 +321,7 @@ final class ConvenioForm
             ->schema([
                 RTNField::make(),
 
-                TextInput::make('contacto')
+                CampoMayusculas::make('contacto')
                     ->label('Persona de contacto')
                     ->maxLength(120)
                     ->helperText('Se guarda tal cual se escribe: un nombre en mayúsculas se lee como un grito.'),
@@ -380,7 +379,7 @@ final class ConvenioForm
                     ->afterOrEqual('vigencia_desde')
                     ->placeholder('Sin fecha de fin'),
 
-                Textarea::make('notas')
+                CampoMayusculas::area('notas')
                     ->label('Notas')
                     ->rows(3)
                     ->columnSpanFull()

@@ -619,7 +619,7 @@ final class ItemForm
      */
     private static function campoDescripcion(AmbitoCatalogo $ambito): Textarea
     {
-        $campo = Textarea::make('descripcion')
+        $campo = CampoMayusculas::area('descripcion')
             ->columnSpanFull();
 
         return $ambito === AmbitoCatalogo::Productos

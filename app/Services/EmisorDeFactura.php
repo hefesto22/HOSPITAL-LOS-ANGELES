@@ -26,6 +26,7 @@ use App\Models\Persona;
 use App\Models\PersonaIdentificador;
 use App\Models\RangoCai;
 use App\Models\User;
+use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\Facades\DB;
@@ -243,8 +244,8 @@ final class EmisorDeFactura
                 'lineas'               => $renglones['cobrables'],
                 'paquetes_desglosados' => $renglones['hubo'],
 
-                'nota'        => $nota === null || trim($nota) === '' ? null : trim($nota),
-                'comentarios' => $nota === null || trim($nota) === '' ? null : trim($nota),
+                'nota'        => TextoCanonico::parrafoEnMayusculas($nota),
+                'comentarios' => TextoCanonico::parrafoEnMayusculas($nota),
             ], $cliente->paraGuardar()));
 
             $orden = 1;
@@ -332,7 +333,9 @@ final class EmisorDeFactura
      */
     public function anular(Factura $factura, string $motivo, ?int $quien = null, array $recibosDevueltos = []): Factura
     {
-        if (mb_strlen(trim($motivo)) < 10) {
+        $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
+
+        if (mb_strlen($motivo) < 10) {
             throw FacturaException::faltaElMotivo();
         }
 
@@ -380,7 +383,7 @@ final class EmisorDeFactura
                 'estado'           => EstadoFactura::Anulada->value,
                 'anulada_en'       => now(),
                 'anulada_por'      => $quien,
-                'motivo_anulacion' => trim($motivo),
+                'motivo_anulacion' => $motivo,
             ]);
 
             $this->devolverLaCuentaAComoEstaba($bloqueada);
@@ -1025,9 +1028,9 @@ final class EmisorDeFactura
      */
     private function polizaDe(Cuenta $cuenta, ?string $escrita): ?string
     {
-        $poliza = trim((string) ($escrita ?? $cuenta->numero_poliza));
+        $poliza = TextoCanonico::mayusculas($escrita ?? $cuenta->numero_poliza);
 
-        return $poliza === '' ? null : mb_substr($poliza, 0, 40);
+        return $poliza === null ? null : mb_substr($poliza, 0, 40);
     }
 
     /**

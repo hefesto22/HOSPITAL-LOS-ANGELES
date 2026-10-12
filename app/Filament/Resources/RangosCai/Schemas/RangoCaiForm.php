@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace App\Filament\Resources\RangosCai\Schemas;
 
 use App\Domain\Enums\TipoDocumentoDeVenta;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\RangoCai;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
@@ -126,7 +126,7 @@ class RangoCaiForm
                         ->label('N.º de resolución')
                         ->maxLength(60),
 
-                    Textarea::make('nota')
+                    CampoMayusculas::area('nota')
                         ->label('Nota')
                         ->rows(2)
                         ->maxLength(300)

@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Conteos\Schemas;
 
 use App\Domain\Enums\AlcanceDeConteo;
+use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
 use App\Services\AbridorDeConteo;
 use App\Support\AlmacenesDelUsuario;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -66,7 +66,7 @@ final class ConteoForm
                         ->default(AlcanceDeConteo::Parcial->value)
                         ->required(),
 
-                    TextInput::make('descripcion')
+                    CampoMayusculas::make('descripcion')
                         ->label('¿Por qué se cuenta?')
                         ->maxLength(160)
                         ->placeholder('Conteo cíclico de antibióticos · agosto')
@@ -88,7 +88,7 @@ final class ConteoForm
                             .'correcto para controlados e implantes. Para gasas, subilo.'
                         ),
 
-                    Textarea::make('notas')
+                    CampoMayusculas::area('notas')
                         ->label('Notas')
                         ->rows(2)
                         ->columnSpanFull(),

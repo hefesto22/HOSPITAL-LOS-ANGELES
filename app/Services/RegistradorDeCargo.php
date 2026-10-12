@@ -24,6 +24,7 @@ use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use App\Models\Persona;
+use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -369,7 +370,7 @@ final class RegistradorDeCargo
             'cantidad'              => $cantidad->redondeado(4),
             'texto'                 => $linea->textoDelCargo ?? $this->textoCongelado($item->nombre, $lote),
             'convenio_id'           => $convenio->id,
-            'motivo_descuento'      => $llevaDescuento ? $linea->motivoDescuento : null,
+            'motivo_descuento'      => $llevaDescuento ? TextoCanonico::parrafoEnMayusculas($linea->motivoDescuento) : null,
             'autorizado_por'        => $llevaDescuento ? $linea->autorizadoPor : null,
             'costo_unitario'        => $costoUnitario?->redondeado(6),
             'costo_total'           => $costoUnitario === null
