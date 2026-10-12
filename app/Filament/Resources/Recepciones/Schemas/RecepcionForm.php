@@ -14,18 +14,22 @@ use App\Models\Proveedor;
 use App\Models\Unidad;
 use App\Services\AvisoDeLoQueSeDebe;
 use Closure;
+use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Size;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as ColeccionDeModelos;
 use Illuminate\Support\HtmlString;
@@ -63,10 +67,10 @@ use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
  * matriz de permisos ya le niega Compras— y el precio de farmacia ya no
  * sale del costo: se escribe como precio mínimo del envase.
  *
- * Cada línea es UN renglón: qué llegó, cuántas, lote y vence. Al lado de
- * «¿Cuántas?» se lee lo que va a entrar al kardex —«= 200 TAB»—, que es lo
- * que hace notar ANTES de guardar que se eligió el envase equivocado.
- * Después de guardar, el kardex ya se movió.
+ * Las líneas son una TABLA: qué llegó, cuántas, lo que entra, lote y
+ * vence. La columna «Entran» dice lo que va a entrar al kardex —«200
+ * TAB»—, que es lo que hace notar ANTES de guardar que se eligió el envase
+ * equivocado. Después de guardar, el kardex ya se movió.
  *
  * Desaparecieron «Costo por caja», «Trae» y «Entra al kardex». El
  * contenido del envase lo pone la presentación; si el laboratorio cambió
@@ -75,12 +79,24 @@ use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 final class RecepcionForm
 {
     /**
-     * Lo que se debe de cada producto, respondido una sola vez por
-     * request. Ver `loQueSeDebeDeLaLinea()`.
+     * Lo que se debe de los productos de la recepción, respondido una
+     * sola vez por request y por juego de productos. Ver `loQueSeDebe()`.
      *
-     * @var array<int, string|null>
+     * @var array<string, string|null>
      */
-    private static array $deudaPorItem = [];
+    private static array $deudaPorProductos = [];
+
+    /**
+     * Lo que encontró cada nombre buscado, respondido una sola vez por
+     * request: cada botón de resultado pregunta su rótulo y si se ve, y
+     * sin esto eran dos búsquedas al catálogo por botón.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private static array $encontradosPorTexto = [];
+
+    /** Cuántos botones de resultado se ofrecen debajo del buscador. */
+    private const RESULTADOS_A_LA_VISTA = 8;
 
     public static function configure(Schema $schema): Schema
     {
@@ -237,7 +253,7 @@ final class RecepcionForm
             ->columnSpanFull()
             ->schema([
                 BarcodeInput::make('escaneo')
-                    ->label('Escaneá el código de barras')
+                    ->label('Escaneá el código o escribí el nombre')
                     ->columnSpanFull()
                     ->dehydrated(false)
                     /*
@@ -270,13 +286,90 @@ final class RecepcionForm
                         'x-on:keydown.enter.prevent' => '$wire.set('.Js::from($component->getStatePath()).', $event.target.value)',
                     ])
                     ->autofocus()
-                    ->placeholder('Disparale a la caja, o escribí el código y apretá Enter')
-                    ->helperText('Con la pistola o la cámara: cada lectura agrega una línea.')
+                    ->placeholder('Disparale a la caja, o escribí el nombre y apretá Enter')
+                    ->helperText('Con la pistola o la cámara cada lectura agrega una línea. Por nombre, elegí abajo cuál.')
                     ->afterStateUpdated(fn (mixed $state, Get $get, Set $set) => self::agregarLoEscaneado($state, $get, $set)),
 
+                /*
+                 * Lo que se buscó por nombre, para pintar los botones de
+                 * abajo. De pantalla: no se guarda.
+                 */
+                Hidden::make('busqueda')->dehydrated(false),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * POR NOMBRE: UN BOTÓN POR PRODUCTO, DEBAJO DEL CAMPO
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Mauricio (11-oct-2026): «si la busco por nombre no la
+                 * encuentra para agregarla». El campo solo entendía
+                 * códigos. Ahora, si lo escrito no es el código de nada,
+                 * se busca por nombre: con uno solo se agrega directo, con
+                 * varios aparecen acá para tocar el que es — igual que en
+                 * el cobro de Cuentas abiertas.
+                 *
+                 * ⚠️ Casilleros fijos y no una lista armada con lo
+                 * escrito: Filament guarda en memoria los hijos de un
+                 * componente durante la petición, y una lista que cambia
+                 * se pintaría con los resultados de la búsqueda anterior
+                 * (§9.M-7).
+                 */
+                Actions::make(self::botonesDeLaBusqueda())
+                    ->key('resultados_de_la_busqueda')
+                    ->columnSpanFull(),
+
                 Repeater::make('lineas')
-                    ->label('')
+                    ->hiddenLabel()
                     ->addActionLabel('Agregar a mano')
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 UNA TABLA: LOS TÍTULOS UNA VEZ, UNA FILA POR CAJA
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Mauricio (11-oct-2026): «que sea más fácil y rápido
+                     * registrar». Cada línea era una tarjeta con su
+                     * encabezado —que repetía el nombre que ya decía el
+                     * desplegable— y los cuatro títulos de los campos
+                     * repetidos en cada una. Veinte cajas eran veinte
+                     * tarjetas. En tabla, los títulos van una sola vez
+                     * arriba y cada caja es un renglón.
+                     *
+                     * ⚠️ Las columnas van en el MISMO orden que los campos
+                     * visibles de `camposDeLaLinea()`: la tabla las empareja
+                     * por posición, no por nombre, y los `Hidden` no
+                     * cuentan. Un campo de más se queda sin columna y no se
+                     * dibuja.
+                     */
+                    ->table([
+                        TableColumn::make('¿Qué llegó?')->width('42%')->markAsRequired(),
+                        TableColumn::make('¿Cuántas?')->width('15%')->markAsRequired(),
+                        TableColumn::make('Entran')->width('11%'),
+                        TableColumn::make('Lote')->width('16%'),
+                        TableColumn::make('Vence el')->width('16%'),
+                    ])
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * OTRO LOTE DE LO MISMO, A UN CLIC
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Regla de Mauricio: la misma caja puede venir dos
+                     * veces «siempre y cuando el lote y la fecha de
+                     * vencimiento no sean los mismos». Es lo normal: el
+                     * proveedor manda dos producciones del mismo
+                     * producto. El botón repite la fila con lo mismo
+                     * elegido y el lote y el vencimiento VACÍOS: copiarlos
+                     * obligaría a borrarlos, y olvidarse de borrarlos es
+                     * justo el duplicado que se rechaza al guardar.
+                     */
+                    ->extraItemActions([
+                        Action::make('otro_lote')
+                            ->icon('heroicon-m-square-2-stack')
+                            ->color('gray')
+                            ->tooltip('Otro lote de lo mismo')
+                            ->action(function (array $arguments, Get $get, Set $set): void {
+                                self::otroLoteDe($arguments['item'] ?? null, $get, $set);
+                            }),
+                    ])
 
                     /*
                      * ─────────────────────────────────────────────────
@@ -298,6 +391,11 @@ final class RecepcionForm
                      * lote también son duplicado: sin número no hay con
                      * qué distinguirlas.
                      *
+                     * El mismo lote con OTRA fecha tampoco pasa, pero lo
+                     * frena el registrador y no esta regla: un lote tiene
+                     * un solo vencimiento, impreso en la caja, así que dos
+                     * fechas para el mismo número son un error de tipeo.
+                     *
                      * ⚠️ Al guardar y no mientras se teclea: el lote se
                      * escribe DESPUÉS de elegir la caja, así que avisar
                      * en el momento pintaría de rojo cada línea a medio
@@ -307,16 +405,41 @@ final class RecepcionForm
                     ->reorderable(false)
                     ->defaultItems(0)
                     ->columnSpanFull()
-                    /*
-                     * Doce columnas y UN renglón por línea: qué llegó
-                     * (seis), cuántas, lote y vence (dos cada uno). Antes
-                     * eran dos renglones con costo, contenido y una cuenta
-                     * en el medio, y una recepción de veinte líneas no
-                     * cabía en tres pantallas.
-                     */
-                    ->columns(12)
-                    ->itemLabel(fn (array $state): ?string => self::etiquetaDeLinea($state))
                     ->schema(self::camposDeLaLinea()),
+
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 SI DE ESTO SE LE DEBE A ALGUIEN, SE DICE ACÁ
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Regla de Mauricio: «cuando a nosotros nos entre de ese
+                 * medicamento a bodega o farmacia, que aparezca que hay
+                 * que devolverle x cantidad a x empresa o persona».
+                 *
+                 * Un préstamo se pide un martes a las once de la noche
+                 * porque no había, y solo se puede devolver el día que
+                 * llega la compra. La pantalla de Préstamos sirve para
+                 * consultar, pero nadie la abre por las mañanas: este
+                 * aviso, con la caja en la mano, es el momento.
+                 *
+                 * Va UNA vez debajo de la tabla, por todos los productos
+                 * de la recepción, y no dentro de cada fila: en una tabla
+                 * no hay renglón a lo ancho, y el aviso dentro de una
+                 * celda angosta no se leería. Se repite en la
+                 * confirmación y después de guardar (`CreateRecepcion`).
+                 */
+                Placeholder::make('se_debe')
+                    ->hiddenLabel()
+                    ->visible(fn (Get $get): bool => self::loQueSeDebe($get) !== null)
+                    ->content(fn (Get $get): HtmlString => new HtmlString(
+                        '<div style="border-left:3px solid rgb(217 119 6);padding:0.5rem 0.75rem;'
+                        .'background:rgb(254 243 199 / 0.45);border-radius:0.25rem;font-size:0.8125rem;'
+                        .'line-height:1.35;">'
+                        .'<strong>Prestado.</strong> '
+                        .e((string) self::loQueSeDebe($get))
+                        .' Devolvelo desde Préstamos cuando esta recepción quede guardada.'
+                        .'</div>'
+                    )),
 
                 Placeholder::make('resumen')
                     ->hiddenLabel()
@@ -357,8 +480,7 @@ final class RecepcionForm
              * de verdad se guardan viajan en los `Hidden` de abajo.
              */
             Select::make('que_llego')
-                ->label('¿Qué llegó?')
-                ->columnSpan(6)
+                ->hiddenLabel()
                 ->required()
                 ->searchable()
                 ->native(false)
@@ -406,27 +528,32 @@ final class RecepcionForm
             Hidden::make('acotado_a')->dehydrated(false),
 
             TextInput::make('cantidad_presentacion')
-                ->label('¿Cuántas?')
+                ->hiddenLabel()
                 ->numeric()
                 ->required()
                 ->minValue(0.0001)
                 ->default('1')
-                ->columnSpan(2)
                 ->live(onBlur: true)
                 /*
                  * 🔴 En qué se cuenta, pegado al número —«CAJA», «FRASCO»,
-                 * «TAB» si llegó suelto— y arriba lo que eso pone en el
-                 * kardex. «2» escrito en una caja de cien y «2» escrito
+                 * «TAB» si llegó suelto— y en la columna de al lado lo que
+                 * eso pone en el kardex. «2» escrito en una caja de cien y «2» escrito
                  * en tabletas son el mismo carácter y son 198 tabletas de
                  * diferencia en el estante.
                  */
-                ->suffix(fn (Get $get): ?string => self::textoONulo($get('se_cuenta_en')))
-                ->hint(fn (Get $get): ?string => self::loQueEntra($get)),
+                ->suffix(fn (Get $get): ?string => self::textoONulo($get('se_cuenta_en'))),
+
+            Placeholder::make('entran')
+                ->hiddenLabel()
+                ->content(fn (Get $get): HtmlString => new HtmlString(
+                    '<span style="font-size:.875rem;white-space:nowrap">'
+                    .e(self::loQueEntra($get) ?? '—')
+                    .'</span>'
+                )),
 
             TextInput::make('numero_lote')
-                ->label('Lote')
+                ->hiddenLabel()
                 ->maxLength(60)
-                ->columnSpan(2)
                 /*
                  * ⚠️ El lote se canoniza a MAYÚSCULAS en tres lugares y
                  * los tres hacen falta.
@@ -458,53 +585,16 @@ final class RecepcionForm
                  */
                 ->required(fn (Get $get): bool => $get('pide_lote') === true),
 
-            DatePicker::make('fecha_vencimiento')
-                ->label('Vence el')
-                ->native(false)
-                ->displayFormat('d/m/Y')
-                ->placeholder('dd/mm/aaaa')
-                ->columnSpan(2)
-                ->requiredWith('numero_lote'),
-
             /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 SI DE ESTO SE LE DEBE A ALGUIEN, SE DICE ACÁ
-             * ─────────────────────────────────────────────────────────
-             *
-             * Regla de Mauricio: «cuando a nosotros nos entre de ese
-             * medicamento a bodega o farmacia, que aparezca que hay que
-             * devolverle x cantidad a x empresa o persona».
-             *
-             * Un préstamo de medicamento se pide un martes a las once de
-             * la noche porque no había, y solo se puede devolver el día
-             * que llega la compra. Entre esos dos momentos no hay nada
-             * que hacer, así que la pantalla de «lo que se debe» sirve
-             * para consultar pero no es donde la deuda se salda: nadie la
-             * abre por las mañanas.
-             *
-             * Este renglón es el momento. La caja está entrando, el
-             * producto está en la mano, y el aviso convierte un
-             * recordatorio en un acto. Un mes después esas 20 tabletas ya
-             * se despacharon y la deuda se paga en efectivo, más caro.
-             *
-             * Va justo debajo del renglón y a lo ancho: desde el
-             * 11-oct-2026 la línea entera es un solo renglón, así que el
-             * aviso queda pegado a lo que se acaba de elegir y se lee
-             * antes de pasar a la caja siguiente.
+             * ⚠️ El selector NATIVO del navegador, y es por velocidad: la
+             * fecha se copia de la caja, y en el nativo se teclea de un
+             * saque —30, 06, 2027—. En el calendario de Filament había
+             * que ir mes por mes hasta un vencimiento que suele estar a
+             * dos o tres años.
              */
-            Placeholder::make('se_debe')
+            DatePicker::make('fecha_vencimiento')
                 ->hiddenLabel()
-                ->columnSpanFull()
-                ->visible(fn (Get $get): bool => self::loQueSeDebeDeLaLinea($get) !== null)
-                ->content(fn (Get $get): HtmlString => new HtmlString(
-                    '<div style="border-left:3px solid rgb(217 119 6);padding:0.5rem 0.75rem;'
-                    .'background:rgb(254 243 199 / 0.45);border-radius:0.25rem;font-size:0.8125rem;'
-                    .'line-height:1.35;">'
-                    .'<strong>Prestado.</strong> '
-                    .e((string) self::loQueSeDebeDeLaLinea($get))
-                    .' Devolvelo desde Préstamos cuando esta recepción quede guardada.'
-                    .'</div>'
-                )),
+                ->requiredWith('numero_lote'),
         ];
     }
 
@@ -525,7 +615,7 @@ final class RecepcionForm
     /**
      * Lo que pasa por el lector, y las TRES cosas que puede ser.
      *
-     * El campo se limpia siempre —haya encontrado o no— para que el
+     * El campo se limpia cuando lo leído se resolvió, para que el
      * siguiente escaneo entre sin borrar a mano. Con la pistola eso es la
      * diferencia entre recibir un camión en dos minutos o en veinte.
      *
@@ -550,18 +640,25 @@ final class RecepcionForm
      * cargos: **uno solo no es una elección.** Si de lo escaneado sale
      * una única presentación posible, se pone, porque abrir un
      * desplegable de un renglón es un clic que no decide nada.
+     *
+     * Y si no es ninguna de las tres, es un NOMBRE escrito a mano
+     * (11-oct-2026): ver `buscarPorNombre()`.
+     *
+     * ⚠️ El campo se limpia solo cuando lo leído se resolvió. Un nombre
+     * con varios resultados se queda escrito, para poder afinarlo.
      */
     private static function agregarLoEscaneado(mixed $state, Get $get, Set $set): void
     {
         $codigo = trim(is_string($state) ? $state : '');
 
+        $set('busqueda', null);
+
         if ($codigo === '') {
             return;
         }
 
-        $set('escaneo', null);
-
         if (str_starts_with(mb_strtoupper($codigo), PrincipioActivo::PREFIJO)) {
+            $set('escaneo', null);
             self::escaneoDeGaveta($codigo, $get, $set);
 
             return;
@@ -570,6 +667,7 @@ final class RecepcionForm
         $presentacion = ItemPresentacion::query()->where('codigo_barras', $codigo)->first();
 
         if ($presentacion instanceof ItemPresentacion) {
+            $set('escaneo', null);
             self::abrirLinea($get, $set, presentacion: $presentacion);
 
             Notification::make()
@@ -581,7 +679,21 @@ final class RecepcionForm
             return;
         }
 
-        self::escaneoDeProducto($codigo, $get, $set);
+        /*
+         * El código del producto —el de la caja del fabricante, que
+         * heredan sus envases— o el interno. Dice QUÉ llegó, no en qué
+         * envase: eso se elige en la línea.
+         */
+        $item = Item::porCodigo($codigo);
+
+        if ($item instanceof Item) {
+            $set('escaneo', null);
+            self::abrirLineaDelProducto($item, $get, $set);
+
+            return;
+        }
+
+        self::buscarPorNombre($codigo, $get, $set);
     }
 
     /**
@@ -640,36 +752,16 @@ final class RecepcionForm
     }
 
     /**
-     * La etiqueta del hospital: el PRODUCTO, sin decir en qué envase.
+     * El PRODUCTO, sin decir en qué envase: lo que dicen el código de la
+     * caja, la etiqueta del hospital y el nombre elegido de la lista.
      *
-     * Los dos avisos vuelven a ser distintos: el código que no existe en
-     * ningún lado, y el producto que existe pero todavía no tiene en qué
-     * envase viene. El segundo se soluciona en veinte segundos y no hay
-     * que confundirlo con el primero.
+     * La línea queda acotada a sus envases y el envase lo elige quien
+     * recibe —salvo que haya uno solo posible—. Un producto que no se
+     * almacena se avisa aparte: no es un error de código, es que no hay
+     * nada que poner en un estante.
      */
-    private static function escaneoDeProducto(string $codigo, Get $get, Set $set): void
+    private static function abrirLineaDelProducto(Item $item, Get $get, Set $set): void
     {
-        /*
-         * El código del producto —el de la caja del fabricante, que
-         * heredan sus envases— o el interno. Dice QUÉ llegó, no en qué
-         * envase: eso se elige en la línea.
-         */
-        $item = Item::porCodigo($codigo);
-
-        if (! $item instanceof Item) {
-            Notification::make()
-                ->warning()
-                ->title('Ese código no está en el catálogo')
-                ->body(
-                    'Ningún producto lo tiene. Revisá que sea el correcto, o cargáselo al producto '
-                    .'en su ficha, en Identificación.'
-                )
-                ->persistent()
-                ->send();
-
-            return;
-        }
-
         if (! $item->se_almacena) {
             Notification::make()
                 ->warning()
@@ -691,6 +783,127 @@ final class RecepcionForm
             ->title($item->nombre)
             ->body('Elegí en «¿Qué llegó?» en qué envase vino.')
             ->send();
+    }
+
+    /**
+     * Lo escrito no era el código de nada: se busca por nombre.
+     *
+     *   · Un producto  → se agrega la línea directo.
+     *   · Varios       → aparecen como botones debajo del campo, y lo
+     *                    escrito se queda para poder afinarlo.
+     *   · Ninguno      → se dice, y depende de qué parecía:
+     *
+     * ⚠️ Lo que tiene números y no tiene espacios se lee como un CÓDIGO
+     * que no existe —lo más común es la pistola leyendo una caja que no
+     * está cargada— y el campo se limpia para que la caja siguiente entre
+     * limpia. Un nombre mal escrito, en cambio, se deja para corregirlo:
+     * borrarlo es obligar a escribirlo de nuevo entero.
+     */
+    private static function buscarPorNombre(string $texto, Get $get, Set $set): void
+    {
+        $encontrados = mb_strlen($texto) >= 3 ? self::buscarEnElCatalogo($texto) : [];
+
+        if (count($encontrados) === 1) {
+            $item = Item::query()->find((int) array_key_first($encontrados));
+
+            if ($item instanceof Item) {
+                $set('escaneo', null);
+                self::abrirLineaDelProducto($item, $get, $set);
+
+                return;
+            }
+        }
+
+        if ($encontrados !== []) {
+            $set('busqueda', $texto);
+
+            return;
+        }
+
+        $pareceCodigo = preg_match('/\d/', $texto) === 1 && ! str_contains($texto, ' ');
+
+        if ($pareceCodigo) {
+            $set('escaneo', null);
+        }
+
+        Notification::make()
+            ->warning()
+            ->title($pareceCodigo ? 'Ese código no está en el catálogo' : 'No hay nada con «'.$texto.'»')
+            ->body($pareceCodigo
+                ? 'Ningún producto lo tiene. Revisá que sea el correcto, o cargáselo al producto en su '
+                    .'ficha, en Identificación.'
+                : 'Ni por código ni por nombre. Probá con menos letras, o con el principio activo.')
+            ->send();
+    }
+
+    /**
+     * Productos que se almacenan y se llaman parecido, ya con su rótulo.
+     *
+     * @return array<int, string>
+     */
+    private static function buscarEnElCatalogo(string $texto): array
+    {
+        if (! array_key_exists($texto, self::$encontradosPorTexto)) {
+            self::$encontradosPorTexto[$texto] = Item::buscar($texto, limite: 25, soloVigentes: true)
+                ->filter(fn (Item $item): bool => (bool) $item->se_almacena)
+                ->take(self::RESULTADOS_A_LA_VISTA)
+                ->mapWithKeys(fn (Item $item): array => [$item->id => $item->etiqueta()])
+                ->all();
+        }
+
+        return self::$encontradosPorTexto[$texto];
+    }
+
+    /**
+     * Un botón por resultado, en casilleros fijos. Tocar uno agrega la
+     * línea de ese producto y limpia el buscador para el siguiente.
+     *
+     * @return list<Action>
+     */
+    private static function botonesDeLaBusqueda(): array
+    {
+        $botones = [];
+
+        for ($casillero = 0; $casillero < self::RESULTADOS_A_LA_VISTA; $casillero++) {
+            $botones[] = Action::make('agregar_resultado_'.$casillero)
+                ->label(fn (Get $get): string => self::resultadoEn($get, $casillero)['nombre'] ?? '')
+                ->visible(fn (Get $get): bool => self::resultadoEn($get, $casillero) !== null)
+                ->icon('heroicon-m-plus')
+                ->size(Size::Small)
+                ->color('gray')
+                ->outlined()
+                ->action(function (Get $get, Set $set) use ($casillero): void {
+                    $resultado = self::resultadoEn($get, $casillero);
+                    $item = $resultado === null ? null : Item::query()->find($resultado['id']);
+
+                    if (! $item instanceof Item) {
+                        return;
+                    }
+
+                    $set('escaneo', null);
+                    $set('busqueda', null);
+                    self::abrirLineaDelProducto($item, $get, $set);
+                });
+        }
+
+        return $botones;
+    }
+
+    /**
+     * @return array{id: int, nombre: string}|null
+     */
+    private static function resultadoEn(Get $get, int $casillero): ?array
+    {
+        $texto = self::textoONulo($get('busqueda'));
+
+        if ($texto === null) {
+            return null;
+        }
+
+        $encontrados = self::buscarEnElCatalogo($texto);
+        $id = array_keys($encontrados)[$casillero] ?? null;
+
+        return $id === null ? null : ['id' => $id, 'nombre' => $encontrados[$id]];
     }
 
     /**
@@ -748,44 +961,77 @@ final class RecepcionForm
     }
 
     /**
-     * Lo que se le debe a alguien del producto de ESTA línea, o null.
-     *
-     * Se pregunta por el producto de la línea y no por la recepción
-     * entera porque el aviso vive dentro de la línea: lo que hace falta
-     * ahí es la deuda de la caja que se acaba de elegir.
+     * Lo que se le debe a alguien de los productos de la recepción, o
+     * null si no se debe nada.
      *
      * ⚠️ `item_id` y no `que_llego`: el selector guarda
      * «item:presentacion» y el producto ya viene derivado en el `Hidden`
      * de al lado. Partir la cadena otra vez acá sería una segunda copia
      * de esa regla, y la segunda copia es la que se olvida de actualizar.
+     *
+     * ⚠️ Memorizado por juego de productos: `visible()` y `content()`
+     * preguntan lo mismo en cada pintada. `array_key_exists` y no `??=`:
+     * la respuesta normal es null —no se debe nada— y con `??=` ese caso
+     * volvería a consultar siempre.
      */
-    private static function loQueSeDebeDeLaLinea(Get $get): ?string
+    private static function loQueSeDebe(Get $get): ?string
     {
-        $itemId = $get('item_id');
+        $lineas = is_array($get('lineas')) ? $get('lineas') : [];
 
-        if (! is_numeric($itemId)) {
+        $ids = [];
+
+        foreach ($lineas as $linea) {
+            if (is_array($linea) && is_numeric($linea['item_id'] ?? null)) {
+                $ids[] = (int) $linea['item_id'];
+            }
+        }
+
+        $ids = array_values(array_unique($ids));
+
+        if ($ids === []) {
             return null;
         }
 
-        $id = (int) $itemId;
+        sort($ids);
+        $clave = implode(',', $ids);
 
-        /*
-         * ⚠️ Memorizado por producto. `visible()` y `content()` preguntan
-         * lo mismo, y el repetidor los llama a los dos por cada línea: una
-         * compra de veinte renglones son sesenta consultas idénticas
-         * mientras alguien teclea. El caché vive lo que vive el request
-         * de Livewire, así que saldar un préstamo se ve en el siguiente
-         * ida y vuelta.
-         *
-         * `array_key_exists` y no `??=`: la respuesta normal es null —no
-         * se debe nada— y con `??=` justamente ese caso volvería a
-         * consultar siempre.
-         */
-        if (! array_key_exists($id, self::$deudaPorItem)) {
-            self::$deudaPorItem[$id] = app(AvisoDeLoQueSeDebe::class)->delItem($id);
+        if (! array_key_exists($clave, self::$deudaPorProductos)) {
+            self::$deudaPorProductos[$clave] = app(AvisoDeLoQueSeDebe::class)->frase($ids);
         }
 
-        return self::$deudaPorItem[$id];
+        return self::$deudaPorProductos[$clave];
+    }
+
+    /**
+     * Repite la fila con lo mismo elegido y el lote vacío, justo debajo.
+     *
+     * Debajo y no al final: las dos producciones de la misma caja se leen
+     * juntas, y es donde la vista las va a buscar para comparar lotes.
+     */
+    private static function otroLoteDe(mixed $clave, Get $get, Set $set): void
+    {
+        $lineas = is_array($get('lineas')) ? $get('lineas') : [];
+
+        if (! is_string($clave) || ! is_array($lineas[$clave] ?? null)) {
+            return;
+        }
+
+        $nuevas = [];
+
+        foreach ($lineas as $cual => $linea) {
+            $nuevas[$cual] = $linea;
+
+            if ((string) $cual === $clave && is_array($linea)) {
+                $nuevas[(string) Str::uuid()] = [
+                    ...$linea,
+                    'cantidad_presentacion' => '1',
+                    'numero_lote'           => null,
+                    'fecha_vencimiento'     => null,
+                ];
+            }
+        }
+
+        $set('lineas', $nuevas);
     }
 
     /**
@@ -832,12 +1078,8 @@ final class RecepcionForm
     }
 
     /**
-     * «= 200 TAB» — lo que la línea pone en el kardex, arriba de la
-     * cantidad.
-     *
-     * Null cuando no hay cuenta que hacer: lo que llegó suelto ya se
-     * cuenta en la unidad del kardex, y «5 TAB = 5 TAB» es leer dos veces
-     * lo mismo.
+     * «200 TAB» — lo que la línea pone en el kardex, en la columna de al
+     * lado de la cantidad. Null si todavía no hay con qué calcularlo.
      */
     private static function loQueEntra(Get $get): ?string
     {
@@ -845,8 +1087,7 @@ final class RecepcionForm
         $porCaja = self::comoNumero($get('unidades_por_presentacion'));
         $unidad = self::textoONulo($get('entra_en'));
 
-        if ($cajas === null || $porCaja === null || $unidad === null
-            || ! is_numeric($get('item_presentacion_id'))) {
+        if ($cajas === null || $porCaja === null || $unidad === null) {
             return null;
         }
 
@@ -856,7 +1097,7 @@ final class RecepcionForm
             return null;
         }
 
-        return '= '.self::sinCerosSobrantes($unidades->redondeado(4)).' '.$unidad;
+        return self::sinCerosSobrantes($unidades->redondeado(4)).' '.$unidad;
     }
 
     /**
@@ -886,15 +1127,6 @@ final class RecepcionForm
     }
 
     // ── Ayudantes ─────────────────────────────────────────────────────
-
-    private static function etiquetaDeLinea(mixed $estado): ?string
-    {
-        if (! is_array($estado)) {
-            return null;
-        }
-
-        return self::itemDe($estado['item_id'] ?? null)?->etiqueta();
-    }
 
     /**
      * Todo lo que puede entrar por la puerta: cada presentación del

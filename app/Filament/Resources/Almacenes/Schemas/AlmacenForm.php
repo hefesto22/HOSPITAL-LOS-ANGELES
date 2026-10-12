@@ -169,12 +169,22 @@ final class AlmacenForm
                 ->placeholder(fn (Get $get): string => $get('tipo') === TipoAlmacen::StockDeServicio->value
                     ? '¿De qué área es este carrito?'
                     : 'Ninguno — no cuelga de un área')
-                ->helperText(
-                    'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de '
-                    .'ningún área. Se elige un servicio cuando el almacén es SUYO: el carro de '
-                    .'paro de emergencia, el carrito de piso de hospitalización. Es lo que '
-                    .'después contesta «¿de quién es este carrito?» sin preguntarle a nadie.'
-                )
+                /*
+                 * La ayuda cambia con el tipo: a quien crea un carrito le
+                 * sirve saber cómo crear el área que falta; a quien crea
+                 * la bodega, que esto queda vacío.
+                 */
+                ->helperText(fn (Get $get): string => $get('tipo') === TipoAlmacen::StockDeServicio->value
+                    ? 'El área que responde por este carrito: EMERGENCIA, HOSPITALIZACIÓN. Si no está '
+                        .'en la lista, tocá el + de la derecha y creala acá mismo.'
+                    : 'Dejar vacío para bodega central y farmacia de venta, que no cuelgan de ningún área.')
+                /*
+                 * 🔴 La lista vacía tiene que decir qué hacer. Sin áreas
+                 * cargadas, el carrito no se podía guardar —el área es
+                 * obligatoria— y el desplegable solo decía que no había
+                 * opciones (11-oct-2026).
+                 */
+                ->noOptionsMessage('Todavía no hay áreas cargadas. Tocá el + de la derecha y creá la primera.')
                 /*
                  * ─────────────────────────────────────────────────────
                  * EL ÁREA SE CREA DESDE ACÁ
