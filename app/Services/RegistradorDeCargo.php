@@ -18,12 +18,14 @@ use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioResuelto;
 use App\Models\Almacen;
 use App\Models\Cargo;
+use App\Models\ConvenioCondicion;
 use App\Models\Cuenta;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
 use App\Models\MovimientoKardex;
 use App\Models\Persona;
+use App\Models\Tarifario;
 use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -285,6 +287,8 @@ final class RegistradorDeCargo
                 presupuestoLineaId: $linea->presupuestoLineaId,
                 politica: $linea->politica,
                 textoDelCargo: $linea->textoDelCargo,
+                mismoPrecioQue: $linea->mismoPrecioQue,
+                descuentoDeLaCuenta: $linea->descuentoDeLaCuenta,
                 /*
                  * El envase y cuántos de ESTA fila: con ellos la
                  * calculadora cobra la caja sin abrir a su precio entero
@@ -579,6 +583,15 @@ final class RegistradorDeCargo
         CarbonInterface $fechaServicio,
     ): PrecioResuelto {
         /*
+         * 🔴 LA LÍNEA REHECHA CONSERVA SU PRECIO. Cambiarle el descuento
+         * no es volver a venderla: va antes que todo, incluso que el
+         * precio acordado, porque el acordado también quedó en el cargo.
+         */
+        if ($linea->mismoPrecioQue instanceof Cargo) {
+            return $this->precioComoEnElCargo($linea->mismoPrecioQue);
+        }
+
+        /*
          * 🔴 EL PRECIO ACORDADO GANA (ADR-0009).
          *
          * Es el paquete quirúrgico: la familia acordó L 40,000 por la
@@ -626,6 +639,33 @@ final class RegistradorDeCargo
                 $fechaServicio->format('d/m/Y'),
             );
         }
+    }
+
+    /**
+     * El precio tal como quedó congelado en un cargo ya asentado.
+     *
+     * El NÚMERO sale del cargo: la fila del tarifario pudo corregirse
+     * después, y lo que se le cobró al paciente es lo que dice el cargo
+     * (§8.5-5). La fila y la condición van igual —borradas incluidas—
+     * porque de ellas salen la cobertura, la explicación y el rastro de
+     * dónde vino el precio.
+     */
+    private function precioComoEnElCargo(Cargo $cargo): PrecioResuelto
+    {
+        $fila = $cargo->tarifario_id === null
+            ? null
+            : Tarifario::query()->withTrashed()->find($cargo->tarifario_id);
+
+        $condicion = $cargo->condicion_id === null
+            ? null
+            : ConvenioCondicion::query()->withTrashed()->find($cargo->condicion_id);
+
+        return new PrecioResuelto(
+            precio: Monto::de($cargo->precio_unitario),
+            origen: $cargo->origen_precio,
+            fila: $fila instanceof Tarifario ? $fila : null,
+            condicion: $condicion instanceof ConvenioCondicion ? $condicion : null,
+        );
     }
 
     /**

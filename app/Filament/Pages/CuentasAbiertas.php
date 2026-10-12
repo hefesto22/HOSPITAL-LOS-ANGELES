@@ -37,7 +37,6 @@ use App\Domain\ValueObjects\Monto;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
-use App\Models\AbonoMedio;
 use App\Models\Almacen;
 use App\Models\Cargo;
 use App\Models\Cie10;
@@ -1640,10 +1639,13 @@ class CuentasAbiertas extends Page
             ? app(AplicadorDeDescuentoDeLaCuenta::class)->fraccionParaLaLineaNueva($cuenta, $item, now())
             : null;
 
+        $deLaCuenta = null;
+
         if ($rubro instanceof RubroDeDescuento && $enSuRubro instanceof Decimal) {
             $descuento = $enSuRubro;
             $motivo = AplicadorDeDescuentoDeLaCuenta::motivoDe($cuenta, $rubro);
             $autorizado = AplicadorDeDescuentoDeLaCuenta::quienLoDio($cuenta, $rubro);
+            $deLaCuenta = $rubro;
         }
 
         try {
@@ -1713,6 +1715,13 @@ class CuentasAbiertas extends Page
                      */
                     presentacion: $envase ?? $this->presentacionDe($item, $origen),
                     envases: $enteros,
+
+                    /*
+                     * La rebaja de servicios u honorarios viene de la
+                     * cuenta: se topa con la regla de la cuenta, no con
+                     * la de un descuento suelto (12-oct-2026).
+                     */
+                    descuentoDeLaCuenta: $deLaCuenta,
                 ),
             );
         } catch (CargoException|CuentaException|EncuentroException $e) {
@@ -3284,13 +3293,11 @@ class CuentasAbiertas extends Page
         }
 
         $item = Item::query()->find($cargo->item_id);
+        $cuenta = Cuenta::query()->find($cargo->cuenta_id);
 
-        if ($item instanceof Item && AplicadorDeDescuentoDeLaCuenta::rubroDe($item) instanceof RubroDeDescuento) {
-            $cuenta = Cuenta::query()->find($cargo->cuenta_id);
-
-            if ($cuenta instanceof Cuenta) {
-                $this->repartirDeNuevoElRubroDe($cuenta, $item);
-            }
+        if ($item instanceof Item && $cuenta instanceof Cuenta
+            && ! $this->soltarElDescuentoSiQuedoVacio($cuenta, $item)) {
+            $this->repartirDeNuevoElRubroDe($cuenta, $item);
         }
 
         Notification::make()
@@ -3648,33 +3655,22 @@ class CuentasAbiertas extends Page
     /**
      * ¿La columna de la derecha del modal de factura tiene algo?
      *
-     * Ahí van la autorización del seguro —solo si paga un tercero— y el
-     * desglose de la cirugía —solo si hay paquete—. Sin ninguno de los
-     * dos, «A quién se le factura» toma el ancho entero.
+     * Desde el 12-oct-2026, siempre que haya cuenta: arriba va lo que
+     * dice la factura, que no depende del pagador ni de si falta cobrar.
+     * Sin cuenta —el modal recién montado— el cliente toma el ancho.
      */
     private function hayColumnaDerechaAlFacturar(): bool
     {
-        $cuenta = $this->cuentaFacturando();
-
-        if (! $cuenta instanceof Cuenta) {
-            return false;
-        }
-
-        /*
-         * El cobro y los recibos van a la derecha desde el 11-oct-2026:
-         * con eso la izquierda casi nunca va sola, y el modal cabe sin
-         * scroll aunque haya que cobrar.
-         */
-        return $cuenta->convenio->tipo->pagaUnTercero()
-            || $cuenta->saldoPendienteDelPaciente()->mayorQue('0')
-            || $cuenta->abonado()->mayorQue('0')
-            || $this->laCuentaFacturandoTienePaquete();
+        return $this->cuentaFacturando() instanceof Cuenta;
     }
 
     /**
-     * Los recibos vivos de la cuenta que se está facturando, uno por
-     * renglón: número, cuándo, en qué forma y cuánto.
+     * Los recibos vivos de la cuenta que se está facturando, con la misma
+     * lista del modal de abono pero sin botones: acá se mira, no se
+     * corrige.
      *
+     * Antes era una tabla de cuatro columnas que en media pantalla partía
+     * el número del recibo y el monto en dos renglones (12-oct-2026).
      * Los anulados no van: esa plata se devolvió y no paga nada.
      */
     private function loQueYaAbono(): HtmlString
@@ -3685,33 +3681,58 @@ class CuentasAbiertas extends Page
             return new HtmlString('');
         }
 
-        $abonos = Abono::query()
-            ->where('cuenta_id', $cuenta->id)
-            ->where('estado', EstadoAbono::Aplicado->value)
-            ->with('medios')
-            ->orderBy('id')
-            ->get();
+        return new HtmlString(view('filament.pages.partials.recibos-de-la-cuenta', [
+            'recibos'  => $this->filasDeRecibos($cuenta, soloVivos: true),
+            'acciones' => false,
+        ])->render());
+    }
 
-        $filas = '';
+    /**
+     * Lo que va a decir el papel: los renglones de la cuenta y los
+     * totales que el formato fiscal separa (§8.6.1-3).
+     *
+     * Los totales son los materializados de la cuenta —los mismos de la
+     * pantalla de cargos—, que es lo que el emisor suma de los cargos
+     * pendientes. Con cirugía desglosada el papel trae más renglones,
+     * pero el total es el mismo.
+     */
+    private function loQueDiceLaFactura(): HtmlString
+    {
+        $cuenta = $this->cuentaFacturando();
 
-        foreach ($abonos as $abono) {
-            $formas = $abono->medios
-                ->map(static fn (AbonoMedio $medio): string => $medio->descripcion()
-                    .($abono->medios->count() > 1 ? ' L '.number_format((float) $medio->monto, 2) : ''))
-                ->implode(' + ');
-
-            $filas .= '<tr style="border-top:1px solid rgba(127,127,127,.18)">'
-                .'<td style="padding:.3rem .5rem .3rem 0;font-family:ui-monospace,monospace;font-size:.8rem">'.e($abono->numero).'</td>'
-                .'<td style="padding:.3rem .5rem;opacity:.75">'.e($abono->recibido_en->format('d/m/Y H:i')).'</td>'
-                .'<td style="padding:.3rem .5rem">'.e($formas === '' ? '—' : $formas).'</td>'
-                .'<td style="padding:.3rem 0 .3rem .5rem;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">L '
-                .number_format((float) $abono->total, 2).'</td>'
-                .'</tr>';
+        if (! $cuenta instanceof Cuenta) {
+            return new HtmlString('');
         }
 
-        return new HtmlString(
-            '<table style="width:100%;border-collapse:collapse;font-size:.875rem">'.$filas.'</table>'
-        );
+        $renglones = [];
+
+        foreach ($cuenta->renglonesVivos() as $renglon) {
+            $renglones[] = [
+                'cantidad' => rtrim(rtrim($renglon->cantidad->redondeado(4), '0'), '.'),
+                'unidad'   => $renglon->unidad,
+                'texto'    => $renglon->texto,
+                'importe'  => number_format((float) $renglon->total->redondeado(2), 2),
+            ];
+        }
+
+        $totales = [];
+
+        if (Decimal::de($cuenta->total_descuento)->mayorQue('0')) {
+            $totales[] = ['etiqueta' => 'Descuentos', 'valor' => '− '.number_format((float) $cuenta->total_descuento, 2)];
+        }
+
+        $totales[] = ['etiqueta' => 'Importe exento', 'valor' => number_format((float) $cuenta->total_exento, 2)];
+
+        if (Decimal::de($cuenta->total_gravado)->mayorQue('0')) {
+            $totales[] = ['etiqueta' => 'Importe gravado', 'valor' => number_format((float) $cuenta->total_gravado, 2)];
+            $totales[] = ['etiqueta' => 'ISV', 'valor' => number_format((float) $cuenta->total_isv, 2)];
+        }
+
+        return new HtmlString(view('filament.pages.partials.lo-que-dice-la-factura', [
+            'renglones' => $renglones,
+            'totales'   => $totales,
+            'total'     => $cuenta->saldo()->formateado(),
+        ])->render());
     }
 
     /**
@@ -4385,6 +4406,52 @@ class CuentasAbiertas extends Page
                         Group::make([
                             /*
                              * ─────────────────────────────────────────────────────
+                             * 🔴 LO QUE VA A DECIR EL PAPEL (12-oct-2026)
+                             * ─────────────────────────────────────────────────────
+                             *
+                             * Mauricio: «mejora el diseño de la facturación».
+                             * Emitir consume un número del SAR que no vuelve: lo
+                             * último que se mira antes del botón es qué va a decir
+                             * la factura —sus renglones y los totales que el
+                             * formato fiscal separa— sin ir a otra pantalla. Con
+                             * cirugía, acá mismo se decide si sale desglosada; antes
+                             * era una sección suelta al final de la columna.
+                             */
+                            Section::make('Lo que dice la factura')
+                                ->icon(Heroicon::OutlinedDocumentText)
+                                ->compact()
+                                ->schema([
+                                    Placeholder::make('lo_que_dice_la_factura')
+                                        ->hiddenLabel()
+                                        ->content(fn (): HtmlString => $this->loQueDiceLaFactura()),
+
+                                    Toggle::make('desglosar_paquetes')
+                                        ->visible(fn (): bool => $this->laCuentaFacturandoTienePaquete())
+                                        ->label('Detallar la cirugía renglón por renglón')
+                                        /*
+                                         * Viene marcada según el pagador y se puede
+                                         * cambiar para ESTA factura. Lo que se
+                                         * decida acá queda congelado en el papel:
+                                         * volver a imprimirlo da exactamente lo
+                                         * mismo, porque el mismo número de CAI no
+                                         * puede producir dos documentos distintos.
+                                         */
+                                        /*
+                                         * ⚠️ `->` y no `?->`: adentro de un `??` el
+                                         * nullsafe sobra y PHPStan lo rechaza con
+                                         * `nullsafe.neverNull`. Sin cuenta o sin
+                                         * convenio, el `?? false` responde igual.
+                                         */
+                                        ->default(fn (): bool => (bool) ($this->cuentaFacturando()->convenio->desglosa_paquetes ?? false))
+                                        ->helperText(
+                                            'La cirugía sale en sus renglones —sala, habitación, medicamentos— con el '
+                                            .'monto del paquete repartido entre ellos. El total no cambia. Se lista lo '
+                                            .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
+                                        ),
+                                ]),
+
+                            /*
+                             * ─────────────────────────────────────────────────────
                              * 🔴 LO QUE EL SEGURO AUTORIZÓ, ANTES DE EMITIR
                              * ─────────────────────────────────────────────────────
                              *
@@ -4555,43 +4622,6 @@ class CuentasAbiertas extends Page
                                         ->label('Lo entrega, si no es el paciente')
                                         ->placeholder('Opcional')
                                         ->maxLength(120),
-                                ]),
-
-                            /*
-                             * ─────────────────────────────────────────────────────
-                             * SOLO APARECE SI HAY UNA CIRUGÍA QUE ABRIR
-                             * ─────────────────────────────────────────────────────
-                             *
-                             * En la factura de una consulta no hay nada que
-                             * desglosar, y una casilla que no cambia nada distrae en
-                             * la pantalla donde menos conviene.
-                             */
-                            Section::make('Cómo sale el papel')
-                                ->icon(Heroicon::OutlinedDocumentText)
-                                ->visible(fn (): bool => $this->laCuentaFacturandoTienePaquete())
-                                ->schema([
-                                    Toggle::make('desglosar_paquetes')
-                                        ->label('Detallar la cirugía renglón por renglón')
-                                        /*
-                                         * Viene marcada según el pagador y se puede
-                                         * cambiar para ESTA factura. Lo que se
-                                         * decida acá queda congelado en el papel:
-                                         * volver a imprimirlo da exactamente lo
-                                         * mismo, porque el mismo número de CAI no
-                                         * puede producir dos documentos distintos.
-                                         */
-                                        /*
-                                         * ⚠️ `->` y no `?->`: adentro de un `??` el
-                                         * nullsafe sobra y PHPStan lo rechaza con
-                                         * `nullsafe.neverNull`. Sin cuenta o sin
-                                         * convenio, el `?? false` responde igual.
-                                         */
-                                        ->default(fn (): bool => (bool) ($this->cuentaFacturando()->convenio->desglosa_paquetes ?? false))
-                                        ->helperText(
-                                            'La cirugía sale en sus renglones —sala, habitación, medicamentos— con el '
-                                            .'monto del paquete repartido entre ellos. El total no cambia. Se lista lo '
-                                            .'que de verdad se entregó, así que lo que farmacia no despachó no aparece.'
-                                        ),
                                 ]),
                         ])
                             ->visible(fn (): bool => $this->hayColumnaDerechaAlFacturar()),
@@ -5217,8 +5247,29 @@ class CuentasAbiertas extends Page
             return $this->recibosLeidos['filas'];
         }
 
-        $recibos = Abono::query()
-            ->where('cuenta_id', $cuenta->id)
+        $filas = $this->filasDeRecibos($cuenta);
+
+        $this->recibosLeidos = ['cuenta' => $cuenta->id, 'filas' => $filas];
+
+        return $filas;
+    }
+
+    /**
+     * Los recibos de una cuenta, el último arriba, en la forma que pinta
+     * la lista. La comparten el modal de abono —todos, con sus botones—
+     * y el de factura —solo los vivos, sin botones—.
+     *
+     * @return list<array{id: int, numero: string, cuando: string, medios: string, total: string, quien: string, entrego: string|null, nota: string|null, anulado: bool, motivo: string|null, tocable: bool}>
+     */
+    private function filasDeRecibos(Cuenta $cuenta, bool $soloVivos = false): array
+    {
+        $consulta = Abono::query()->where('cuenta_id', $cuenta->id);
+
+        if ($soloVivos) {
+            $consulta->where('estado', EstadoAbono::Aplicado->value);
+        }
+
+        $recibos = $consulta
             ->with(['medios', 'turno', 'recibidoPor'])
             ->orderByDesc('id')
             ->get();
@@ -5242,8 +5293,6 @@ class CuentasAbiertas extends Page
                 'tocable' => $recibo->sePuedeAnular() && Gate::allows('update', $recibo),
             ];
         }
-
-        $this->recibosLeidos = ['cuenta' => $cuenta->id, 'filas' => $filas];
 
         return $filas;
     }
@@ -5747,6 +5796,13 @@ class CuentasAbiertas extends Page
                         envases: is_numeric($cargo->cantidad_presentacion)
                             ? Decimal::de($cargo->cantidad_presentacion)
                             : null,
+
+                        /*
+                         * Y con el precio que ya tenía: cambiarle el
+                         * descuento no es volver a venderlo al precio
+                         * de hoy (§8.5-5).
+                         */
+                        mismoPrecioQue: $cargo,
                     ));
                 }
             });
@@ -5870,6 +5926,10 @@ class CuentasAbiertas extends Page
         }
 
         $this->cuentaDelDescuento = $cuenta->id;
+
+        if (Gate::allows('update', $cuenta)) {
+            $this->soltarLosDescuentosSiNoHayNada($cuenta);
+        }
         $this->cargarLosDescuentosPorRubroDe($cuenta);
 
         /*
@@ -5976,10 +6036,9 @@ class CuentasAbiertas extends Page
     /**
      * Lo que muestra la sección de descuentos para un rubro.
      *
-     * El tope se dice ANTES de teclear y en una línea: «Hasta 20 %» si es
-     * uno solo, «Entre 20 % y 30 %, según el servicio» si varía. El detalle
-     * por categoría va aparte, en la ayuda que aparece al pasar por encima:
-     * teclear 30 y ver que quedó en 20 parece un error si nadie lo avisó.
+     * El tope se dice ANTES de teclear y en una línea: «Hasta 20 %» en
+     * porcentaje, y en lempiras cuánto suma lo cargado. La regla completa
+     * va en la ayuda que aparece al pasar por encima.
      *
      * @return array{valor: string|null, modo: string, motivo: string|null, ayuda: string, detalle: string, maximo: string|null, puede: bool, aplicado: string|null}
      */
@@ -5995,46 +6054,23 @@ class CuentasAbiertas extends Page
             return [...$enPantalla, 'ayuda' => '', 'detalle' => '', 'maximo' => null, 'puede' => false, 'aplicado' => null];
         }
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EN PORCENTAJE HASTA 20 %, EN LEMPIRAS LIBRE (12-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: «si es monto se le puede colocar cantidad libre; en
+         * porcentaje que no pase del 20 %; en honorarios lo mismo». Una
+         * sola línea parejo para todos, en vez de un tope por categoría
+         * que al adulto mayor le dejaba «hasta L 0.00».
+         */
         $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
-        $porTope = [];
-        $soloLey = [];
-        $menor = null;
-        $mayor = null;
+        $tope = app(PoliticaDeDescuentoComercial::class)->topeDelDescuentoDeLaCuenta();
 
-        foreach ($aplicador->topesDe($cuenta, $rubro, now()) as $fila) {
-            $nombre = self::nombreCortoDeLaCategoria($fila['categoria']);
-
-            if ($fila['tope']->esCero()) {
-                $soloLey[] = $nombre;
-
-                continue;
-            }
-
-            $porTope[$fila['tope']->comoPorcentaje(0)][] = $nombre;
-            $menor = $menor === null || $fila['tope']->menorQue($menor) ? $fila['tope'] : $menor;
-            $mayor = $mayor === null || $fila['tope']->mayorQue($mayor) ? $fila['tope'] : $mayor;
-        }
-
-        $detalle = [];
-
-        foreach ($porTope as $tope => $nombres) {
-            $detalle[] = $tope.': '.implode(', ', $nombres);
-        }
-
-        if ($soloLey !== []) {
-            $detalle[] = 'Solo la de ley: '.implode(', ', $soloLey);
-        }
-
-        if (! $mayor instanceof Decimal || ! $menor instanceof Decimal) {
-            $ayuda = 'Ya lleva el descuento de ley.';
-        } elseif ($soloLey !== []) {
-            $ayuda = 'Hasta '.$mayor->comoPorcentaje(0).' en '.implode(', ', array_merge(...array_values($porTope)))
-                .'; lo demás, solo la de ley.';
-        } elseif ($menor->igualA($mayor)) {
-            $ayuda = 'Hasta '.$mayor->comoPorcentaje(0).'.';
-        } else {
-            $ayuda = 'Entre '.$menor->comoPorcentaje(0).' y '.$mayor->comoPorcentaje(0).', según el '.$rubro->enSingular().'.';
-        }
+        $ayuda = 'Hasta '.$tope->comoPorcentaje().', encima del de ley.';
+        $detalle = 'En porcentaje, hasta '.$tope->comoPorcentaje().' en cada '.$rubro->enSingular()
+            .', además del descuento de ley. En lempiras, el monto que haga falta, repartido entre lo '
+            .'cargado sin que ningún renglón quede en negativo.';
 
         $monto = AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro);
         $fraccion = AplicadorDeDescuentoDeLaCuenta::fraccionDe($cuenta, $rubro);
@@ -6042,28 +6078,15 @@ class CuentasAbiertas extends Page
         return [
             ...$enPantalla,
             'ayuda'    => $ayuda,
-            'detalle'  => implode("\n", $detalle),
+            'detalle'  => $detalle,
             'maximo'   => $aplicador->maximoEnLempiras($cuenta, $rubro)->redondeado(2),
-            'puede'    => $mayor instanceof Decimal,
+            'puede'    => true,
             'aplicado' => match (true) {
                 $monto instanceof Decimal    => 'L '.number_format((float) $monto->redondeado(2), 2),
                 $fraccion instanceof Decimal => self::comoPorcentajeCorto($fraccion),
                 default                      => null,
             },
         ];
-    }
-
-    private static function nombreCortoDeLaCategoria(CategoriaLegalDeDescuento $categoria): string
-    {
-        return match ($categoria) {
-            CategoriaLegalDeDescuento::ServicioHospitalario   => 'hospitalización',
-            CategoriaLegalDeDescuento::ConsultaGeneral        => 'consulta general',
-            CategoriaLegalDeDescuento::ConsultaEspecializada  => 'especialista',
-            CategoriaLegalDeDescuento::IntervencionQuirurgica => 'cirugía',
-            CategoriaLegalDeDescuento::RadiologiaYLaboratorio => 'laboratorio y rayos X',
-            CategoriaLegalDeDescuento::SinDescuentoLegal      => 'cafetería y otros',
-            default                                           => mb_strtolower($categoria->etiqueta()),
-        };
     }
 
     /**
@@ -6295,6 +6318,149 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * SIN NADA CARGADO, SIN DESCUENTO (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «si no hay nada, que por defecto el descuento esté
+     * vacío». Una cuenta vaciada mostraba «10 % aplicado» sobre nada, y
+     * lo próximo que se cargara —quizá otro día y por otro motivo— nacía
+     * con esa rebaja sin que nadie la hubiera vuelto a decidir.
+     *
+     * Al quitar el último renglón de un rubro, su descuento se va con él.
+     * Solo al QUITAR desde esta pantalla, no en `AnuladorDeCargo`: rehacer
+     * una línea para cambiarle el descuento también la anula, y ahí el
+     * rubro queda vacío un instante a propósito.
+     *
+     * Devuelve si soltó uno, para no repartir después sobre lo que ya no
+     * está. Quien llama ya autorizó: `quitarCargo()` y `quitarConMotivo()`
+     * exigen poder tocar la cuenta antes de anular nada.
+     */
+    private function soltarElDescuentoSiQuedoVacio(Cuenta $cuenta, Item $item): bool
+    {
+        $cuenta->refresh();
+
+        if (! $cuenta->estado->estaViva()) {
+            return false;
+        }
+        $rubro = AplicadorDeDescuentoDeLaCuenta::rubroDe($item);
+
+        if ($rubro instanceof RubroDeDescuento) {
+            $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
+
+            if (! self::tieneDescuentoEn($cuenta, $rubro) || $aplicador->lineasDe($cuenta, $rubro)->isNotEmpty()) {
+                return false;
+            }
+
+            try {
+                $aplicador->quitar($cuenta, $rubro);
+            } catch (SihlaException) {
+                return false;
+            }
+
+            if ($this->cuentaDelDescuento === $cuenta->id) {
+                $this->cargarLosDescuentosPorRubroDe($cuenta->refresh());
+            }
+
+            return true;
+        }
+
+        if ($item->se_almacena !== true || $cuenta->descuento_hospital === null || $this->quedaAlgoDeFarmacia($cuenta)) {
+            return false;
+        }
+
+        $this->soltarElDescuentoDeFarmacia($cuenta);
+
+        return true;
+    }
+
+    /**
+     * Al abrir una cuenta que no tiene NADA cargado, sus descuentos se van.
+     *
+     * Es la cuenta que quedó vacía antes de que existiera la regla de
+     * arriba, o la que alguien dejó con un descuento puesto y sin cargar
+     * nada. Solo con la cuenta entera vacía: si hay algo de farmacia, el
+     * 10 % que se puso en servicios para lo que viene se respeta.
+     */
+    private function soltarLosDescuentosSiNoHayNada(Cuenta $cuenta): void
+    {
+        $rubros = array_values(array_filter(
+            RubroDeDescuento::cases(),
+            fn (RubroDeDescuento $rubro): bool => self::tieneDescuentoEn($cuenta, $rubro),
+        ));
+
+        if ($rubros === [] && $cuenta->descuento_hospital === null) {
+            return;
+        }
+
+        $tieneAlgo = $cuenta->cargos()
+            ->whereNotIn('estado', [
+                EstadoCargo::Anulado->value,
+                EstadoCargo::Anulacion->value,
+                EstadoCargo::Trasladado->value,
+            ])
+            ->exists();
+
+        if ($tieneAlgo || ! $cuenta->estado->estaViva()) {
+            return;
+        }
+
+        try {
+            foreach ($rubros as $rubro) {
+                app(AplicadorDeDescuentoDeLaCuenta::class)->quitar($cuenta, $rubro);
+            }
+        } catch (SihlaException) {
+            return;
+        }
+
+        if ($cuenta->descuento_hospital !== null) {
+            $this->soltarElDescuentoDeFarmacia($cuenta);
+        }
+
+        $cuenta->refresh();
+    }
+
+    private static function tieneDescuentoEn(Cuenta $cuenta, RubroDeDescuento $rubro): bool
+    {
+        return AplicadorDeDescuentoDeLaCuenta::fraccionDe($cuenta, $rubro) instanceof Decimal
+            || AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro) instanceof Decimal;
+    }
+
+    /**
+     * ¿Queda algo a lo que alcance el descuento de farmacia? Lo de
+     * farmacia que se puede rehacer, y el paquete: su renglón lleva la
+     * rebaja de los medicamentos de adentro.
+     */
+    private function quedaAlgoDeFarmacia(Cuenta $cuenta): bool
+    {
+        if ($this->paquetesDe($cuenta)->isNotEmpty()) {
+            return true;
+        }
+
+        return $cuenta->cargos()
+            ->with('item')
+            ->get()
+            ->contains(fn (Cargo $cargo): bool => $cargo->admiteAnulacionDirecta()
+                && $cargo->item?->se_almacena === true
+                && $cargo->presupuesto_linea_id === null);
+    }
+
+    private function soltarElDescuentoDeFarmacia(Cuenta $cuenta): void
+    {
+        $cuenta->forceFill([
+            'descuento_hospital'        => null,
+            'motivo_descuento_hospital' => null,
+            'descuento_hospital_por'    => null,
+            'descuento_hospital_en'     => null,
+        ])->save();
+
+        if ($this->cuentaDelDescuento === $cuenta->id) {
+            $this->descuentoDeLaTanda = null;
+            $this->motivoDeLaTanda = null;
+        }
+    }
+
+    /**
      * @param list<string> $topadas
      */
     private static function dichoDeLasTopadas(array $topadas, RubroDeDescuento $rubro): string
@@ -6304,7 +6470,7 @@ class CuentasAbiertas extends Page
         $lista = implode(', ', $nombres).($resto > 0 ? " y {$resto} más" : '');
 
         return (count($topadas) === 1 ? "{$lista} quedó en su tope" : "{$lista} quedaron en su tope")
-            .': cada '.$rubro->enSingular().' rebaja hasta lo que su categoría permite.';
+            .': ningún '.$rubro->enSingular().' rebaja más de lo que vale después del de ley, y lo que no le cupo pasó a los otros.';
     }
 
     /**

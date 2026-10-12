@@ -132,6 +132,13 @@ final class CargoException extends SihlaException
         );
     }
 
+    public static function descuentoDeLaCuentaSuperaElTope(string $item, string $aplicado, string $tope): self
+    {
+        return new self(
+            "El descuento de la cuenta sobre «{$item}» es de {$aplicado}, y en porcentaje llega hasta {$tope}."
+        );
+    }
+
     public static function descuentoMayorQueElCargo(string $item): self
     {
         return new self(

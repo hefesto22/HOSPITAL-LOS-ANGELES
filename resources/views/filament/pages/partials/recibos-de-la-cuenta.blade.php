@@ -12,6 +12,9 @@
 
     Los botones montan la acción ENCIMA del modal de abono; al terminar se
     vuelve a él, con la lista al día.
+
+    El modal de factura usa esta misma lista con `acciones` en falso: ahí
+    se mira lo que ya entró, no se corrige.
 --}}
 <ul class="rcb">
     @foreach ($recibos as $recibo)
@@ -35,7 +38,7 @@
                 <p class="rcb-nota">{{ $recibo['nota'] }}</p>
             @endif
 
-            @if ($recibo['tocable'])
+            @if (($acciones ?? true) && $recibo['tocable'])
                 <div class="rcb-acciones">
                     <button
                         type="button"
@@ -50,7 +53,7 @@
                         wire:loading.attr="disabled"
                     >Anular</button>
                 </div>
-            @elseif (! $recibo['anulado'])
+            @elseif (($acciones ?? true) && ! $recibo['anulado'])
                 <p class="rcb-cerrado">Turno cerrado · se corrige con una devolución</p>
             @endif
         </li>

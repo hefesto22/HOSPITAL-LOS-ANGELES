@@ -19,8 +19,9 @@ namespace App\Domain\Enums;
  * honorario es rebajarle al médico, y eso se decide aparte, con su propio
  * motivo. Por eso cada rubro tiene su campo, su motivo y sus columnas.
  *
- * Los dos se topan igual: por la categoría del Art. 30 de cada renglón
- * (`PoliticaDeDescuentoComercial::topeDeLaCategoria()`).
+ * Los dos se topan igual (12-oct-2026): en porcentaje hasta
+ * `PoliticaDeDescuentoComercial::topeDelDescuentoDeLaCuenta()`, en
+ * lempiras libre mientras ningún renglón quede en negativo.
  */
 enum RubroDeDescuento: string
 {

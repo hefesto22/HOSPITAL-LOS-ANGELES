@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\ValueObjects;
 
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Exceptions\CargoException;
 use App\Models\Almacen;
+use App\Models\Cargo;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
@@ -124,6 +126,39 @@ final readonly class LineaDeCargo
          * posible el cargo.
          */
         public ?string $textoDelCargo = null,
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 REHACER NO ES VOLVER A COBRAR (12-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El cargo que se está rehaciendo para cambiarle el descuento.
+         * Con él, la línea nueva lleva el MISMO precio y el mismo bruto
+         * que la original —su snapshot (§8.5-5)—, no lo que diga hoy el
+         * tarifario.
+         *
+         * Sin esto, poner un 10 % en servicios volvía a resolver el
+         * precio: tres entregas cobradas a L 10 renacieron a L 450
+         * porque la fila de lista se había corregido entretanto, con un
+         * descuento de L 1 calculado sobre los L 10. Se vio en pantalla
+         * al anular una factura y volver a abrir la cuenta.
+         */
+        public ?Cargo $mismoPrecioQue = null,
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EL DESCUENTO VIENE DE LA CUENTA (12-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El rubro cuyo descuento de cuenta trae esta línea. Con él, la
+         * calculadora aplica la regla de Mauricio —en porcentaje hasta el
+         * tope configurado, en lempiras libre mientras el renglón no
+         * quede en negativo— en vez de la política por categoría, que
+         * sigue rigiendo un descuento suelto. Solo lo ponen
+         * `AplicadorDeDescuentoDeLaCuenta` y la línea nueva de Cuentas
+         * abiertas: ahí ese descuento tiene motivo y autor en la cuenta.
+         */
+        public ?RubroDeDescuento $descuentoDeLaCuenta = null,
     ) {
         /*
          * Se valida contra la cantidad REDONDEADA a los cuatro decimales

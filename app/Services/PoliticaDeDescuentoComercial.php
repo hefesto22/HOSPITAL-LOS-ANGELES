@@ -172,6 +172,26 @@ final class PoliticaDeDescuentoComercial
     }
 
     /**
+     * Hasta cuánto llega EN PORCENTAJE el descuento de la cuenta en
+     * servicios u honorarios (12-oct-2026).
+     *
+     * Parejo para todos —joven, tercera o cuarta edad— y encima del de
+     * ley: Mauricio, «en porcentaje que no pase del 20 %». En lempiras no
+     * tiene tope; lo único que lo limita es que ningún renglón quede en
+     * negativo (`AplicadorDeDescuentoDeLaCuenta`). La regla por categoría
+     * de `topeDeLaCategoria()` sigue rigiendo un descuento suelto en
+     * servicios, que no pase por la cuenta.
+     *
+     * Falla cerrado como el resto de la clase: sin la clave, cero.
+     */
+    public function topeDelDescuentoDeLaCuenta(): Decimal
+    {
+        $configurado = config('sihla.facturacion.descuento_de_la_cuenta_tope');
+
+        return is_string($configurado) ? Decimal::de($configurado) : Decimal::cero();
+    }
+
+    /**
      * ¿La categoría se topa con la regla de servicios?
      *
      * Todo lo del Art. 30 menos medicamentos y material. Lo que queda

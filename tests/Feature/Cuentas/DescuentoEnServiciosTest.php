@@ -14,12 +14,14 @@ use App\Domain\Exceptions\CuentaException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Pages\CuentasAbiertas;
 use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Item;
 use App\Models\Tarifario;
 use App\Models\User;
+use App\Services\AnuladorDeCargo;
 use App\Services\AplicadorDeDescuentoDeLaCuenta;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\RegistradorDeCargo;
@@ -38,15 +40,20 @@ use Illuminate\Support\Str;
  * todo lo que no sea materiales y medicamentos, ya que ese es descuento
  * exclusivo de medicamentos y materiales.»
  *
+ * Y el 12-oct-2026: «si es monto se le puede colocar cantidad libre; en
+ * porcentaje, que no pase del 20 %; en honorarios lo mismo».
+ *
  * Lo que este archivo cuida:
  *
- *   · el tope de cada servicio sale de la ley: el joven, 5 puntos
- *     debajo de la tercera edad; el adulto mayor, solo la de ley;
- *   · en porcentaje, cada renglón hasta su tope; en lempiras, el monto
- *     se reparte y lo que un renglón no aguanta pasa a los otros, al
+ *   · el descuento de la cuenta: en porcentaje hasta 20 %, parejo para
+ *     todos y encima del de ley —también al adulto mayor—; en lempiras,
+ *     libre, repartido sin que ningún renglón quede en negativo, al
  *     centavo, y si no cabe no se aplica;
- *   · rehacer es rehacer igual: misma fecha del servicio;
- *   · farmacia, honorarios y paquetes no se tocan.
+ *   · un descuento suelto en servicios, fuera del de la cuenta, sigue
+ *     topado por la ley: el joven 5 puntos debajo de la tercera edad;
+ *   · rehacer es rehacer igual: misma fecha y mismo precio;
+ *   · sin nada cargado en el rubro, el descuento se va;
+ *   · farmacia, honorarios y paquetes no se tocan entre sí.
  *
  * ⚠️ Los ayudantes tienen nombres propios: son funciones globales y con
  * `--parallel` dos iguales en archivos distintos chocan.
@@ -124,7 +131,7 @@ function quienDaElDescuento(): int
 
 /*
 |--------------------------------------------------------------------------
-| Los topes
+| Un descuento suelto en servicios —fuera del de la cuenta— sigue la ley
 |--------------------------------------------------------------------------
 */
 
@@ -187,7 +194,7 @@ it('el cargo no deja agregarle descuento del hospital en servicios a la tercera 
 |--------------------------------------------------------------------------
 */
 
-it('en porcentaje cada servicio lleva lo pedido hasta su tope', function (): void {
+it('en porcentaje cada servicio lleva lo pedido, parejo, hasta 20 %', function (): void {
     $cuenta = unJovenDeContado();
     $alimentacion = unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000');
     $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '400.0000');
@@ -200,7 +207,7 @@ it('en porcentaje cada servicio lleva lo pedido hasta su tope', function (): voi
     $topadas = app(AplicadorDeDescuentoDeLaCuenta::class)->fijar(
         $cuenta,
         RubroDeDescuento::Servicios,
-        Decimal::de('0.25'),
+        Decimal::de('0.20'),
         null,
         'paciente frecuente del hospital',
         quienDaElDescuento(),
@@ -209,12 +216,52 @@ it('en porcentaje cada servicio lleva lo pedido hasta su tope', function (): voi
     $rebajas = lasRebajasEnServicios($cuenta);
 
     expect($rebajas[$alimentacion->id])->toBe('60.00')
-        ->and($rebajas[$laboratorio->id])->toBe('100.00')
-        ->and($rebajas[$cafeteria->id])->toBe('25.00')
-        ->and($topadas)->toBe([$alimentacion->nombre])
-        ->and($cuenta->refresh()->total)->toBe('615.00')
+        ->and($rebajas[$laboratorio->id])->toBe('80.00')
+        ->and($rebajas[$cafeteria->id])->toBe('20.00')
+        ->and($topadas)->toBe([])
+        ->and($cuenta->refresh()->total)->toBe('640.00')
         ->and($cuenta->motivo_descuento_servicios)->toBe('PACIENTE FRECUENTE DEL HOSPITAL');
-})->note('La alimentación aguanta 20 % y queda en su tope; el laboratorio llega al 25 % pedido. 800 − 60 − 100 − 25 = 615.');
+})->note('800 − 60 − 80 − 20 = 640. La categoría ya no decide: el 20 % es el mismo para la alimentación, el laboratorio y la cafetería.');
+
+it('en porcentaje no pasa del 20 %', function (): void {
+    $cuenta = unJovenDeContado();
+    cargarElServicio($cuenta, unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '400.0000'));
+
+    expect(fn () => app(AplicadorDeDescuentoDeLaCuenta::class)->fijar(
+        $cuenta,
+        RubroDeDescuento::Servicios,
+        Decimal::de('0.25'),
+        null,
+        'paciente frecuente del hospital',
+        quienDaElDescuento(),
+    ))->toThrow(CuentaException::class, 'hasta 20 %');
+
+    expect($cuenta->refresh()->descuento_servicios)->toBeNull();
+});
+
+it('🔴 al adulto mayor tambien se le puede dar, encima de la de ley', function (string $modo, string $pedido, string $rebaja, string $total): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create(), edad: 65);
+    $alimentacion = unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000');
+    cargarElServicio($cuenta, $alimentacion);
+
+    app(AplicadorDeDescuentoDeLaCuenta::class)->fijar(
+        $cuenta,
+        RubroDeDescuento::Servicios,
+        $modo === 'porcentaje' ? Decimal::de($pedido) : null,
+        $modo === 'lempiras' ? Decimal::de($pedido) : null,
+        'autorizado por el hospital',
+        quienDaElDescuento(),
+    );
+
+    $vivo = $cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->firstOrFail();
+
+    expect($vivo->descuento_legal)->toBe('75.00')
+        ->and($vivo->descuento_comercial)->toBe($rebaja)
+        ->and($cuenta->refresh()->total)->toBe($total);
+})->with([
+    '10 % encima del 25 % de ley' => ['porcentaje', '0.10', '30.00', '195.00'],
+    'L 100 libres'                => ['lempiras', '100', '100.00', '125.00'],
+])->note('Lo que se vio el 12-oct-2026: a un 3R de contado la pantalla decía «hasta L 0.00 en servicios». 300 − 75 de ley − la rebaja.');
 
 it('salir del campo dos veces no rehace la cuenta entera', function (): void {
     $cuenta = unJovenDeContado();
@@ -247,17 +294,41 @@ it('rehacer es rehacer igual: el servicio de ayer sigue siendo de ayer', functio
         ->and($vivo->fecha_operacion->toDateString())->toBe($original->fecha_operacion->toDateString());
 })->note('La alimentación del lunes se cobra con el precio del lunes (§8.5-3) y cuenta en el día del lunes.');
 
-it('la linea nueva nace con su parte, topada con su categoria', function (): void {
+it('🔴 rehacer con el descuento no le cambia el precio a lo que ya estaba cargado', function (): void {
+    $cuenta = unJovenDeContado();
+    $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '10.0000');
+    $original = cargarElServicio($cuenta, $laboratorio);
+
+    /*
+     * La fila de lista se corrige DESPUÉS de cargar: el centinela de
+     * L 10 pasa a su precio de verdad. Por la tabla y no por el modelo,
+     * que es como entra una corrección que nadie anunció.
+     */
+    DB::table('tarifarios')->where('item_id', $laboratorio->id)->update(['precio' => '450.0000']);
+
+    app(AplicadorDeDescuentoDeLaCuenta::class)->fijar($cuenta, RubroDeDescuento::Servicios, Decimal::de('0.10'), null, 'paciente frecuente del hospital', quienDaElDescuento());
+
+    $vivo = $cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->firstOrFail();
+
+    expect($vivo->id)->not->toBe($original->id)
+        ->and($vivo->precio_unitario)->toBe('10.0000')
+        ->and($vivo->bruto)->toBe('10.00')
+        ->and($vivo->descuento_comercial)->toBe('1.00')
+        ->and($vivo->tarifario_id)->toBe($original->tarifario_id)
+        ->and($cuenta->refresh()->total)->toBe('9.00');
+})->note('Se vio el 12-oct-2026: tres entregas de L 10 renacieron a L 450 con L 1 de descuento al ponerle 10 % a la cuenta reabierta.');
+
+it('la linea nueva nace con el porcentaje de la cuenta', function (): void {
     $cuenta = unJovenDeContado();
     $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
-    $aplicador->fijar($cuenta, RubroDeDescuento::Servicios, Decimal::de('0.30'), null, 'paciente frecuente del hospital', quienDaElDescuento());
+    $aplicador->fijar($cuenta, RubroDeDescuento::Servicios, Decimal::de('0.20'), null, 'paciente frecuente del hospital', quienDaElDescuento());
     $cuenta->refresh();
 
     $alimentacion = unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000');
     $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '400.0000');
 
     expect($aplicador->fraccionParaLaLineaNueva($cuenta, $alimentacion, now())?->redondeado(2))->toBe('0.20')
-        ->and($aplicador->fraccionParaLaLineaNueva($cuenta, $laboratorio, now())?->redondeado(2))->toBe('0.25');
+        ->and($aplicador->fraccionParaLaLineaNueva($cuenta, $laboratorio, now())?->redondeado(2))->toBe('0.20');
 });
 
 it('quitarlo devuelve los servicios a su precio', function (): void {
@@ -281,7 +352,7 @@ it('quitarlo devuelve los servicios a su precio', function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('en lempiras se reparte en proporcion y lo que un renglon no aguanta pasa a los otros', function (): void {
+it('en lempiras se reparte en proporcion a lo que vale cada renglon', function (): void {
     $cuenta = unJovenDeContado();
     $alimentacion = unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000');
     $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '200.0000');
@@ -300,11 +371,36 @@ it('en lempiras se reparte en proporcion y lo que un renglon no aguanta pasa a l
 
     $rebajas = lasRebajasEnServicios($cuenta);
 
-    expect($rebajas[$alimentacion->id])->toBe('60.00')
-        ->and($rebajas[$laboratorio->id])->toBe('45.00')
-        ->and($topadas)->toBe([$alimentacion->nombre])
+    expect($rebajas[$alimentacion->id])->toBe('63.00')
+        ->and($rebajas[$laboratorio->id])->toBe('42.00')
+        ->and($topadas)->toBe([])
         ->and($cuenta->refresh()->total)->toBe('395.00');
-})->note('En proporción le tocaban 63 a la alimentación, que aguanta 60 (20 % de 300). Los 3 que sobran van al laboratorio: 42 + 3 = 45, que aguanta 50.');
+})->note('300 y 200 son 60 % y 40 % de lo cargado: de L 105, 63 y 42. En lempiras ya no hay tope por categoría.');
+
+it('en lempiras lo que un renglon no aguanta pasa a los otros', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create(), edad: 65);
+    $alimentacion = unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000');
+    $cafeteria = unServicioDeLaLey(CategoriaLegalDeDescuento::SinDescuentoLegal, '100.0000');
+
+    cargarElServicio($cuenta, $alimentacion);
+    cargarElServicio($cuenta, $cafeteria);
+
+    $topadas = app(AplicadorDeDescuentoDeLaCuenta::class)->fijar(
+        $cuenta,
+        RubroDeDescuento::Servicios,
+        null,
+        Decimal::de('320'),
+        'autorizado por el hospital',
+        quienDaElDescuento(),
+    );
+
+    $rebajas = lasRebajasEnServicios($cuenta);
+
+    expect($rebajas[$alimentacion->id])->toBe('225.00')
+        ->and($rebajas[$cafeteria->id])->toBe('95.00')
+        ->and($topadas)->toBe([$alimentacion->nombre])
+        ->and($cuenta->refresh()->total)->toBe('5.00');
+})->note('En proporción le tocaban 240 a la alimentación, que después de los 75 de ley vale 225. Los 15 que sobran van a la cafetería: 80 + 15 = 95. 400 − 75 − 320 = 5.');
 
 it('el centavo que no se reparte parejo va al renglon mas grande', function (): void {
     $cuenta = unJovenDeContado();
@@ -335,10 +431,10 @@ it('si en lempiras no cabe, no se aplica y dice hasta cuanto se puede', function
         $cuenta,
         RubroDeDescuento::Servicios,
         null,
-        Decimal::de('120'),
+        Decimal::de('520'),
         'paciente frecuente del hospital',
         quienDaElDescuento(),
-    ))->toThrow(CuentaException::class, 'hasta L 110.00');
+    ))->toThrow(CuentaException::class, 'hasta L 500.00');
 
     expect($cuenta->refresh()->descuento_servicios_monto)->toBeNull();
 });
@@ -463,22 +559,87 @@ it('el descuento en servicios no toca los honorarios', function (): void {
     expect(lasRebajasEnServicios($cuenta)[$honorario->item_id])->toBe('0.00');
 });
 
-it('el honorario se topa por su categoria, como cualquier renglon', function (): void {
+it('en honorarios lo mismo: en porcentaje hasta 20 %, en lempiras libre', function (): void {
     $cuenta = unJovenDeContado();
     $honorario = unHonorarioAcordado($cuenta, '600.00');
+    $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
 
-    $topadas = app(AplicadorDeDescuentoDeLaCuenta::class)->fijar(
+    expect(fn () => $aplicador->fijar(
         $cuenta,
         RubroDeDescuento::Honorarios,
         Decimal::de('0.40'),
         null,
         'el doctor acepto rebajar su honorario',
         quienDaElDescuento(),
+    ))->toThrow(CuentaException::class, 'hasta 20 %');
+
+    $aplicador->fijar($cuenta->refresh(), RubroDeDescuento::Honorarios, null, Decimal::de('450'), 'el doctor acepto rebajar su honorario', quienDaElDescuento());
+
+    expect(lasRebajasEnServicios($cuenta)[$honorario->item_id])->toBe('450.00');
+})->note('Antes el honorario de especialista se topaba en 25 % por su categoría. Ahora: 40 % no, L 450 de L 600 sí.');
+
+/*
+|--------------------------------------------------------------------------
+| Sin nada cargado, sin descuento (12-oct-2026)
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Un método privado de la pantalla, como lo llama ella.
+ */
+function enLaPantallaDeCuentas(string $metodo, mixed ...$argumentos): mixed
+{
+    return (new ReflectionMethod(CuentasAbiertas::class, $metodo))
+        ->invoke(app(CuentasAbiertas::class), ...$argumentos);
+}
+
+it('🔴 al quitar el ultimo servicio, el descuento en servicios se va con el', function (): void {
+    $cuenta = unJovenDeContado();
+    $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '400.0000');
+    cargarElServicio($cuenta, $laboratorio);
+    app(AplicadorDeDescuentoDeLaCuenta::class)->fijar($cuenta, RubroDeDescuento::Servicios, Decimal::de('0.10'), null, 'paciente frecuente del hospital', quienDaElDescuento());
+
+    app(AnuladorDeCargo::class)->anular(
+        $cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->firstOrFail(),
+        'se cargo en la cuenta equivocada',
     );
 
-    expect(lasRebajasEnServicios($cuenta)[$honorario->item_id])->toBe('150.00')
-        ->and($topadas)->toHaveCount(1);
-})->note('Especialista: la tercera edad lleva 30 % de ley, así que a un joven el hospital le da hasta 25 %. 25 % de 600 = 150.');
+    $solto = enLaPantallaDeCuentas('soltarElDescuentoSiQuedoVacio', $cuenta, $laboratorio);
+
+    expect($solto)->toBeTrue()
+        ->and($cuenta->refresh()->descuento_servicios)->toBeNull()
+        ->and($cuenta->motivo_descuento_servicios)->toBeNull();
+})->note('Mauricio: «si no hay nada, que por defecto el descuento esté vacío». Antes la cuenta vaciada seguía diciendo «10 % aplicado».');
+
+it('si queda otro servicio, el descuento se queda', function (): void {
+    $cuenta = unJovenDeContado();
+    $laboratorio = unServicioDeLaLey(CategoriaLegalDeDescuento::RadiologiaYLaboratorio, '400.0000');
+    cargarElServicio($cuenta, $laboratorio);
+    cargarElServicio($cuenta, unServicioDeLaLey(CategoriaLegalDeDescuento::ServicioHospitalario, '300.0000'));
+    app(AplicadorDeDescuentoDeLaCuenta::class)->fijar($cuenta, RubroDeDescuento::Servicios, Decimal::de('0.10'), null, 'paciente frecuente del hospital', quienDaElDescuento());
+
+    app(AnuladorDeCargo::class)->anular(
+        $cuenta->cargos()->where('estado', EstadoCargo::Pendiente->value)->where('item_id', $laboratorio->id)->firstOrFail(),
+        'se cargo en la cuenta equivocada',
+    );
+
+    expect(enLaPantallaDeCuentas('soltarElDescuentoSiQuedoVacio', $cuenta, $laboratorio))->toBeFalse()
+        ->and($cuenta->refresh()->descuento_servicios)->toBe('0.1000');
+});
+
+it('al abrir una cuenta sin nada cargado, sus descuentos estan vacios', function (): void {
+    $cuenta = unJovenDeContado();
+    DB::table('cuentas')->where('id', $cuenta->id)->update([
+        'descuento_servicios'        => '0.1000',
+        'motivo_descuento_servicios' => 'QUEDO DE ANTES DE VACIARLA',
+        'descuento_servicios_en'     => now(),
+    ]);
+
+    enLaPantallaDeCuentas('soltarLosDescuentosSiNoHayNada', $cuenta->refresh());
+
+    expect($cuenta->refresh()->descuento_servicios)->toBeNull()
+        ->and($cuenta->motivo_descuento_servicios)->toBeNull();
+})->note('La cuenta que quedó vacía antes de esta regla: la de Ana Lucía, con «10 % aplicado» y nada cargado.');
 
 /*
 |--------------------------------------------------------------------------

@@ -138,8 +138,16 @@ final class CuentaException extends SihlaException
     public static function descuentoMayorQueElTope(string $rubro, string $monto, string $maximo): self
     {
         return new self(
-            "A este paciente se le pueden rebajar hasta L {$maximo} en {$rubro}, y se pidieron L {$monto}. "
-            .'Cada renglón tiene su tope según la ley: nadie más joven puede quedar pagando menos que un adulto mayor.'
+            "En {$rubro} se puede rebajar hasta L {$maximo}, que es lo que suma lo cargado después del "
+            ."descuento de ley, y se pidieron L {$monto}. Ningún renglón puede quedar en negativo."
+        );
+    }
+
+    public static function porcentajeMayorQueElTope(string $rubro, string $pedido, string $tope): self
+    {
+        return new self(
+            "En {$rubro}, el descuento en porcentaje llega hasta {$tope}, y se pidió {$pedido}. "
+            .'En lempiras no tiene ese tope.'
         );
     }
 

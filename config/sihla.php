@@ -541,6 +541,20 @@ return [
         'descuento_en_servicios_colchon' => '0.05',
 
         /*
+         * ─────────────────────────────────────────────────────────────
+         * EL DESCUENTO DE LA CUENTA EN SERVICIOS Y HONORARIOS (12-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: «si es monto se le puede colocar cantidad libre; en
+         * porcentaje, que no pase del 20 %; en honorarios lo mismo». Es
+         * el tope del porcentaje, parejo para todos y encima del de ley.
+         * En lempiras no hay tope: solo que ningún renglón quede en
+         * negativo. El colchón de arriba queda para un descuento suelto
+         * en servicios que no pase por la cuenta.
+         */
+        'descuento_de_la_cuenta_tope' => '0.20',
+
+        /*
          * Ventana para registrar un cargo con fecha anterior. Después de
          * esto, requiere autorización. Es política, no constante: se
          * sobrescribe por sede.

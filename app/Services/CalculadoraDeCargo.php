@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Domain\Enums\BaseDelDescuentoLegal;
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\RangoEdad;
+use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Exceptions\CargoException;
 use App\Domain\ValueObjects\CargoCalculado;
 use App\Domain\ValueObjects\CoberturaAplicada;
@@ -15,6 +16,7 @@ use App\Domain\ValueObjects\DescuentoAplicable;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioResuelto;
+use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\ConvenioCondicion;
 use App\Models\Item;
@@ -93,15 +95,26 @@ final class CalculadoraDeCargo
         // 3 ── Descuento comercial, el que decide el hospital
         $montoComercial = $this->descuentoComercial($linea, $bruto);
 
-        $this->exigirQueRespeteLaPolitica(
-            $linea,
-            $bruto,
-            $montoComercial,
-            $descuentoLegal,
-            $fraccionLegal,
-            $fraccionAplicada,
-            $fechaServicio,
-        );
+        /*
+         * El descuento de la cuenta en servicios u honorarios tiene su
+         * propia regla (12-oct-2026); uno suelto sigue la política y el
+         * techo de ley, como siempre.
+         */
+        $deLaCuenta = $linea->descuentoDeLaCuenta instanceof RubroDeDescuento;
+
+        if ($deLaCuenta) {
+            $this->exigirQueRespeteElDeLaCuenta($linea);
+        } else {
+            $this->exigirQueRespeteLaPolitica(
+                $linea,
+                $bruto,
+                $montoComercial,
+                $descuentoLegal,
+                $fraccionLegal,
+                $fraccionAplicada,
+                $fechaServicio,
+            );
+        }
 
         $descuentos = $montoLegal->sumar($montoComercial);
 
@@ -109,7 +122,9 @@ final class CalculadoraDeCargo
             throw CargoException::descuentoMayorQueElCargo($item->nombre);
         }
 
-        $this->exigirQueRespeteElTope($linea, $bruto, $descuentos, $fechaServicio);
+        if (! $deLaCuenta) {
+            $this->exigirQueRespeteElTope($linea, $bruto, $descuentos, $fechaServicio);
+        }
 
         // 4 ── Subtotal
         $subtotal = $bruto->restar($descuentos);
@@ -180,6 +195,18 @@ final class CalculadoraDeCargo
      */
     private function bruto(LineaDeCargo $linea, PrecioResuelto $precio): Monto
     {
+        /*
+         * La línea rehecha lleva el bruto de la original, al centavo.
+         * Rearmarlo como precio × cantidad puede correrse un centavo —el
+         * precio del cargo se guarda a cuatro decimales— y el envase sin
+         * abrir se había cobrado por su precio entero.
+         */
+        $original = $linea->mismoPrecioQue;
+
+        if ($original instanceof Cargo && Decimal::de($original->cantidad)->igualA($linea->cantidad)) {
+            return Monto::de($original->bruto);
+        }
+
         $envases = $linea->envases;
         $fila = $precio->fila;
 
@@ -352,6 +379,41 @@ final class CalculadoraDeCargo
         throw $deServicios
             ? CargoException::descuentoEnServiciosSuperaElTope($linea->item->nombre, $aplicado, $tope->comoPorcentaje(), $aQuien)
             : CargoException::descuentoComercialSuperaLaPolitica($linea->item->nombre, $aplicado, $tope->comoPorcentaje(), $aQuien);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL DESCUENTO DE LA CUENTA: EN PORCENTAJE CON TOPE, EN LEMPIRAS LIBRE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio, 12-oct-2026: «si es monto se le puede colocar cantidad
+     * libre; en porcentaje que no pase del 20 %; en honorarios lo mismo».
+     * Va encima del de ley y no mira la categoría ni la edad: al adulto
+     * mayor también se le puede dar, que es justo lo que la regla por
+     * categoría le negaba.
+     *
+     * En lempiras lo único que lo para es que el renglón no quede en
+     * negativo, y eso lo ataja `descuentoMayorQueElCargo()` igual que en
+     * cualquier línea. El reparto que no pasa lo que vale cada renglón
+     * vive en `AplicadorDeDescuentoDeLaCuenta`.
+     */
+    private function exigirQueRespeteElDeLaCuenta(LineaDeCargo $linea): void
+    {
+        $fraccion = $linea->descuentoComercialPorcentaje;
+
+        if (! $fraccion instanceof Decimal) {
+            return;
+        }
+
+        $tope = $this->politicaDelHospital->topeDelDescuentoDeLaCuenta();
+
+        if ($fraccion->mayorQue($tope)) {
+            throw CargoException::descuentoDeLaCuentaSuperaElTope(
+                $linea->item->nombre,
+                $fraccion->comoPorcentaje(),
+                $tope->comoPorcentaje(),
+            );
+        }
     }
 
     /**

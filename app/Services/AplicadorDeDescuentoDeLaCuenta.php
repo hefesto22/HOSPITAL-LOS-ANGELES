@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Domain\Enums\CategoriaLegalDeDescuento;
-use App\Domain\Enums\OrigenDelPrecio;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Enums\TipoItem;
@@ -40,12 +38,16 @@ use Illuminate\Support\Str;
  *   · Va en porcentaje O en lempiras. «Rebájele L 500» se reparte entre
  *     los renglones del rubro en proporción a lo que vale cada uno, y el
  *     residuo de redondeo cae en el más grande (§8.6.2-4).
- *   · Cada renglón se topa con SU categoría del Art. 30
- *     (`PoliticaDeDescuentoComercial::topeDeLaCategoria()`): la
- *     alimentación aguanta 20 % a un joven y el laboratorio 25 %. En
- *     porcentaje, el renglón que no aguanta lo pedido queda en su tope; en
- *     lempiras, lo que un renglón no aguanta se pasa a los otros, y si
- *     entre todos no alcanza, no se aplica y se dice hasta cuánto se puede.
+ *   · 🔴 EN PORCENTAJE, HASTA 20 %; EN LEMPIRAS, LIBRE (Mauricio,
+ *     12-oct-2026: «si es monto se le puede colocar cantidad libre; en
+ *     porcentaje que no pase del 20 %; en honorarios lo mismo»). Parejo
+ *     para todos y encima del de ley
+ *     (`PoliticaDeDescuentoComercial::topeDelDescuentoDeLaCuenta()`).
+ *     Antes cada renglón se topaba con su categoría del Art. 30, y al
+ *     adulto mayor no se le podía dar nada: «hasta L 0.00 en servicios».
+ *     En lempiras cada renglón aguanta lo que vale después del de ley;
+ *     lo que uno no aguanta pasa a los otros, y si entre todos no
+ *     alcanza, no se aplica y se dice hasta cuánto se puede.
  *   · Lo que entra después también lo lleva. En porcentaje, la línea
  *     nueva nace con su parte; en lempiras, el monto se vuelve a repartir
  *     entre todos, porque «L 500» sigue siendo L 500.
@@ -62,23 +64,12 @@ use Illuminate\Support\Str;
  * Un renglón asentado no se edita: se anula y se vuelve a cargar con la
  * rebaja, y la bitácora lo cuenta. Vuelve con la misma fecha del
  * servicio —el precio se resuelve por esa fecha (§8.5-3)—, el mismo
- * médico, el mismo servicio y el mismo texto. El honorario con el precio
- * del médico vuelve con ESE precio: sin él, el motor cobraría el de lista
- * del hospital. Solo se rehace lo que no tiene ya lo que le toca.
+ * médico, el mismo servicio, el mismo texto y EL MISMO PRECIO del cargo
+ * original (§9.M-20), incluido el del médico en un honorario. Solo se
+ * rehace lo que no tiene ya lo que le toca.
  */
 final class AplicadorDeDescuentoDeLaCuenta
 {
-    /**
-     * Topes ya leídos en esta vuelta, por cuenta, categoría y día.
-     *
-     * Cada tope lee la edad del paciente y la tabla de la ley; repartir
-     * entre veinte renglones o dibujar la sección en cada render lo pediría
-     * veinte veces para tres o cuatro respuestas distintas (§13.2).
-     *
-     * @var array<string, Decimal>
-     */
-    private array $topes = [];
-
     public function __construct(
         private readonly PoliticaDeDescuentoComercial $politica,
         private readonly AnuladorDeCargo $anulador,
@@ -127,6 +118,16 @@ final class AplicadorDeDescuentoDeLaCuenta
             || $pedido->esNegativo()
             || ($fraccion instanceof Decimal && $fraccion->mayorQue('1'))) {
             throw CuentaException::descuentoInvalido($rubro->enPlural());
+        }
+
+        $tope = $this->politica->topeDelDescuentoDeLaCuenta();
+
+        if ($fraccion instanceof Decimal && $fraccion->mayorQue($tope)) {
+            throw CuentaException::porcentajeMayorQueElTope(
+                $rubro->enPlural(),
+                $fraccion->comoPorcentaje(),
+                $tope->comoPorcentaje(),
+            );
         }
 
         $motivo = TextoCanonico::parrafoEnMayusculas($motivo) ?? '';
@@ -227,8 +228,8 @@ final class AplicadorDeDescuentoDeLaCuenta
      *
      * Nula si el rubro del ítem no tiene descuento en la cuenta, si está en
      * lempiras —ahí se reparte después con `ponerAlDia()`— o si el ítem es
-     * de farmacia. Topada con la categoría del ítem: al laboratorio de un
-     * joven el 30 % pedido le llega como 25 %.
+     * de farmacia. Nunca más que el tope del porcentaje, aunque la cuenta
+     * se haya guardado con otro antes de que lo bajaran.
      */
     public function fraccionParaLaLineaNueva(Cuenta $cuenta, Item $item, CarbonInterface $fecha): ?Decimal
     {
@@ -239,39 +240,22 @@ final class AplicadorDeDescuentoDeLaCuenta
             return null;
         }
 
-        $tope = $this->topeEnLaCategoria($cuenta, $item->categoria_legal_descuento, $fecha);
+        $tope = $this->politica->topeDelDescuentoDeLaCuenta();
         $aplica = $pedida->mayorQue($tope) ? $tope : $pedida;
 
         return $aplica->esCero() ? null : $aplica;
     }
 
     /**
-     * Hasta cuánto se le puede rebajar a este paciente en cada categoría
-     * del rubro, para decirlo antes de que alguien teclee un número que
-     * después se recorta.
-     *
-     * @return list<array{categoria: CategoriaLegalDeDescuento, tope: Decimal}>
-     */
-    public function topesDe(Cuenta $cuenta, RubroDeDescuento $rubro, CarbonInterface $fecha): array
-    {
-        return array_map(
-            fn (CategoriaLegalDeDescuento $categoria): array => [
-                'categoria' => $categoria,
-                'tope'      => $this->topeEnLaCategoria($cuenta, $categoria, $fecha),
-            ],
-            $rubro->categorias(),
-        );
-    }
-
-    /**
-     * Cuánto se le puede rebajar en lempiras a lo que ya está cargado del rubro.
+     * Cuánto se le puede rebajar en lempiras a lo que ya está cargado del
+     * rubro: lo que suma después del descuento de ley.
      */
     public function maximoEnLempiras(Cuenta $cuenta, RubroDeDescuento $rubro): Decimal
     {
         $maximo = Decimal::cero();
 
         foreach ($this->lineasDe($cuenta, $rubro) as $cargo) {
-            $maximo = $maximo->sumar($this->topeEnLempiras($cuenta, $cargo));
+            $maximo = $maximo->sumar(self::loQueQuedaDe($cargo));
         }
 
         return $maximo;
@@ -342,6 +326,7 @@ final class AplicadorDeDescuentoDeLaCuenta
 
         $objetivos = [];
         $pedida = self::fraccionDe($cuenta, $rubro);
+        $tope = $this->politica->topeDelDescuentoDeLaCuenta();
 
         foreach ($lineas as $cargo) {
             if (! $pedida instanceof Decimal) {
@@ -350,7 +335,6 @@ final class AplicadorDeDescuentoDeLaCuenta
                 continue;
             }
 
-            $tope = $this->topeDe($cuenta, $cargo);
             $topada = $pedida->mayorQue($tope);
             $aplica = $topada ? $tope : $pedida;
 
@@ -376,9 +360,10 @@ final class AplicadorDeDescuentoDeLaCuenta
      * la suma da el monto pedido al centavo, siempre. Nada de `float`: son
      * enteros de PHP, que no redondean.
      *
-     * Cuando la parte de un renglón pasa su tope, el renglón queda en su
-     * tope y lo que sobra se vuelve a repartir entre los demás, en
-     * proporción. Termina porque en cada vuelta o se reparte todo o al
+     * El tope de cada renglón es lo que vale después del descuento de ley
+     * (12-oct-2026: en lempiras, libre). Cuando la parte de un renglón
+     * pasa su tope, el renglón queda en su tope y lo que sobra se vuelve a
+     * repartir entre los demás, en proporción. Termina porque en cada vuelta o se reparte todo o al
      * menos un renglón se llena.
      *
      * @param Collection<int, Cargo> $lineas
@@ -400,7 +385,7 @@ final class AplicadorDeDescuentoDeLaCuenta
 
         foreach ($lineas as $cargo) {
             $bruto[$cargo->id] = self::aCentavos(Decimal::de($cargo->bruto));
-            $tope[$cargo->id] = self::aCentavos($this->topeEnLempiras($cuenta, $cargo));
+            $tope[$cargo->id] = self::aCentavos(self::loQueQuedaDe($cargo));
         }
 
         $cabe = array_sum($tope);
@@ -483,36 +468,14 @@ final class AplicadorDeDescuentoDeLaCuenta
     }
 
     /**
-     * El tope de la rebaja de un renglón, como fracción.
-     *
-     * Con la fecha del SERVICIO: la edad que cuenta es la que tenía el
-     * paciente ese día, igual que para el descuento de ley.
+     * Lo que vale el renglón después del descuento de ley: hasta ahí llega
+     * el descuento en lempiras. Más que eso lo dejaría en negativo.
      */
-    private function topeDe(Cuenta $cuenta, Cargo $cargo): Decimal
+    private static function loQueQuedaDe(Cargo $cargo): Decimal
     {
-        $item = $cargo->item;
+        $queda = Decimal::de($cargo->bruto)->restar(Decimal::de($cargo->descuento_legal));
 
-        if (! $item instanceof Item) {
-            return Decimal::cero();
-        }
-
-        return $this->topeEnLaCategoria($cuenta, $item->categoria_legal_descuento, $cargo->ocurrido_en);
-    }
-
-    private function topeEnLaCategoria(Cuenta $cuenta, CategoriaLegalDeDescuento $categoria, CarbonInterface $fecha): Decimal
-    {
-        $clave = $cuenta->id.'|'.$categoria->value.'|'.$fecha->format('Y-m-d');
-
-        return $this->topes[$clave] ??= $this->politica->topeEnLaCuenta($cuenta, $categoria, $fecha);
-    }
-
-    /**
-     * El mismo tope, en lempiras y redondeado como lo redondea la
-     * calculadora: así lo que se reparte nunca pasa lo que el cargo acepta.
-     */
-    private function topeEnLempiras(Cuenta $cuenta, Cargo $cargo): Decimal
-    {
-        return Decimal::de(Decimal::de($cargo->bruto)->por($this->topeDe($cuenta, $cargo))->redondeado(2));
+        return $queda->esNegativo() ? Decimal::cero() : $queda;
     }
 
     /**
@@ -527,15 +490,6 @@ final class AplicadorDeDescuentoDeLaCuenta
         }
 
         $conRebaja = ! $rebaja->esCero();
-
-        /*
-         * El precio que no salió de un tarifario —el honorario con la
-         * lista del médico— vuelve tal cual. Sin esto el motor lo
-         * resolvería de nuevo y cobraría el de lista del hospital.
-         */
-        $acordado = $cargo->origen_precio === OrigenDelPrecio::Presupuestado
-            ? Monto::de(Decimal::de($cargo->precio_unitario)->redondeado(2))
-            : null;
 
         $this->anulador->anular(
             $cargo,
@@ -553,13 +507,20 @@ final class AplicadorDeDescuentoDeLaCuenta
             autorizadoPor: $conRebaja ? self::quienLoDio($cuenta, $rubro) : null,
             servicioId: $cargo->servicio_id,
             ocurridoEn: $cargo->ocurrido_en,
-            precioAcordado: $acordado,
             medicoId: $cargo->medico_id,
             presentacion: $cargo->presentacion,
             envases: is_numeric($cargo->cantidad_presentacion)
                 ? Decimal::de($cargo->cantidad_presentacion)
                 : null,
             textoDelCargo: $cargo->texto,
+
+            /*
+             * 🔴 Con el precio que ya tenía, no con el de hoy: la rebaja
+             * se calculó sobre ESE bruto, y el honorario con la lista
+             * del médico vuelve también tal cual (LineaDeCargo).
+             */
+            mismoPrecioQue: $cargo,
+            descuentoDeLaCuenta: $conRebaja ? $rubro : null,
         ));
     }
 
