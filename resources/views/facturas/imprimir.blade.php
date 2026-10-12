@@ -1,41 +1,80 @@
 {{--
-    La factura, calcada del formulario que el hospital ya usa.
+    La factura impresa.
 
     ─────────────────────────────────────────────────────────────────────
-    POR QUÉ SE COPIA EL PAPEL VIEJO Y NO SE DISEÑA UNO NUEVO
+    🔴 ELEGANTE, PERO CON TODO LO QUE EL SAR PIDE (12-oct-2026)
     ─────────────────────────────────────────────────────────────────────
 
-    Porque la cajera, el contador y el auditor del SAR ya saben dónde
-    mirar. Un formulario «mejor» obliga a tres personas a reaprender
-    dónde está el CAI el día que estrenen el sistema, y a la cuarta
-    factura alguien va a decir que el sistema anterior era mejor.
+    Hasta acá era el formulario viejo del hospital calcado: recuadros
+    negros y una cuadrícula que se leía como una planilla. Mauricio: «se
+    sigue viendo feo, que sea más elegante, empresarial y profesional».
+
+    Se rediseñó la presentación, no el contenido. Siguen TODOS los datos
+    del Acuerdo 481-2017: R.T.N. del emisor, C.A.I., número, fecha de
+    emisión, rango autorizado y fecha límite de emisión; cliente con su
+    documento; los tres números de exoneración (orden de compra exenta,
+    constancia de registro exonerado, registro SAG); el detalle; las
+    casillas separadas de exonerado, exento, gravado 15 % y 18 %, ISV 15 %
+    y 18 %; el total, el total en letras, original y copia, y la leyenda.
+
+    Lo fiscal va junto en una franja (C.A.I., rango y fecha límite), las
+    partes en dos tarjetas —quien paga y el paciente—, y el TOTAL A PAGAR
+    en una banda de color, que es lo que se busca con el dedo.
+
+    🔴 EL ESPACIO DEL SELLO DE PAGADO (Mauricio, 12-oct-2026): «cada
+    factura debe tener un espacio para firmar o colocar sello para
+    marcarla como pagada». Va abajo a la derecha, junto a las firmas.
 
     ─────────────────────────────────────────────────────────────────────
     🔴 TODO SALE DE LA FILA DE LA FACTURA
     ─────────────────────────────────────────────────────────────────────
 
-    Ni el cliente, ni el CAI, ni los montos, ni el código del producto se
-    leen por relación: están congelados en `facturas` y `factura_lineas`.
-    Una reimpresión de hace ocho meses sale idéntica aunque el catálogo y
-    los precios hayan cambiado diez veces.
-
-    Lo único que se lee del sistema son los datos del EMISOR — el
-    hospital no cambia de nombre entre dos impresiones.
+    Ni el cliente, ni el C.A.I., ni los montos, ni el código del producto
+    se leen por relación: están congelados en `facturas` y
+    `factura_lineas`. Una reimpresión de hace ocho meses sale idéntica
+    aunque el catálogo y los precios hayan cambiado diez veces. Lo único
+    que se lee del sistema son los datos del EMISOR.
 --}}
 @php($lineas = $factura->detalle)
 @php($leyendas = config('sihla.facturacion.leyendas', []))
+@php($logo = $sede->logoIncrustado())
+@php($telefono = $sede->telefonoImpreso())
+@php($descuentos = (float) $factura->descuento_legal + (float) $factura->descuento_comercial)
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="utf-8">
     <title>{{ $factura->numero }}</title>
     <style>
-        @page { size: letter; margin: 10mm; }
+        @page { size: letter; margin: 11mm 12mm; }
         * { box-sizing: border-box; }
 
+        /*
+         * Los fondos se imprimen aunque el diálogo tenga apagado
+         * «Gráficos en segundo plano»: sin esto la banda del total y la
+         * franja fiscal salen en blanco.
+         */
+        html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        /*
+         * Los colores salen del logo: el azul profundo para lo que
+         * manda y el celeste para el acento. En una impresora de blanco
+         * y negro el azul sale gris oscuro y la jerarquía se mantiene.
+         */
+        :root {
+            --tinta: #0f172a;
+            --texto: #1e293b;
+            --suave: #64748b;
+            --raya: #cbd5e1;
+            --raya-fina: #e2e8f0;
+            --fondo: #f1f5f9;
+            --marca: #0c4a6e;
+            --marca-viva: #0ea5e9;
+        }
+
         body {
-            margin: 0; background: #f4f4f5; color: #000;
-            font-family: Arial, Helvetica, sans-serif; font-size: 10px;
+            margin: 0; background: #e5e7eb; color: var(--texto);
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 9.5px; line-height: 1.35;
         }
 
         /*
@@ -44,40 +83,9 @@
          * franja gris que parece un error de carga.
          */
         body.incrustada { background: #fff; }
-        body.incrustada .hoja { margin: 0 auto; box-shadow: none; }
+        body.incrustada .hoja { margin: 0 auto; }
 
-        .hoja { width: 216mm; margin: 0 auto; padding: 10mm; background: #fff; }
-
-        @media print {
-            body { background: #fff; }
-            .hoja { width: auto; margin: 0; padding: 0; }
-            .no-imprime { display: none !important; }
-
-            /*
-             * ─────────────────────────────────────────────────────────
-             * LA SEGUNDA HOJA CONTINÚA, SIN REPETIR NADA
-             * ─────────────────────────────────────────────────────────
-             *
-             * Una cirugía desglosada son veinte renglones y pasa de una
-             * hoja. Por omisión el navegador REPITE el `<thead>` de la
-             * tabla en cada página: la segunda salía encabezada como si
-             * fuera otro documento, y un papel fiscal que parece empezar
-             * de nuevo se lee como una factura distinta.
-             *
-             * `table-row-group` lo baja a una fila común y deja de
-             * repetirse. Decisión de Mauricio (2-sep-2026): continúa
-             * sin encabezado.
-             */
-            .detalle thead { display: table-row-group; }
-
-            /*
-             * Y lo que no se puede partir a la mitad: un renglón cortado
-             * entre dos hojas deja media cifra arriba y media abajo, y
-             * los totales separados de su detalle obligan a dar vuelta
-             * la hoja para saber de qué son.
-             */
-            .detalle tr, .detalle tfoot, .totales, .firmas { break-inside: avoid; }
-        }
+        .hoja { position: relative; width: 216mm; min-height: 279mm; margin: 0 auto; padding: 11mm 12mm; background: #fff; }
 
         .barra { max-width: 216mm; margin: 8px auto; display: flex; gap: 8px; justify-content: flex-end; }
         .barra button, .barra a {
@@ -85,107 +93,170 @@
             border: 1px solid #d4d4d8; background: #fff; color: #111; text-decoration: none;
         }
 
+        @media print {
+            body { background: #fff; }
+            .hoja { width: auto; min-height: 0; margin: 0; padding: 0; }
+            .no-imprime { display: none !important; }
+
+            /*
+             * LA SEGUNDA HOJA CONTINÚA, SIN REPETIR NADA. Una cirugía
+             * desglosada pasa de una hoja y el navegador repetía el
+             * encabezado de la tabla: la segunda parecía otro documento.
+             * Decisión de Mauricio (2-sep-2026): continúa sin encabezado.
+             */
+            .detalle thead { display: table-row-group; }
+
+            /*
+             * Lo que no se parte a la mitad: un renglón cortado entre dos
+             * hojas, o los totales separados de su detalle.
+             */
+            .detalle tr, .cierre, .firmas, .pie { break-inside: avoid; }
+
+            /* La marca de anulada, en todas las hojas. */
+            .anulada-marca { position: fixed; }
+        }
+
         table { border-collapse: collapse; width: 100%; }
         td, th { vertical-align: top; }
 
         /*
          * ─────────────────────────────────────────────────────────────
-         * EL MISMO FORMULARIO, MEJOR VESTIDO (12-oct-2026)
+         * EL ENCABEZADO: EL MEMBRETE A LA IZQUIERDA, EL DOCUMENTO A LA DERECHA
          * ─────────────────────────────────────────────────────────────
-         *
-         * Mauricio: «que el logo se vea más grande, que se vea mejor».
-         * Los recuadros siguen donde estaban —la cajera, el contador y
-         * el SAR ya saben dónde mirar—; lo que cambia es cómo se leen:
-         * los rótulos en gris claro y los datos en blanco, el
-         * encabezado de la tabla y el TOTAL A PAGAR con fondo, y el
-         * membrete separado del resto por una raya.
-         *
-         * ⚠️ Los grises se imprimen aunque el diálogo tenga apagado
-         * «Gráficos en segundo plano»: `print-color-adjust: exact`. Sin
-         * eso el papel sale sin fondos y se pierde qué es rótulo y qué
-         * es dato.
-         */
-        html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-
-        .marco td, .marco th { border: 1px solid #1f1f1f; padding: 3px 6px; }
-        .marco td.etiqueta { background: #f0f0f0; }
-
-        .encabezado { padding-bottom: 4mm; margin-bottom: 3mm; border-bottom: 2px solid #111; }
-
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * EL MEMBRETE: EL LOGO ARRIBA, GRANDE; LA RAZÓN SOCIAL DEBAJO
-         * ─────────────────────────────────────────────────────────────
-         *
-         * Al lado del nombre el logo no podía pasar de 52 px sin partir
-         * la razón social en dos renglones. Encima del nombre tiene todo
-         * el ancho del membrete, y la columna queda del mismo alto que
-         * la del CAI.
          *
          * 🔴 EL NOMBRE SE IMPRIME AUNQUE HAYA LOGO. La razón social del
-         * emisor es obligatoria en el papel; un logotipo no la
-         * sustituye ante el SAR ni aunque la lleve dibujada adentro.
+         * emisor es obligatoria en el papel; un logotipo no la sustituye
+         * ante el SAR ni aunque la lleve dibujada adentro.
          *
-         * ⚠️ FLEX Y NO UNA TABLA ADENTRO DE LA CELDA. Un logo SVG —que
-         * trae `viewBox` y no `width`— sale de 0×0 adentro de una celda
-         * de tabla: el navegador calcula el ancho mínimo antes de
-         * resolver la proporción. La factura salía SIN logo y sin error.
+         * ⚠️ FLEX Y NO UNA TABLA. Un logo SVG —que trae `viewBox` y no
+         * `width`— sale de 0×0 adentro de una celda de tabla: el
+         * navegador calcula el ancho mínimo antes de resolver la
+         * proporción, y la factura salía SIN logo y sin error a la vista.
          */
-        .membrete { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
-        .logo { display: block; max-height: 22mm; max-width: 85mm; flex: none; }
+        .encabezado { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; }
+        .membrete { min-width: 0; }
+        .logo { display: block; max-height: 19mm; max-width: 78mm; margin-bottom: 3mm; }
+        .membrete p { margin: 1px 0 0; color: var(--suave); font-size: 8.8px; }
+        .membrete .razon { margin: 0; font-size: 11.5px; font-weight: 700; color: var(--tinta); letter-spacing: .02em; }
+        .membrete.sin-logo .razon { font-size: 17px; }
+        .membrete .rtn { color: var(--texto); font-weight: 600; }
 
-        .emisor h1 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .02em; line-height: 1.25; }
-        .membrete.sin-logo h1 { font-size: 18px; }
-        .emisor p { margin: 0; font-size: 9px; line-height: 1.45; color: #333; }
-
-        .rotulo-factura { text-align: right; font-size: 20px; font-weight: 700; letter-spacing: .3em; margin-right: -.3em; }
-        .rtn-emisor { margin: 2px 0 6px; text-align: right; font-size: 10.5px; font-weight: 700; }
-        .cai { text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; }
-        .cai .rotulo-cai { display: block; font-size: 7.5px; font-weight: 400; letter-spacing: .12em; color: #444; }
-
-        .etiqueta { font-size: 9px; }
-        .dato { font-weight: 700; }
-        .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        .centro { text-align: center; }
-
-        .detalle thead th {
-            border: 1px solid #1f1f1f; padding: 5px 4px; font-size: 8.5px; text-align: center;
-            font-weight: 700; background: #e6e6e6;
+        .documento { flex: none; min-width: 64mm; text-align: right; }
+        .documento .tipo { font-size: 24px; font-weight: 300; letter-spacing: .32em; margin-right: -.32em; color: var(--marca); line-height: 1; }
+        .documento .numero { margin-top: 3mm; font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--suave); }
+        .documento .numero strong {
+            display: block; margin-top: 1px; font-size: 13px; letter-spacing: .03em; color: var(--tinta);
+            font-variant-numeric: tabular-nums;
         }
-        .detalle tbody td { border-left: 1px solid #1f1f1f; border-right: 1px solid #1f1f1f; padding: 3px 6px; }
+        .fechas { width: auto; margin: 3mm 0 0 auto; }
+        .fechas td { padding: 1px 0 1px 6mm; text-align: right; font-size: 9px; }
+        .fechas td:first-child { padding-top: 2px; font-size: 7.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--suave); }
+        .fechas td:last-child { font-weight: 600; color: var(--tinta); font-variant-numeric: tabular-nums; }
 
-        /*
-         * El renglón que nombra una cirugía desglosada. Va en negrita y
-         * SIN columnas numéricas: los renglones que cobran son los de
-         * abajo, y un «0.00» al lado del nombre del procedimiento se lee
-         * como una línea que falló. Lo garantiza el CHECK
-         * `factura_lineas_encabezado_no_cobra`, no esta hoja de estilo.
-         */
-        .detalle tbody tr.titulo td { font-weight: 700; }
-        .detalle tbody tr:last-child td { border-bottom: 1px solid #1f1f1f; }
-
-        .detalle tfoot td { border: 1px solid #1f1f1f; padding: 4px 6px; font-weight: 700; background: #f0f0f0; }
-        .detalle .rotulo-sumas { text-align: right; font-size: 9px; letter-spacing: .08em; }
-
-        .totales td { border: 1px solid #1f1f1f; padding: 3px 6px; }
-        .totales .rot { text-align: right; font-size: 9px; background: #f0f0f0; }
-        .totales tr.final td { padding: 5px 6px; font-size: 11.5px; font-weight: 700; background: #dedede; }
-
-        .letras { margin-top: 8px; text-align: center; font-size: 10px; }
-        .rango { margin-top: 6px; font-size: 9px; }
-        .copias { margin-top: 2px; font-size: 9px; }
-        .exijala {
-            margin-top: 8px; padding-top: 5px; border-top: 1px solid #bbb;
-            text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+        .franja {
+            height: 3px; margin: 5mm 0 4mm; border-radius: 2px;
+            background: linear-gradient(90deg, var(--marca) 0 70%, var(--marca-viva) 70% 100%);
         }
-
-        .firmas td { padding-top: 14mm; font-size: 9px; text-align: center; }
-        .firmas .linea { border-top: 1px solid #000; margin: 0 4mm; padding-top: 2px; }
 
         .anulada {
-            margin: 6px 0; padding: 4px; border: 2px solid #b91c1c; color: #b91c1c;
-            text-align: center; font-weight: 700; letter-spacing: .12em;
+            margin: 0 0 4mm; padding: 2.2mm 3.5mm; border: 1.5px solid #b91c1c; border-radius: 6px;
+            color: #b91c1c; font-weight: 700; letter-spacing: .08em; text-align: center;
         }
+        .anulada-marca { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+        .anulada-marca span { transform: rotate(-28deg); font-size: 120px; font-weight: 800; letter-spacing: .1em; color: rgba(185, 28, 28, .1); }
+
+        .rotulo {
+            display: block; margin-bottom: 1px; font-size: 7px; font-weight: 700; letter-spacing: .14em;
+            text-transform: uppercase; color: var(--suave);
+        }
+        .valor { font-size: 9.5px; font-weight: 600; color: var(--tinta); font-variant-numeric: tabular-nums; }
+
+        /* Lo fiscal, junto: C.A.I., rango autorizado y fecha límite. */
+        .fiscal { display: grid; grid-template-columns: 1.35fr 1.35fr .8fr; border: 1px solid var(--raya); border-radius: 6px; background: var(--fondo); }
+        .fiscal > div { padding: 2.2mm 3.5mm; }
+        .fiscal > div + div { border-left: 1px solid var(--raya); }
+        .fiscal .cai .valor { letter-spacing: .03em; }
+
+        /*
+         * Las partes: quien paga y quien se atendió (Mauricio,
+         * 11-oct-2026). Con seguro el cliente es la aseguradora y el
+         * paciente está siempre en su tarjeta, con su identidad y su
+         * póliza; el «Código de Cliente» es su expediente.
+         */
+        .partes { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin-top: 4mm; }
+        .parte { padding: 3mm 3.5mm; border: 1px solid var(--raya); border-radius: 6px; }
+        .parte .titulo {
+            margin-bottom: 1.5mm; padding-bottom: 1.2mm; border-bottom: 1px solid var(--raya-fina);
+            font-size: 7px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--marca);
+        }
+        .parte .nombre { font-size: 11px; font-weight: 700; color: var(--tinta); }
+        .parte .linea { display: flex; flex-wrap: wrap; gap: .5mm 5mm; margin-top: 1.2mm; font-size: 9px; color: var(--suave); }
+        .parte .linea b { font-weight: 600; color: var(--texto); }
+
+        .meta { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 3mm; border-top: 1px solid var(--raya-fina); border-bottom: 1px solid var(--raya-fina); }
+        .meta > div { padding: 1.8mm 2.5mm 1.8mm 0; }
+        .meta .valor { font-size: 9px; font-weight: 500; }
+
+        /* El detalle. */
+        .detalle { margin-top: 4mm; }
+        .detalle thead th {
+            padding: 2.2mm 2mm; text-align: left; font-size: 7.2px; font-weight: 700; letter-spacing: .12em;
+            text-transform: uppercase; color: var(--marca); background: var(--fondo);
+            border-top: 1.5px solid var(--marca); border-bottom: 1px solid var(--raya);
+        }
+        .detalle tbody td { padding: 2mm; border-bottom: 1px solid var(--raya-fina); font-size: 9.2px; }
+        .detalle tbody tr:last-child td { border-bottom: 1px solid var(--raya); }
+        .detalle .codigo { white-space: nowrap; font-size: 8.5px; color: var(--suave); }
+        .detalle td.total { font-weight: 600; color: var(--tinta); }
+
+        /*
+         * El renglón que nombra una cirugía desglosada: en negrita y SIN
+         * columnas numéricas. Los que cobran son los de abajo, y un
+         * «0.00» al lado del procedimiento se leería como una línea que
+         * falló. Lo garantiza el CHECK `factura_lineas_encabezado_no_cobra`.
+         */
+        .detalle tbody tr.titulo td { font-weight: 700; color: var(--tinta); background: #f8fafc; }
+
+        .num { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+        /*
+         * El cierre: en letras y comentarios a la izquierda, las casillas
+         * a la derecha. Las casillas van SEPARADAS porque el SAR las pide
+         * separadas: el impuesto en la casilla equivocada es un hallazgo
+         * con multa. El subtotal y los descuentos van con su nombre, y no
+         * sumados al pie de cada columna: un número sin rótulo era lo que
+         * confundía.
+         */
+        .cierre { display: grid; grid-template-columns: 1fr 74mm; gap: 6mm; align-items: start; margin-top: 4mm; }
+        .letras { padding: 2.5mm 3.5mm; border-left: 3px solid var(--marca-viva); border-radius: 0 6px 6px 0; background: var(--fondo); }
+        .comentarios { min-height: 16mm; margin-top: 3mm; padding: 2.5mm 3.5mm; border: 1px solid var(--raya); border-radius: 6px; }
+        .comentarios p { margin: 0; white-space: pre-line; }
+
+        .totales td { padding: 1.3mm 0; border-bottom: 1px solid var(--raya-fina); font-size: 9px; color: var(--suave); }
+        .totales td.num { font-weight: 500; color: var(--tinta); }
+        .totales tr.base td { font-weight: 600; color: var(--tinta); }
+        .pagar {
+            display: flex; justify-content: space-between; align-items: center; margin-top: 2mm; padding: 2.6mm 3.5mm;
+            border-radius: 6px; background: var(--marca); color: #fff;
+        }
+        .pagar span { font-size: 8px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+        .pagar strong { font-size: 14px; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+
+        /* Las firmas y el sello de pagado. */
+        .firmas { display: grid; grid-template-columns: 1fr 1fr 58mm; gap: 8mm; align-items: end; margin-top: 8mm; }
+        .firma { padding-top: 13mm; border-bottom: 1px solid var(--texto); }
+        .firma-rotulo { margin-top: 1.2mm; text-align: center; font-size: 8px; color: var(--suave); }
+        .sello {
+            display: flex; flex-direction: column; justify-content: space-between; height: 30mm; padding: 2mm 3mm;
+            border: 1.5px dashed #94a3b8; border-radius: 8px;
+        }
+        .sello .rotulo { text-align: center; color: var(--marca); }
+        .sello .renglon { display: flex; gap: 2mm; font-size: 7.5px; color: var(--suave); }
+        .sello .renglon i { flex: 1; border-bottom: 1px solid var(--raya); }
+
+        .pie { margin-top: 6mm; padding-top: 3mm; border-top: 1px solid var(--raya); text-align: center; }
+        .pie .copias { font-size: 8px; letter-spacing: .04em; color: var(--suave); }
+        .pie .exijala { margin-top: 1.5mm; font-size: 9.5px; font-weight: 700; letter-spacing: .12em; color: var(--marca); }
     </style>
 </head>
 <body class="{{ ($incrustada ?? false) ? 'incrustada' : '' }}">
@@ -197,324 +268,262 @@
     @endunless
 
     <div class="hoja">
+        @if (! $factura->estaViva())
+            <div class="anulada-marca" aria-hidden="true"><span>ANULADA</span></div>
+        @endif
+
         {{-- ── Encabezado ───────────────────────────────────────────── --}}
-        <div class="encabezado">
-            <table>
-                <tr>
-                    <td style="width: 56%; padding-right: 8mm" class="emisor">
-                        {{--
-                            🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO.
+        <header class="encabezado">
+            <div @class(['membrete', 'sin-logo' => ! $logo])>
+                {{--
+                    🔴 EL LOGO VA INCRUSTADO, NO ENLAZADO. La factura se
+                    imprime desde un iframe y el navegador abre el diálogo
+                    apenas carga: una imagen que todavía se está
+                    descargando sale como un hueco blanco. En base64 ya
+                    está ahí. Sin logo, el membrete sale con el nombre más
+                    grande — una factura no se cae por una imagen.
+                --}}
+                @if ($logo)
+                    <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
+                @endif
 
-                            La factura se imprime desde un iframe y el
-                            navegador abre el diálogo apenas carga: una
-                            imagen que todavía se está descargando sale
-                            como un hueco blanco en el papel. En base64 ya
-                            está ahí. Si no hay logo o el archivo
-                            desapareció, el membrete se imprime solo con el
-                            nombre, más grande — una factura no se cae por
-                            una imagen.
-                        --}}
-                        @php($logo = $sede->logoIncrustado())
-                        @php($telefono = $sede->telefonoImpreso())
+                <p class="razon">{{ mb_strtoupper($sede->razon_social) }}</p>
+                @if ($sede->direccion)
+                    <p>{{ $sede->direccion }}</p>
+                @endif
+                @if ($telefono || $sede->email)
+                    <p>
+                        @if ($telefono)
+                            Tel. {{ $telefono }}
+                        @endif
+                        @if ($telefono && $sede->email)
+                            &nbsp;·&nbsp;
+                        @endif
+                        @if ($sede->email)
+                            {{ $sede->email }}
+                        @endif
+                    </p>
+                @endif
+                <p class="rtn">R.T.N. {{ $sede->rtn ?? '—' }}</p>
+            </div>
 
-                        <div @class(['membrete', 'sin-logo' => ! $logo])>
-                            @if ($logo)
-                                <img src="{{ $logo }}" alt="{{ $sede->nombre }}" class="logo">
-                            @endif
+            <div class="documento">
+                <div class="tipo">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
+                <div class="numero">Número<strong>{{ $factura->numero }}</strong></div>
+                <table class="fechas">
+                    <tr>
+                        <td>Emisión</td>
+                        <td>{{ $factura->emitida_en->format('d/m/Y') }}</td>
+                    </tr>
+                    <tr>
+                        <td>Vencimiento</td>
+                        <td>{{ $factura->vence_el?->format('d/m/Y') ?? $factura->emitida_en->format('d/m/Y') }}</td>
+                    </tr>
+                </table>
+            </div>
+        </header>
 
-                            <div>
-                                <h1>{{ mb_strtoupper($sede->razon_social) }}</h1>
-                                @if ($sede->direccion)
-                                    <p>{{ $sede->direccion }}</p>
-                                @endif
-                                @if ($telefono || $sede->email)
-                                    <p>
-                                        @if ($telefono)
-                                            Tel. {{ $telefono }}
-                                        @endif
-                                        @if ($telefono && $sede->email)
-                                            &nbsp;·&nbsp;
-                                        @endif
-                                        @if ($sede->email)
-                                            {{ $sede->email }}
-                                        @endif
-                                    </p>
-                                @endif
-                            </div>
-                        </div>
-                    </td>
-
-                    <td style="width: 44%">
-                        <div class="rotulo-factura">{{ mb_strtoupper($factura->tipo->etiqueta()) }}</div>
-                        <p class="rtn-emisor">R.T.N. {{ $sede->rtn ?? '—' }}</p>
-
-                        {{--
-                            🔴 EL CAI VA ARRIBA DEL NÚMERO, EN SU RECUADRO.
-                            Sin él impreso, el documento no es una factura:
-                            es un papel sin valor fiscal.
-                        --}}
-                        <table class="marco">
-                            <tr>
-                                <td colspan="2" class="cai">
-                                    <span class="rotulo-cai">C.A.I.</span>
-                                    {{ $factura->cai }}
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="etiqueta">Número Factura</td>
-                                <td class="dato centro">{{ $factura->numero }}</td>
-                            </tr>
-                            <tr>
-                                <td class="etiqueta">Fecha</td>
-                                <td class="centro">{{ $factura->emitida_en->format('d/m/Y') }}</td>
-                            </tr>
-                            <tr>
-                                <td class="etiqueta">Vencimiento</td>
-                                <td class="centro">{{ $factura->vence_el?->format('d/m/Y') ?? $factura->emitida_en->format('d/m/Y') }}</td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
-        </div>
+        <div class="franja"></div>
 
         @if (! $factura->estaViva())
             <p class="anulada">ANULADA — {{ $factura->motivo_anulacion }}</p>
         @endif
 
-        {{-- ── Cliente, facturador y términos ───────────────────────── --}}
-        <table style="margin-top: 4px">
-            <tr>
-                <td style="width: 55%; padding-right: 4px">
-                    {{--
-                        🔴 El cliente es QUIEN PAGA; el paciente va aparte
-                        (Mauricio, 11-oct-2026). Con seguro el cliente es la
-                        aseguradora, sin seguro suele ser «CONSUMIDOR FINAL»,
-                        y el paciente está siempre en su propio renglón, con
-                        su identidad y su póliza si las tiene. El «Código de
-                        Cliente» de abajo es su número de expediente.
+        {{--
+            🔴 SIN EL C.A.I. IMPRESO EL DOCUMENTO NO ES UNA FACTURA: es un
+            papel sin valor fiscal. El rango autorizado va al lado: es lo
+            que permite verificar de un vistazo que este número cae
+            adentro de lo que el SAR autorizó.
+        --}}
+        <section class="fiscal">
+            <div class="cai">
+                <span class="rotulo">C.A.I.</span>
+                <span class="valor">{{ $factura->cai }}</span>
+            </div>
+            <div>
+                <span class="rotulo">Rango autorizado</span>
+                <span class="valor">{{ $rango }}</span>
+            </div>
+            <div>
+                <span class="rotulo">Fecha límite de emisión</span>
+                <span class="valor">{{ $factura->fecha_limite_emision->format('d/m/Y') }}</span>
+            </div>
+        </section>
 
-                        Las facturas emitidas antes de ese día no tienen
-                        paciente congelado —lo llevaban dentro del nombre del
-                        cliente— y salen sin el renglón, como se emitieron.
-                    --}}
-                    <table class="marco">
-                        <tr>
-                            <td>
-                                <span class="etiqueta">Nombre Cliente:</span><br>
-                                <span class="dato">{{ $factura->cliente_nombre }}</span>
-                                @if (filled($factura->cliente_direccion) || filled($factura->cliente_telefono))
-                                    <br>{{ $factura->cliente_direccion }}{{ filled($factura->cliente_direccion) && filled($factura->cliente_telefono) ? ' / ' : '' }}{{ $factura->cliente_telefono }}
-                                @endif
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <span class="etiqueta">{{ $factura->rotuloDelDocumento() }}:</span>
-                                <span class="dato">{{ $factura->cliente_documento }}</span>
-                            </td>
-                        </tr>
-                        @if (filled($factura->paciente_nombre))
-                            <tr>
-                                <td>
-                                    <span class="etiqueta">Paciente:</span>
-                                    <span class="dato">{{ $factura->paciente_nombre }}</span>
-                                    @if (filled($factura->paciente_documento) || filled($factura->paciente_poliza))
-                                        <br>
-                                        @if (filled($factura->paciente_documento))
-                                            <span class="etiqueta">{{ $factura->rotuloDelDocumentoDelPaciente() }}:</span>
-                                            <span class="dato">{{ $factura->documentoDelPacienteImpreso() }}</span>
-                                        @endif
-                                        @if (filled($factura->paciente_documento) && filled($factura->paciente_poliza))
-                                            &nbsp;&nbsp;&nbsp;
-                                        @endif
-                                        @if (filled($factura->paciente_poliza))
-                                            <span class="etiqueta">Póliza:</span>
-                                            <span class="dato">{{ $factura->paciente_poliza }}</span>
-                                        @endif
-                                    @endif
-                                </td>
-                            </tr>
-                        @endif
-                    </table>
-                </td>
+        {{-- ── Quien paga y quien se atendió ────────────────────────── --}}
+        <section class="partes">
+            <div class="parte">
+                <div class="titulo">Facturar a</div>
+                <div class="nombre">{{ $factura->cliente_nombre }}</div>
+                @if (filled($factura->cliente_documento))
+                    <div class="linea">
+                        <span>{{ $factura->rotuloDelDocumento() }} <b>{{ $factura->cliente_documento }}</b></span>
+                    </div>
+                @endif
+                @if (filled($factura->cliente_direccion) || filled($factura->cliente_telefono))
+                    <div class="linea">
+                        <span>{{ $factura->cliente_direccion }}{{ filled($factura->cliente_direccion) && filled($factura->cliente_telefono) ? ' · ' : '' }}{{ $factura->cliente_telefono }}</span>
+                    </div>
+                @endif
+            </div>
 
-                <td style="width: 45%">
-                    <table class="marco">
-                        <tr>
-                            <td class="etiqueta centro">Facturador</td>
-                            <td class="etiqueta centro">Términos</td>
-                        </tr>
-                        <tr>
-                            <td>{{ $factura->facturador }}</td>
-                            <td>{{ $factura->terminos }}</td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-        </table>
+            <div class="parte">
+                <div class="titulo">Paciente</div>
+                {{--
+                    Las facturas emitidas antes del 11-oct-2026 no tienen
+                    paciente congelado —lo llevaban dentro del nombre del
+                    cliente— y salen con la raya, como se emitieron.
+                --}}
+                <div class="nombre">{{ filled($factura->paciente_nombre) ? $factura->paciente_nombre : '—' }}</div>
+                <div class="linea">
+                    @if (filled($factura->paciente_documento))
+                        <span>{{ $factura->rotuloDelDocumentoDelPaciente() }} <b>{{ $factura->documentoDelPacienteImpreso() }}</b></span>
+                    @endif
+                    @if (filled($factura->paciente_poliza))
+                        <span>Póliza <b>{{ $factura->paciente_poliza }}</b></span>
+                    @endif
+                    <span>Código de cliente <b>{{ filled($factura->cliente_codigo) ? $factura->cliente_codigo : '—' }}</b></span>
+                </div>
+            </div>
+        </section>
 
-        <table class="marco" style="margin-top: 2px">
-            <tr>
-                <td class="etiqueta">Código de Cliente</td>
-                <td class="etiqueta">No. Orden Compra Exenta</td>
-                <td class="etiqueta">No. de Constancia Reg. Exonerada</td>
-                <td class="etiqueta">No. Registro SAG</td>
-            </tr>
-            <tr>
-                <td>{{ $factura->cliente_codigo }}&nbsp;</td>
-                <td>{{ $factura->cliente_orden_exenta }}&nbsp;</td>
-                <td>{{ $factura->cliente_constancia_exonerado }}&nbsp;</td>
-                <td>{{ $factura->cliente_registro_sag }}&nbsp;</td>
-            </tr>
-        </table>
+        <section class="meta">
+            <div>
+                <span class="rotulo">Facturador</span>
+                <span class="valor">{{ filled($factura->facturador) ? $factura->facturador : '—' }}</span>
+            </div>
+            <div>
+                <span class="rotulo">Términos</span>
+                <span class="valor">{{ filled($factura->terminos) ? $factura->terminos : '—' }}</span>
+            </div>
+            <div>
+                <span class="rotulo">No. orden compra exenta</span>
+                <span class="valor">{{ filled($factura->cliente_orden_exenta) ? $factura->cliente_orden_exenta : '—' }}</span>
+            </div>
+            <div>
+                <span class="rotulo">No. constancia reg. exonerado</span>
+                <span class="valor">{{ filled($factura->cliente_constancia_exonerado) ? $factura->cliente_constancia_exonerado : '—' }}</span>
+            </div>
+            <div>
+                <span class="rotulo">No. registro SAG</span>
+                <span class="valor">{{ filled($factura->cliente_registro_sag) ? $factura->cliente_registro_sag : '—' }}</span>
+            </div>
+        </section>
 
         {{-- ── El detalle ───────────────────────────────────────────── --}}
-        <table class="detalle" style="margin-top: 4px">
+        <table class="detalle">
             <thead>
                 <tr>
-                    <th style="width: 22mm">Cod. Producto</th>
-                    <th>D E S C R I P C I Ó N</th>
-                    <th style="width: 16mm">Cantidad</th>
-                    <th style="width: 20mm">Precio Unitario</th>
-                    <th style="width: 24mm">Descuentos y Rebajas Otorgados</th>
-                    <th style="width: 22mm">TOTAL</th>
+                    <th style="width: 19mm">Código</th>
+                    <th>Descripción</th>
+                    <th class="num" style="width: 15mm">Cant.</th>
+                    <th class="num" style="width: 21mm">Precio unit.</th>
+                    <th class="num" style="width: 22mm">Descuento</th>
+                    <th class="num" style="width: 22mm">Total</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach ($lineas as $linea)
                     @if ($linea->encabezado)
                         <tr class="titulo">
-                            <td>{{ $linea->codigo }}</td>
+                            <td class="codigo">{{ $linea->codigo }}</td>
                             <td colspan="5">{{ $linea->descripcion }}</td>
                         </tr>
                     @else
                         <tr>
-                            <td>{{ $linea->codigo }}</td>
+                            <td class="codigo">{{ $linea->codigo }}</td>
                             <td>{{ $linea->descripcion }}</td>
                             <td class="num">{{ number_format((float) $linea->cantidad, 2) }}</td>
                             <td class="num">{{ number_format((float) $linea->precio_unitario, 2) }}</td>
                             <td class="num">{{ number_format((float) $linea->descuento()->redondeado(2), 2) }}</td>
-                            <td class="num">{{ number_format((float) $linea->total, 2) }}</td>
+                            <td class="num total">{{ number_format((float) $linea->total, 2) }}</td>
                         </tr>
                     @endif
                 @endforeach
-
-                {{--
-                    Renglones en blanco para que el recuadro tenga cuerpo
-                    y no quede una tira de una línea flotando arriba de
-                    los totales.
-
-                    ⚠️ OCHO Y NO DIECIOCHO. Con dieciocho, una factura de
-                    un solo renglón —el caso normal cuando se cobra un
-                    paquete— salía con media hoja en blanco adentro del
-                    recuadro y parecía que la impresión se había cortado.
-                --}}
-                @for ($i = $lineas->count(); $i < 8; $i++)
-                    <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>
-                @endfor
             </tbody>
-
-            {{--
-                🔴 LAS SUMAS DE COLUMNA VAN BAJO SU COLUMNA.
-
-                Estaban en el bloque de totales, en una tabla aparte y
-                más angosta: los dos números caían corridos respecto de
-                las columnas que sumaban y quien revisaba el papel no
-                tenía cómo saber que ese «0.00» era el de los descuentos.
-                Acá caen exactamente debajo, que es donde el ojo los
-                busca.
-            --}}
-            <tfoot>
-                <tr class="sumas">
-                    <td></td>
-                    <td class="rotulo-sumas">T O T A L E S</td>
-                    <td></td>
-                    <td></td>
-                    <td class="num">{{ number_format((float) $factura->descuento_legal + (float) $factura->descuento_comercial, 2) }}</td>
-                    <td class="num">{{ number_format((float) $factura->bruto, 2) }}</td>
-                </tr>
-            </tfoot>
         </table>
 
-        {{-- ── Comentarios, firmas y totales ────────────────────────── --}}
-        <table style="margin-top: 4px">
-            <tr>
-                <td style="width: 58%; padding-right: 4px">
-                    <table class="marco" style="height: 100%">
-                        <tr>
-                            <td style="height: 26mm">
-                                <span class="etiqueta"><em>Comentarios:</em></span><br>
-                                {{ $factura->comentarios }}
-                            </td>
-                        </tr>
-                    </table>
+        {{-- ── En letras, comentarios y las casillas ────────────────── --}}
+        <section class="cierre">
+            <div>
+                {{-- El total en letras: la defensa contra el dígito alterado. --}}
+                <div class="letras">
+                    <span class="rotulo">Son</span>
+                    <span class="valor">{{ $enLetras }}</span>
+                </div>
 
-                    <table class="firmas">
-                        <tr>
-                            <td style="width: 50%"><div class="linea">Firma Por {{ mb_strtoupper($sede->razon_social) }}</div></td>
-                            <td style="width: 50%"><div class="linea">Firma Recibido de Conformidad</div></td>
-                        </tr>
-                    </table>
-                </td>
+                <div class="comentarios">
+                    <span class="rotulo">Comentarios</span>
+                    <p>{{ $factura->comentarios }}</p>
+                </div>
+            </div>
 
-                <td style="width: 42%">
-                    {{--
-                        Las seis casillas van SEPARADAS porque el SAR las
-                        pide separadas: el impuesto declarado en la
-                        casilla equivocada es un hallazgo con multa.
-                    --}}
-                    <table class="totales">
-                        <tr>
-                            <td class="rot">IMPORTE EXONERADO L.</td>
-                            <td class="num">{{ number_format((float) $factura->exonerado, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">IMPORTE EXENTO L.</td>
-                            <td class="num">{{ number_format((float) $factura->exento, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">DESCUENTO L.</td>
-                            <td class="num">{{ number_format((float) $factura->descuento_legal + (float) $factura->descuento_comercial, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">IMPORTE GRAVADO 15% L.</td>
-                            <td class="num">{{ number_format((float) $factura->gravado_15, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">IMPORTE GRAVADO 18% L.</td>
-                            <td class="num">{{ number_format((float) $factura->gravado_18, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">ISV 15% L.</td>
-                            <td class="num">{{ number_format((float) $factura->isv_15, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="rot">ISV 18% L.</td>
-                            <td class="num">{{ number_format((float) $factura->isv_18, 2) }}</td>
-                        </tr>
-                        <tr class="final">
-                            <td class="rot dato">T O T A L &nbsp; A &nbsp; P A G A R &nbsp; L.</td>
-                            <td class="num dato">{{ number_format((float) $factura->total, 2) }}</td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-        </table>
+            <div>
+                <table class="totales">
+                    <tr class="base">
+                        <td>Subtotal</td>
+                        <td class="num">{{ number_format((float) $factura->bruto, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Descuentos y rebajas</td>
+                        <td class="num">{{ $descuentos > 0 ? '− ' : '' }}{{ number_format($descuentos, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Importe exonerado</td>
+                        <td class="num">{{ number_format((float) $factura->exonerado, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Importe exento</td>
+                        <td class="num">{{ number_format((float) $factura->exento, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Importe gravado 15 %</td>
+                        <td class="num">{{ number_format((float) $factura->gravado_15, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Importe gravado 18 %</td>
+                        <td class="num">{{ number_format((float) $factura->gravado_18, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>ISV 15 %</td>
+                        <td class="num">{{ number_format((float) $factura->isv_15, 2) }}</td>
+                    </tr>
+                    <tr>
+                        <td>ISV 18 %</td>
+                        <td class="num">{{ number_format((float) $factura->isv_18, 2) }}</td>
+                    </tr>
+                </table>
 
-        {{-- El total en letras: la defensa contra el dígito alterado. --}}
-        <p class="letras">La Cantidad de: <strong>{{ $enLetras }}</strong></p>
+                <div class="pagar">
+                    <span>Total a pagar</span>
+                    <strong>L {{ number_format((float) $factura->total, 2) }}</strong>
+                </div>
+            </div>
+        </section>
 
-        <p class="rango">
-            Rango Autorizado de Facturas: {{ $rango }} &nbsp;
-            Fecha Límite Emisión {{ $factura->fecha_limite_emision->format('d/m/Y') }}
-        </p>
+        {{-- ── Firmas y el sello de pagado ──────────────────────────── --}}
+        <section class="firmas">
+            <div>
+                <div class="firma"></div>
+                <div class="firma-rotulo">Firma por {{ mb_strtoupper($sede->razon_social) }}</div>
+            </div>
+            <div>
+                <div class="firma"></div>
+                <div class="firma-rotulo">Recibido de conformidad</div>
+            </div>
+            <div class="sello">
+                <span class="rotulo">Pagado · sello y firma</span>
+                <div class="renglon">Fecha <i></i></div>
+                <div class="renglon">Firma <i></i></div>
+            </div>
+        </section>
 
-        <p class="copias">Original: Cliente &nbsp;&nbsp;&nbsp; Copia: Obligado Tributario Emisor</p>
-
-        @foreach ($leyendas as $leyenda)
-            <p class="exijala">{{ mb_strtoupper($leyenda) }}</p>
-        @endforeach
+        <footer class="pie">
+            <div class="copias">Original: Cliente &nbsp;·&nbsp; Copia: Obligado Tributario Emisor</div>
+            @foreach ($leyendas as $leyenda)
+                <div class="exijala">{{ mb_strtoupper($leyenda) }}</div>
+            @endforeach
+        </footer>
     </div>
 </body>
 </html>

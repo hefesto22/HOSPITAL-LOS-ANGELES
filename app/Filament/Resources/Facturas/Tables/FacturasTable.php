@@ -51,10 +51,12 @@ class FacturasTable
                  * número. La fecha va debajo del número. Estado y período
                  * se dicen en UNA etiqueta: vigente, declarada o anulada.
                  *
-                 * ⚠️ TODA columna lleva `grow(false)` salvo el cliente y
-                 * el paciente: Filament reparte el ancho sobrante entre
-                 * las que crecen. Con el paciente fijo, el nombre salía
-                 * cortado y la cuenta partida en tres renglones.
+                 * ⚠️ TODA columna lleva `grow(false)` salvo el cliente:
+                 * Filament reparte el ancho sobrante entre las que
+                 * crecen. El paciente lleva además un ANCHO MÍNIMO: sin
+                 * él, la tabla le daba lo justo para la palabra más
+                 * larga —«CARLOS / HUMBER…» y la cuenta partida en tres
+                 * renglones— y `grow()` solo no alcanzaba.
                  */
                 TextColumn::make('numero')
                     ->label('Factura')
@@ -93,9 +95,11 @@ class FacturasTable
                 TextColumn::make('paciente_nombre')
                     ->label('Paciente')
                     ->placeholder('—')
+                    ->weight('medium')
                     ->wrap()
                     ->lineClamp(2)
-                    ->grow()
+                    ->grow(false)
+                    ->extraAttributes(['style' => 'min-width: 15rem'])
                     ->searchable(query: fn (Builder $query, string $search): Builder => $query->where(
                         fn (Builder $donde): Builder => $donde
                             ->where('paciente_nombre', 'ilike', '%'.$search.'%')
