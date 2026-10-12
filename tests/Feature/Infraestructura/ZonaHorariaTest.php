@@ -134,6 +134,19 @@ it('el reloj de PHP y el de PostgreSQL nombran el mismo instante', function (): 
      *
      * (El §7.5-1 prohíbe usar `now()` de PostgreSQL en el dominio. Este
      * test no lo usa: lo audita.)
+     *
+     * 11-oct-2026: falló con 827 s sin que el código cambiara. Era el
+     * reloj de la máquina virtual de Docker Desktop, que se corre
+     * cuando la Mac duerme. El test hizo su trabajo —es el canario del
+     * NTP del §7.5-6— así que no se le sube la tolerancia: se le deja
+     * dicho qué hacer.
      */
-    expect(abs((int) $fila->epoca - now()->getTimestamp()))->toBeLessThan(60);
+    $desfase = (int) $fila->epoca - now()->getTimestamp();
+
+    expect(abs($desfase))->toBeLessThan(60, sprintf(
+        'El reloj de PostgreSQL está %d s %s del de PHP. En la Mac casi siempre es '
+        .'Docker Desktop después de que la Mac durmió: reiniciá Docker Desktop.',
+        abs($desfase),
+        $desfase < 0 ? 'atrás' : 'adelante',
+    ));
 });
