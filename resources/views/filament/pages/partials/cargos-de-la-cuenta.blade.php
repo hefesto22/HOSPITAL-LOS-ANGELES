@@ -41,7 +41,12 @@
 
     <div class="sihla-factura">
         <div class="sihla-factura-cabecera">
-            <span class="sihla-factura-rotulo">Cuenta en curso</span>
+            <span class="sihla-factura-rotulo">
+                Cuenta en curso
+                @if ($renglones->isNotEmpty())
+                    <span class="sihla-factura-cuantos">{{ $renglones->count() }} {{ $renglones->count() === 1 ? 'renglón' : 'renglones' }}</span>
+                @endif
+            </span>
             <span class="sihla-factura-numero">{{ $cuenta->numero }}</span>
         </div>
 
@@ -50,7 +55,17 @@
                 Todavía no tiene nada cargado. Escaneá el primer ítem arriba, o tocá uno de los atajos.
             </p>
         @else
-            <div class="sihla-factura-cuerpo" x-data x-init="$el.scrollTop = $el.scrollHeight">
+            {{--
+                Con el desglose de una cirugía abierto, el cuerpo deja de
+                tener alto propio: una tabla con scroll adentro de otra con
+                scroll, adentro de un modal con scroll, era leer por una
+                rendija. Abierto, crece y el que se desplaza es el modal.
+            --}}
+            <div
+                class="sihla-factura-cuerpo {{ $this->paqueteAbierto ? 'sihla-factura-cuerpo-libre' : '' }}"
+                x-data
+                x-init="$el.scrollTop = $el.scrollHeight"
+            >
                 <table class="sihla-factura-tabla">
                     <thead>
                         <tr>
@@ -65,11 +80,18 @@
                     </thead>
                     <tbody>
                         @foreach ($renglones as $indice => $renglon)
-                            <tr>
+                            @php($paquete = $renglon->presupuestoDelPaquete())
+
+                            <tr class="{{ $paquete !== null ? 'sihla-fila-paquete' : '' }}">
                                 <td class="sihla-col-n">{{ $indice + 1 }}</td>
 
                                 <td>
-                                    <span class="sihla-linea-texto">{{ $renglon->texto }}</span>
+                                    <span class="sihla-linea-texto">
+                                        {{ $renglon->texto }}
+                                        @if ($paquete !== null)
+                                            <span class="sihla-etiqueta-paquete">Paquete</span>
+                                        @endif
+                                    </span>
                                     <span class="sihla-linea-nota">
                                         {{ $renglon->nota }}
                                         {{--
@@ -180,8 +202,6 @@
                                 bitácora: la familia lee UN número y el
                                 turno abre el detalle cuando lo necesita.
                             --}}
-                            @php($paquete = $renglon->presupuestoDelPaquete())
-
                             @if ($paquete !== null)
                                 {{--
                                     🔴 `wire:key` NO ES OPCIONAL ACÁ.
@@ -194,7 +214,7 @@
                                     solo cambia lo que cambió.
                                 --}}
                                 <tr class="sihla-desglose-fila" wire:key="paquete-{{ $paquete->id }}">
-                                    <td colspan="7">
+                                    <td colspan="7" class="sihla-desglose-celda">
                                         @include('filament.pages.partials.desglose-del-paquete', [
                                             'presupuesto' => $paquete,
                                             'descuentoDeFarmacia' => $renglon->ultimaEntrega()?->descuento_comercial,
@@ -492,29 +512,59 @@
         }
 
         .sihla-factura-cuerpo { max-height: 17rem; overflow-y: auto; }
+        .sihla-factura-cuerpo-libre { max-height: none; }
 
+        /*
+         * ⚠️ Hijo directo (`>`) en todo lo de la tabla principal: adentro
+         * vive la tabla del desglose, y un `td` a secas le pegaba al de
+         * ella el padding, el borde y —peor— la cabecera pegajosa, que se
+         * subía encima de la de la cuenta al hacer scroll.
+         */
         .sihla-factura-tabla {
             width: 100%; border-collapse: collapse;
-            font-size: .8rem; font-variant-numeric: tabular-nums;
+            font-size: .82rem; font-variant-numeric: tabular-nums; color: rgb(63 63 70);
         }
-        .sihla-factura-tabla thead th {
+        .sihla-factura-tabla > thead > tr > th {
             position: sticky; top: 0; z-index: 1;
             background: rgb(255 255 255);
-            text-align: start; font-weight: 600; font-size: .68rem;
-            text-transform: uppercase; letter-spacing: .04em; color: rgb(113 113 122);
-            padding: .4rem .6rem; border-bottom: 1px solid rgb(228 228 231);
+            text-align: start; font-weight: 600; font-size: .66rem;
+            text-transform: uppercase; letter-spacing: .05em; color: rgb(113 113 122);
+            padding: .5rem .7rem; border-bottom: 1px solid rgb(228 228 231);
         }
-        .sihla-factura-tabla td {
-            padding: .45rem .6rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
+        /* Los títulos de las cifras, alineados con las cifras: a la derecha. */
+        .sihla-factura-tabla > thead > tr > th.sihla-num { text-align: end; }
+        .sihla-factura-tabla > tbody > tr > td {
+            padding: .6rem .7rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
         }
-        .sihla-factura-tabla tbody tr:last-child td { border-bottom: none; }
+        .sihla-factura-tabla > tbody > tr:last-child > td { border-bottom: none; }
+        .sihla-factura-tabla > tbody > tr:not(.sihla-desglose-fila):not(.sihla-motivo-fila):hover > td {
+            background: rgb(250 250 250);
+        }
+
+        /*
+         * La cirugía y su desglose se leen como un solo bloque: sin raya
+         * entre el renglón y el panel, y el panel corrido a la altura de
+         * la descripción.
+         */
+        .sihla-factura-tabla > tbody > tr.sihla-fila-paquete > td { border-bottom: none; }
+        .sihla-factura-tabla > tbody > tr > td.sihla-desglose-celda { padding: 0 .7rem .85rem 2.7rem; }
+        .sihla-etiqueta-paquete {
+            display: inline-block; margin-left: .4rem; vertical-align: .1em;
+            font-size: .6rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+            padding: .08rem .4rem; border-radius: 999px;
+            color: #b45309; background: rgb(254 243 199);
+        }
+        .sihla-factura-cuantos {
+            margin-left: .45rem; font-weight: 500; text-transform: none; letter-spacing: 0;
+            color: rgb(161 161 170);
+        }
 
         .sihla-col-n { width: 2rem; color: rgb(161 161 170); text-align: end; }
         .sihla-col-acc { width: 2rem; text-align: center; }
         .sihla-num { text-align: end; white-space: nowrap; }
         .sihla-fuerte { font-weight: 700; color: rgb(24 24 27); }
 
-        .sihla-linea-texto { display: block; color: rgb(24 24 27); }
+        .sihla-linea-texto { display: block; color: rgb(24 24 27); font-weight: 500; }
         .sihla-linea-nota { display: block; font-size: .68rem; color: rgb(161 161 170); }
 
         /*
@@ -529,7 +579,7 @@
 
         .sihla-anular {
             font-size: .8rem; line-height: 1; color: rgb(161 161 170); cursor: pointer;
-            padding: .15rem .3rem; border-radius: .25rem;
+            padding: .3rem .4rem; border-radius: .35rem; border: 0; background: transparent;
         }
         .sihla-anular:hover { color: rgb(190 18 60); background: rgb(254 242 242); }
 
@@ -601,8 +651,14 @@
         .dark .sihla-factura { background: rgb(24 24 27); border-color: rgb(63 63 70); }
         .dark .sihla-factura-cabecera,
         .dark .sihla-factura-pie { background: rgb(39 39 42); border-color: rgb(63 63 70); }
-        .dark .sihla-factura-tabla thead th { background: rgb(24 24 27); border-bottom-color: rgb(63 63 70); }
-        .dark .sihla-factura-tabla td { border-bottom-color: rgb(39 39 42); }
+        .dark .sihla-factura-tabla > thead > tr > th { background: rgb(24 24 27); border-bottom-color: rgb(63 63 70); }
+        .dark .sihla-factura-tabla { color: rgb(212 212 216); }
+        .dark .sihla-factura-tabla > tbody > tr > td { border-bottom-color: rgb(39 39 42); }
+        .dark .sihla-factura-tabla > tbody > tr:not(.sihla-desglose-fila):not(.sihla-motivo-fila):hover > td {
+            background: rgb(255 255 255 / .03);
+        }
+        .dark .sihla-etiqueta-paquete { color: #fbbf24; background: rgb(251 191 36 / .12); }
+        .dark .sihla-factura-cuantos { color: rgb(113 113 122); }
         .dark .sihla-linea-texto,
         .dark .sihla-fuerte,
         .dark .sihla-pie-total { color: rgb(244 244 245); }
@@ -624,71 +680,139 @@
         .dark .sihla-bitacora-monto { color: rgb(161 161 170); }
     
         /*
-         * El desglose del paquete presupuestado (ADR-0009). Plegado por
-         * defecto: la familia lee un número, el turno abre el detalle.
-         */
-        .sihla-desglose { margin: .25rem 0 .5rem; font-size: .78rem; }
-        .sihla-desglose-titulo {
-            cursor: pointer; letter-spacing: .04em; text-transform: uppercase;
-            opacity: .75; padding: .2rem 0; background: none; border: 0;
-            color: inherit; font: inherit; text-align: left; width: 100%;
-        }
-        .sihla-desglose-titulo:hover { opacity: 1; }
-        .sihla-desglose-avance { text-transform: none; letter-spacing: 0; opacity: .8; margin-left: .5rem; }
-        .sihla-desglose-tabla { width: 100%; margin-top: .35rem; }
-
-        /*
-         * La barra de scroll del contenedor tapaba la columna de la
-         * cantidad —el dato que hay que leer—. `scrollbar-gutter` le
-         * reserva el carril aunque la barra no esté, así la columna no
-         * se corre cuando aparece; el padding es el respaldo para los
-         * navegadores que no lo soportan.
-         */
-        .sihla-desglose-tabla td:last-child { padding-right: 1.1rem; }
-        .sihla-desglose { scrollbar-gutter: stable; }
-        .sihla-desglose-tabla td { padding: .18rem .4rem; vertical-align: top; }
-        .sihla-desglose-marca { width: 1.4rem; text-align: center; opacity: .9; }
-        .sihla-desglose-auto { opacity: .45; font-style: italic; }
-        .sihla-desglose-acc { width: 5.5rem; text-align: right; padding-right: .2rem; }
-        .sihla-desglose-entregar {
-            font-size: .72rem; padding: .12rem .5rem; border-radius: .3rem;
-            border: 1px solid currentColor; opacity: .85; cursor: pointer;
-            text-transform: uppercase; letter-spacing: .03em;
-        }
-        .sihla-desglose-entregar:hover { opacity: 1; }
-        .sihla-desglose-entregar[disabled] { opacity: .4; cursor: wait; }
-        .sihla-desglose-acc { width: 9rem; }
-        .sihla-desglose-pregunta { display: inline-flex; gap: .2rem; align-items: center; }
-        .sihla-desglose-campo {
-            width: 3.2rem; text-align: right; font-size: .72rem;
-            padding: .1rem .3rem; border-radius: .3rem;
-            border: 1px solid currentColor; background: transparent; color: inherit;
-        }
-        .sihla-desglose-opcional {
-            font-size: .7rem; opacity: .6; margin-left: .35rem;
-            text-transform: uppercase; letter-spacing: .04em;
-        }
-
-        /*
-         * El costo de cada renglón del paquete.
+         * ─────────────────────────────────────────────────────────────
+         * EL DESGLOSE DEL PAQUETE (ADR-0009) — 12-oct-2026
+         * ─────────────────────────────────────────────────────────────
          *
-         * `tabular-nums` no es cosmético: sin él los dígitos tienen
-         * anchos distintos y la columna de precios queda en zigzag,
-         * justo la columna que alguien va a leer de arriba abajo para
-         * ver si la suma da.
+         * Plegado: un botón con el avance de farmacia. Abierto: un panel
+         * con su propia cabecera, el estado en palabras y con color, y la
+         * suma al pie. La raya ámbar a la izquierda dice «esto es de la
+         * cirugía de arriba».
          */
-        .sihla-desglose-precio {
-            width: 7rem; white-space: nowrap; font-variant-numeric: tabular-nums;
+        .sihla-desglose { font-size: .78rem; }
+        .sihla-desglose-toggle {
+            display: inline-flex; align-items: center; flex-wrap: wrap; gap: .3rem .6rem;
+            padding: .32rem .7rem .32rem .45rem; border-radius: .5rem; cursor: pointer;
+            border: 1px solid rgb(228 228 231); background: rgb(250 250 250);
+            color: rgb(63 63 70); font: inherit; font-size: .74rem; text-align: left;
         }
+        .sihla-desglose-toggle:hover { border-color: rgb(212 212 216); background: rgb(244 244 245); }
+        .sihla-desglose-chevron { width: 1rem; height: 1rem; color: rgb(113 113 122); transition: transform .15s ease; }
+        .sihla-desglose-abierto .sihla-desglose-chevron { transform: rotate(90deg); }
+        .sihla-desglose-toggle-texto { font-weight: 600; color: rgb(39 39 42); }
+        .sihla-desglose-cuenta { color: rgb(113 113 122); }
+        .sihla-desglose-avance { display: inline-flex; align-items: center; gap: .4rem; color: rgb(113 113 122); }
+        .sihla-desglose-barra {
+            display: inline-block; width: 3.5rem; height: .3rem; border-radius: 999px;
+            background: rgb(228 228 231); overflow: hidden;
+        }
+        .sihla-desglose-barra i { display: block; height: 100%; border-radius: 999px; background: #16a34a; }
+
+        .sihla-desglose-panel {
+            margin-top: .5rem; overflow: hidden; border-radius: .55rem;
+            border: 1px solid rgb(228 228 231); border-left: 3px solid #d97706;
+            background: rgb(250 250 250);
+        }
+        .sihla-desglose-tabla { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        .sihla-desglose-tabla th {
+            text-align: start; font-size: .62rem; font-weight: 600;
+            letter-spacing: .06em; text-transform: uppercase; color: rgb(113 113 122);
+            padding: .5rem .65rem; border-bottom: 1px solid rgb(228 228 231);
+        }
+        .sihla-desglose-tabla th.sihla-num { text-align: end; }
+        .sihla-desglose-tabla td {
+            padding: .45rem .65rem; border-bottom: 1px solid rgb(238 238 240);
+            vertical-align: middle; color: rgb(39 39 42);
+        }
+        .sihla-desglose-tabla tbody tr:last-child td { border-bottom: none; }
+        .sihla-desglose-tabla tbody tr:hover td { background: rgb(255 255 255); }
+
+        .sihla-desglose-col-estado { width: 6.5rem; }
+        .sihla-desglose-concepto { font-weight: 500; }
+        .sihla-desglose-cant { white-space: nowrap; }
+        .sihla-desglose-de { color: rgb(161 161 170); margin: 0 .1rem; }
+        .sihla-desglose-unidad { font-size: .68rem; color: rgb(161 161 170); margin-left: .15rem; }
+        .sihla-desglose-precio { width: 7.5rem; white-space: nowrap; font-weight: 600; }
+        .sihla-desglose-opcional {
+            margin-left: .4rem; font-size: .6rem; font-weight: 600; letter-spacing: .05em;
+            text-transform: uppercase; padding: .05rem .35rem; border-radius: 999px;
+            color: rgb(113 113 122); box-shadow: inset 0 0 0 1px rgb(212 212 216);
+        }
+
+        .sihla-estado {
+            display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap;
+            font-size: .66rem; font-weight: 600; padding: .14rem .5rem; border-radius: 999px;
+        }
+        .sihla-estado::before {
+            content: ''; width: .38rem; height: .38rem; border-radius: 999px; background: currentColor;
+        }
+        .sihla-estado-incluido { color: rgb(113 113 122); background: rgb(244 244 245); }
+        .sihla-estado-completo { color: #15803d; background: rgb(220 252 231); }
+        .sihla-estado-parcial { color: #b45309; background: rgb(254 243 199); }
+        .sihla-estado-pendiente { color: #0369a1; background: rgb(224 242 254); }
+
+        .sihla-desglose-acc { width: 10rem; text-align: right; white-space: nowrap; }
+        .sihla-desglose-pregunta { display: inline-flex; gap: .3rem; align-items: center; }
+        .sihla-desglose-campo {
+            width: 3.6rem; text-align: right; font-size: .74rem;
+            padding: .22rem .4rem; border-radius: .4rem;
+            border: 1px solid rgb(212 212 216); background: rgb(255 255 255); color: rgb(24 24 27);
+        }
+        .sihla-btn-entregar, .sihla-btn-dar {
+            font-size: .7rem; font-weight: 600; padding: .25rem .65rem; border-radius: .4rem;
+            border: 0; cursor: pointer; white-space: nowrap;
+        }
+        .sihla-btn-entregar {
+            color: #b45309; background: rgb(254 243 199 / .55);
+            box-shadow: inset 0 0 0 1px rgb(217 119 6 / .45);
+        }
+        .sihla-btn-entregar:hover { background: rgb(254 243 199); }
+        .sihla-btn-dar { color: rgb(255 255 255); background: #d97706; }
+        .sihla-btn-dar:hover { background: #b45309; }
+        .sihla-btn-dar[disabled] { opacity: .5; cursor: wait; }
+        .sihla-btn-icono {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.65rem; height: 1.65rem; border-radius: .4rem; border: 0;
+            background: transparent; color: rgb(113 113 122); cursor: pointer; font-size: .9rem;
+        }
+        .sihla-btn-icono:hover { background: rgb(244 244 245); color: rgb(39 39 42); }
+
         .sihla-desglose-suma td {
-            padding-top: .35rem; font-weight: 600;
-            border-top: 1px solid rgb(212 212 216);
+            font-weight: 700; color: rgb(24 24 27);
+            border-top: 1px solid rgb(212 212 216); background: rgb(244 244 245);
         }
-        .dark .sihla-desglose-suma td { border-top-color: rgb(63 63 70); }
-        .sihla-desglose-pie { margin-top: .4rem; opacity: .65; font-size: .72rem; }
-        .sihla-desglose-enlace {
-            display: inline-block; margin-left: .35rem;
-            text-decoration: underline; opacity: .9; white-space: nowrap;
+
+        .sihla-desglose-notas {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+            gap: .5rem 1.25rem; padding: .6rem .7rem;
+            border-top: 1px solid rgb(228 228 231); font-size: .7rem; color: rgb(113 113 122);
         }
+        .sihla-desglose-notas-texto { flex: 1 1 24rem; display: grid; gap: .25rem; }
+        .sihla-desglose-notas p { margin: 0; }
+        .sihla-desglose-rebaja { color: #b45309; }
+        .sihla-desglose-enlace { font-weight: 600; color: #b45309; white-space: nowrap; text-decoration: none; }
+        .sihla-desglose-enlace:hover { text-decoration: underline; }
+
+        .dark .sihla-desglose-toggle { background: rgb(255 255 255 / .04); border-color: rgb(63 63 70); color: rgb(212 212 216); }
+        .dark .sihla-desglose-toggle:hover { background: rgb(255 255 255 / .07); border-color: rgb(82 82 91); }
+        .dark .sihla-desglose-toggle-texto { color: rgb(244 244 245); }
+        .dark .sihla-desglose-barra { background: rgb(255 255 255 / .12); }
+        .dark .sihla-desglose-panel { background: rgb(255 255 255 / .025); border-color: rgb(63 63 70); border-left-color: #f59e0b; }
+        .dark .sihla-desglose-tabla th { color: rgb(161 161 170); border-bottom-color: rgb(63 63 70); }
+        .dark .sihla-desglose-tabla td { color: rgb(228 228 231); border-bottom-color: rgb(255 255 255 / .06); }
+        .dark .sihla-desglose-tabla tbody tr:hover td { background: rgb(255 255 255 / .03); }
+        .dark .sihla-desglose-opcional { color: rgb(161 161 170); box-shadow: inset 0 0 0 1px rgb(82 82 91); }
+        .dark .sihla-estado-incluido { color: rgb(161 161 170); background: rgb(255 255 255 / .06); }
+        .dark .sihla-estado-completo { color: #4ade80; background: rgb(34 197 94 / .12); }
+        .dark .sihla-estado-parcial { color: #fbbf24; background: rgb(251 191 36 / .12); }
+        .dark .sihla-estado-pendiente { color: #38bdf8; background: rgb(56 189 248 / .12); }
+        .dark .sihla-desglose-campo { background: rgb(24 24 27); color: rgb(244 244 245); border-color: rgb(82 82 91); }
+        .dark .sihla-btn-entregar { color: #fbbf24; background: rgb(251 191 36 / .08); box-shadow: inset 0 0 0 1px rgb(251 191 36 / .35); }
+        .dark .sihla-btn-entregar:hover { background: rgb(251 191 36 / .16); }
+        .dark .sihla-btn-icono:hover { background: rgb(255 255 255 / .08); color: rgb(244 244 245); }
+        .dark .sihla-desglose-suma td { color: rgb(244 244 245); background: rgb(255 255 255 / .04); border-top-color: rgb(63 63 70); }
+        .dark .sihla-desglose-notas { border-top-color: rgb(63 63 70); color: rgb(161 161 170); }
+        .dark .sihla-desglose-rebaja,
+        .dark .sihla-desglose-enlace { color: #fbbf24; }
     </style>
 @endif

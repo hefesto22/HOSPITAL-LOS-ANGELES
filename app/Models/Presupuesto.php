@@ -408,7 +408,7 @@ class Presupuesto extends Model
                 : Decimal::de($cargo->cantidad);
         }
 
-        return $this->detalle()->with('item')->get()->map(
+        return $this->detalle()->with(['item', 'unidad'])->get()->map(
             function (PresupuestoLinea $linea) use ($porLinea): array {
                 $consumida = $porLinea[$linea->id] ?? Decimal::cero();
                 $pedida = Decimal::de($linea->cantidad);
