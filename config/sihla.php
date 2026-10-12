@@ -309,6 +309,13 @@ return [
         'cargos_por_rol' => [
             'laboratorio' => ['estudio_laboratorio'],
             'imagenes'    => ['estudio_imagen'],
+
+            /*
+             * Las consultas son `honorario` en el catálogo (CON-…), y los
+             * procedimientos menores —curaciones, inyecciones, sala de
+             * procedimientos— son `procedimiento`.
+             */
+            'consulta_externa' => ['honorario', 'procedimiento'],
         ],
 
         'categoria_por_tipo' => [
@@ -720,6 +727,34 @@ return [
             'Davivienda',
             'Banco Azteca',
         ],
+
+        /*
+         * A partir de cuántas horas abierto «Caja» avisa que el turno ya
+         * debería haberse cerrado.
+         *
+         * Un turno olvidado no rompe nada en el momento: sigue sumando
+         * recibos de días distintos, y el arqueo del viernes termina
+         * mezclando el efectivo del lunes. El aviso no cierra nada ni
+         * bloquea el cobro — solo lo pone a la vista. 0 lo apaga.
+         */
+        'horas_para_avisar_turno_largo' => 14,
+
+        /*
+         * Quién factura SIN tener un turno de caja abierto.
+         *
+         * Mauricio, 12-oct-2026: facturar es de las cajeras que estén en
+         * turno — la factura casi siempre se cobra en el acto («primero
+         * se salda») y esa plata tiene que caer en una gaveta que alguien
+         * cuente. Dirección (la administración) también factura, con o
+         * sin gaveta; si en ese momento hay que cobrar, el abono le pide
+         * el turno igual.
+         *
+         * Los demás roles con permiso de facturar necesitan su turno
+         * abierto. El turno es de la PERSONA, no del nombre: la cajera
+         * del turno A que hoy cubre el C abre su turno y le pone «TURNO
+         * C».
+         */
+        'facturan_sin_turno' => ['direccion'],
     ],
 
 ];

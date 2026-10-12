@@ -40,6 +40,8 @@
         @php($cuentas = $this->cuentas())
         @php($puedeCargar = $this->puedeCargar())
         @php($puedeDiagnosticar = $this->puedeDiagnosticar())
+        @php($puedeAbonar = $this->puedeAbonar())
+        @php($porQueNoFactura = $this->porQueNoFactura())
 
         @if ($cuentas->isEmpty())
             <div class="sihla-vacio">
@@ -191,8 +193,13 @@
                         --}}
                         <button
                             type="button"
-                            wire:click="prepararAbono({{ $cuenta->id }})"
-                            wire:loading.attr="disabled"
+                            @if ($puedeAbonar)
+                                wire:click="prepararAbono({{ $cuenta->id }})"
+                                wire:loading.attr="disabled"
+                            @else
+                                disabled
+                                title="Los abonos los recibe caja, con el turno abierto."
+                            @endif
                             class="sihla-accion-clinica"
                         >
                             <x-filament::icon icon="heroicon-o-banknotes" class="sihla-icono-chico" />
@@ -207,8 +214,13 @@
                         --}}
                         <button
                             type="button"
-                            wire:click="prepararFactura({{ $cuenta->id }})"
-                            wire:loading.attr="disabled"
+                            @if ($porQueNoFactura === null)
+                                wire:click="prepararFactura({{ $cuenta->id }})"
+                                wire:loading.attr="disabled"
+                            @else
+                                disabled
+                                title="{{ $porQueNoFactura }}"
+                            @endif
                             class="sihla-accion-clinica"
                         >
                             <x-filament::icon icon="heroicon-o-document-text" class="sihla-icono-chico" />

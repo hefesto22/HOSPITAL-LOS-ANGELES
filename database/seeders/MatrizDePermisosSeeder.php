@@ -437,6 +437,25 @@ class MatrizDePermisosSeeder extends Seeder
             'Cargo'           => ['ViewAny', 'View', 'Create'],
         ],
 
+        /*
+         * Consulta externa (12-oct-2026): lo mismo que laboratorio, para
+         * el paciente que viene a consulta. Registra, abre la cuenta y
+         * carga; QUÉ puede cargar lo acota `sihla.inventario.cargos_por_rol`
+         * (consultas y procedimientos). Sin Abono ni Factura: cobrar y
+         * facturar es de caja con el turno abierto.
+         */
+        'consulta_externa' => [
+            'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
+            'FusionDePersona' => ['ViewAny', 'View'],
+            'Item'            => ['ViewAny', 'View'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View'],
+            'Unidad'          => ['ViewAny', 'View'],
+            'Convenio'        => ['ViewAny', 'View'],
+            'Encuentro'       => ['ViewAny', 'View', 'Create'],
+            'Cuenta'          => ['ViewAny', 'View', 'Create'],
+            'Cargo'           => ['ViewAny', 'View', 'Create'],
+        ],
         'imagenes' => [
             'Persona'       => ['ViewAny', 'View'],
             'Item'          => ['ViewAny', 'View'],

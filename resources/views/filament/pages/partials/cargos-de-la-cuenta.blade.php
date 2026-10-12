@@ -413,74 +413,110 @@
         {{--
             🔴 La caja también va al libro (11-oct-2026): «Abonado − 26.95»
             sin un renglón que lo explique es plata que nadie sabe de
-            dónde salió. Los recibos y las facturas —con sus anulaciones—
-            van debajo de los cargos, en el orden en que pasaron.
+            dónde salió.
+
+            Rediseño del 12-oct-2026: un solo hilo, lo más reciente
+            arriba y agrupado por día, contado como pasó —agregó, quitó,
+            cambió, cobró, facturó, anuló— en vez de las filas crudas de
+            la base (ver HistorialDeLaCuenta). Antes, cambiar el descuento
+            del paquete dejaba cuatro renglones con «· -1 · Reversa»;
+            ahora es uno: «Cambió APENDICECTOMIA de L. 1,000.00 a
+            L. 925.60», con su motivo.
+
+            Abierto y cerrado viven en Alpine y no en un `<details>`: el
+            morph de Livewire le borra el `open` a un `<details>` en cada
+            re-render (lección del desglose del paquete), y el estado de un
+            `x-data` lo conserva.
         --}}
-        @php($bitacora = $cuenta->bitacora())
-        @php($caja = $cuenta->bitacoraDeCaja())
-        @php($cuantos = $bitacora->count() + count($caja))
+        @php($historial = app(\App\Support\HistorialDeLaCuenta::class))
+        @php($movimientos = $historial->de($cuenta))
+        @php($visibles = 8)
 
-        @if ($cuantos > 0)
-            <details class="sihla-bitacora">
-                <summary>
-                    Bitácora · {{ $cuantos }}
-                    {{ $cuantos === 1 ? 'movimiento' : 'movimientos' }}
-                </summary>
+        @if ($movimientos !== [])
+            @php($ultimo = $movimientos[0])
 
-                <div class="sihla-bitacora-cuerpo">
-                    @foreach ($bitacora as $movimiento)
-                        @php($esReversa = $movimiento->estado === \App\Domain\Enums\EstadoCargo::Anulacion)
-                        @php($esAnulado = $movimiento->estado === \App\Domain\Enums\EstadoCargo::Anulado)
+            <div class="sihla-historial" x-data="{ abierto: false, todo: false }">
+                <button
+                    type="button"
+                    class="sihla-historial-boton"
+                    x-on:click="abierto = ! abierto"
+                    x-bind:aria-expanded="abierto ? 'true' : 'false'"
+                >
+                    <x-filament::icon icon="heroicon-o-clock" class="sihla-historial-icono" />
 
-                        <div class="sihla-bitacora-linea {{ $esReversa || $esAnulado ? 'sihla-bitacora-muerta' : '' }}">
-                            <span class="sihla-bitacora-hora">
-                                {{ $movimiento->registrado_en->format('d/m H:i') }}
-                            </span>
+                    <span class="sihla-historial-rotulo">
+                        Historial de la cuenta
+                        <span class="sihla-historial-cuantos">{{ count($movimientos) }}</span>
+                    </span>
 
-                            <span class="sihla-bitacora-que">
-                                <span class="{{ $esAnulado ? 'sihla-tachado' : '' }}">
-                                    {{ $movimiento->texto }}
-                                </span>
-                                <span class="sihla-bitacora-quien">
-                                    {{ $movimiento->createdBy?->name ?? 'Sistema' }}
-                                    ·
-                                    {{ rtrim(rtrim((string) $movimiento->cantidad, '0'), '.') }}
-                                    ·
-                                    {{ $movimiento->estado->etiqueta() }}
-                                    @if (filled($movimiento->motivo_anulacion))
-                                        — «{{ $movimiento->motivo_anulacion }}»
-                                    @endif
-                                </span>
-                            </span>
+                    <span class="sihla-historial-ultimo">
+                        Lo último: {{ mb_strtolower($ultimo->tipo->verbo()) }} {{ $ultimo->titulo }},
+                        {{ $ultimo->cuando->isToday() ? 'hoy' : $ultimo->cuando->format('d/m') }} a las {{ $ultimo->cuando->format('H:i') }}
+                    </span>
 
-                            <span class="sihla-bitacora-monto">
-                                {{ $movimiento->totalParaMostrar() }}
-                            </span>
-                        </div>
+                    <x-filament::icon
+                        icon="heroicon-m-chevron-down"
+                        class="sihla-historial-flecha"
+                        x-bind:class="abierto && 'sihla-historial-flecha-abierta'"
+                    />
+                </button>
+
+                <div class="sihla-historial-cuerpo" x-show="abierto" x-cloak>
+                    @foreach ($historial->porDia($movimientos, $visibles) as $dia)
+                        <section class="sihla-historial-dia" @if ($dia['oculto']) x-show="todo" @endif>
+                            <h4 class="sihla-historial-fecha">{{ $dia['dia'] }}</h4>
+
+                            <ol class="sihla-historial-hilo">
+                                @foreach ($dia['movimientos'] as $fila)
+                                    @php($m = $fila['movimiento'])
+
+                                    <li
+                                        class="sihla-mov sihla-mov-{{ $m->tipo->value }}"
+                                        @if ($fila['oculto']) x-show="todo" @endif
+                                    >
+                                        <span class="sihla-mov-hora">{{ $m->cuando->format('H:i') }}</span>
+                                        <span class="sihla-mov-punto" aria-hidden="true"></span>
+
+                                        <div class="sihla-mov-cuerpo">
+                                            <p class="sihla-mov-titulo">
+                                                <span class="sihla-mov-verbo">{{ $m->tipo->verbo() }}</span>
+                                                <span @class(['sihla-mov-que', 'sihla-mov-que-muerto' => $m->yaNoCuenta])>{{ $m->titulo }}</span>
+                                            </p>
+
+                                            <p class="sihla-mov-meta">
+                                                {{ $m->quien }}
+                                                @if (filled($m->detalle))
+                                                    · {{ $m->detalle }}
+                                                @endif
+                                            </p>
+
+                                            @if (filled($m->motivo))
+                                                <p class="sihla-mov-motivo">«{{ $m->motivo }}»</p>
+                                            @endif
+
+                                            @if (filled($m->nota))
+                                                <p class="sihla-mov-nota">{{ $m->nota }}</p>
+                                            @endif
+                                        </div>
+
+                                        <span @class([
+                                            'sihla-mov-monto',
+                                            'sihla-mov-monto-resta' => $m->tipo->deshace(),
+                                            'sihla-mov-monto-muerto' => $m->yaNoCuenta,
+                                        ])>{{ $m->monto }}</span>
+                                    </li>
+                                @endforeach
+                            </ol>
+                        </section>
                     @endforeach
 
-                    @if ($caja !== [])
-                        <div class="sihla-bitacora-titulo">Caja · recibos y facturas</div>
-
-                        @foreach ($caja as $linea)
-                            <div class="sihla-bitacora-linea {{ $linea['muerto'] ? 'sihla-bitacora-muerta' : '' }}">
-                                <span class="sihla-bitacora-hora">
-                                    {{ $linea['cuando']->format('d/m H:i') }}
-                                </span>
-
-                                <span class="sihla-bitacora-que">
-                                    <span class="{{ $linea['tachado'] ? 'sihla-tachado' : '' }}">
-                                        {{ $linea['texto'] }}
-                                    </span>
-                                    <span class="sihla-bitacora-quien">{{ $linea['detalle'] }}</span>
-                                </span>
-
-                                <span class="sihla-bitacora-monto">{{ $linea['monto'] }}</span>
-                            </div>
-                        @endforeach
+                    @if (count($movimientos) > $visibles)
+                        <button type="button" class="sihla-historial-mas" x-show="! todo" x-on:click="todo = true">
+                            Ver {{ count($movimientos) - $visibles === 1 ? 'el anterior' : 'los '.(count($movimientos) - $visibles).' anteriores' }}
+                        </button>
                     @endif
                 </div>
-            </details>
+            </div>
         @endif
     </div>
 
@@ -605,32 +641,126 @@
         .sihla-motivo-quitar:disabled { opacity: .5; cursor: wait; }
         .sihla-motivo-cancelar { background: rgb(228 228 231); color: rgb(63 63 70); }
 
-        .sihla-bitacora { border-top: 1px solid rgb(228 228 231); }
-        .sihla-bitacora > summary {
-            padding: .5rem .85rem; font-size: .72rem; font-weight: 600;
-            text-transform: uppercase; letter-spacing: .05em;
-            color: rgb(113 113 122); cursor: pointer; user-select: none;
+        /*
+         * ── El historial ───────────────────────────────────────────────
+         * Un hilo con un punto por movimiento, del color de lo que pasó:
+         * gris lo que se agregó, rojo lo que se quitó o se anuló, ámbar
+         * lo que cambió, verde la plata que entró, azul la factura.
+         */
+        .sihla-historial {
+            --sh-linea: rgb(228 228 231);
+            --sh-texto: rgb(39 39 42);
+            --sh-texto-2: rgb(82 82 91);
+            --sh-tenue: rgb(113 113 122);
+            --sh-fondo: rgb(255 255 255);
+            --sh-suave: rgb(250 250 250);
+            --sh-rojo: rgb(190 18 60);
+            --sh-verde: rgb(21 128 61);
+
+            border-top: 1px solid var(--sh-linea);
         }
-        .sihla-bitacora > summary:hover { color: rgb(63 63 70); }
-        .sihla-bitacora-cuerpo {
-            max-height: 14rem; overflow-y: auto; padding: 0 .85rem .6rem;
+        .dark .sihla-historial {
+            --sh-linea: rgb(63 63 70);
+            --sh-texto: rgb(244 244 245);
+            --sh-texto-2: rgb(212 212 216);
+            --sh-tenue: rgb(161 161 170);
+            --sh-fondo: rgb(24 24 27);
+            --sh-suave: rgb(39 39 42);
+            --sh-rojo: rgb(251 113 133);
+            --sh-verde: rgb(74 222 128);
         }
-        .sihla-bitacora-linea {
-            display: flex; gap: .7rem; align-items: baseline;
-            padding: .3rem 0; border-bottom: 1px solid rgb(244 244 245);
-            font-size: .74rem; font-variant-numeric: tabular-nums;
+        .sihla-historial [x-cloak] { display: none !important; }
+
+        .sihla-historial-boton {
+            display: flex; align-items: center; gap: .55rem; flex-wrap: wrap;
+            width: 100%; padding: .7rem .85rem; text-align: start;
+            color: var(--sh-texto-2); cursor: pointer;
         }
-        .sihla-bitacora-linea:last-child { border-bottom: none; }
-        .sihla-bitacora-hora { color: rgb(161 161 170); white-space: nowrap; }
-        .sihla-bitacora-que { flex: 1; min-width: 0; color: rgb(63 63 70); }
-        .sihla-bitacora-quien { display: block; font-size: .68rem; color: rgb(161 161 170); }
-        .sihla-bitacora-titulo {
-            margin-top: .6rem; padding: .35rem 0 .2rem; font-size: .68rem; font-weight: 600;
-            letter-spacing: .04em; text-transform: uppercase; color: rgb(161 161 170);
+        .sihla-historial-boton:hover { background: var(--sh-suave); }
+        .sihla-historial-boton:focus-visible { outline: 2px solid rgb(217 119 6); outline-offset: -2px; }
+        .sihla-historial-icono { width: 1.05rem; height: 1.05rem; color: var(--sh-tenue); flex-shrink: 0; }
+        .sihla-historial-rotulo { font-size: .85rem; font-weight: 600; color: var(--sh-texto); }
+        .sihla-historial-cuantos {
+            display: inline-block; min-width: 1.4rem; margin-left: .3rem; padding: 0 .4rem;
+            border-radius: 999px; background: var(--sh-suave); border: 1px solid var(--sh-linea);
+            font-size: .7rem; font-weight: 600; text-align: center; color: var(--sh-tenue);
         }
-        .sihla-bitacora-monto { white-space: nowrap; color: rgb(82 82 91); }
-        .sihla-bitacora-muerta { opacity: .55; }
-        .sihla-tachado { text-decoration: line-through; }
+        .sihla-historial-ultimo {
+            flex: 1 1 14rem; min-width: 0;
+            font-size: .75rem; color: var(--sh-tenue);
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .sihla-historial-flecha { width: 1.1rem; height: 1.1rem; color: var(--sh-tenue); transition: transform .15s; }
+        .sihla-historial-flecha-abierta { transform: rotate(180deg); }
+        @media (prefers-reduced-motion: reduce) { .sihla-historial-flecha { transition: none; } }
+
+        .sihla-historial-cuerpo { padding: 0 .85rem .75rem; }
+        .sihla-historial-fecha {
+            margin: .6rem 0 .2rem 3.1rem;
+            font-size: .72rem; font-weight: 600; color: var(--sh-tenue);
+        }
+
+        .sihla-historial-hilo { list-style: none; margin: 0; padding: 0; }
+        .sihla-mov {
+            --mov: rgb(161 161 170);
+            --mov-fondo: rgb(161 161 170 / .14);
+
+            display: grid; align-items: start; column-gap: .55rem;
+            grid-template-columns: 2.5rem .75rem minmax(0, 1fr) auto;
+            padding: .4rem 0;
+            font-size: .8rem; font-variant-numeric: tabular-nums;
+        }
+        .sihla-mov-quito,
+        .sihla-mov-anulo { --mov: rgb(225 29 72); --mov-fondo: rgb(225 29 72 / .12); }
+        .sihla-mov-cambio { --mov: rgb(217 119 6); --mov-fondo: rgb(217 119 6 / .14); }
+        .sihla-mov-cobro { --mov: rgb(22 163 74); --mov-fondo: rgb(22 163 74 / .13); }
+        .sihla-mov-facturo { --mov: rgb(37 99 235); --mov-fondo: rgb(37 99 235 / .12); }
+
+        .sihla-mov-hora { padding-top: .05rem; text-align: end; font-size: .72rem; color: var(--sh-tenue); }
+
+        /* El hilo: una raya que une los puntos del mismo día. */
+        .sihla-mov-punto { position: relative; align-self: stretch; }
+        .sihla-mov-punto::before {
+            content: ''; position: absolute; left: 50%; top: -.4rem; bottom: -.4rem;
+            width: 1px; transform: translateX(-50%); background: var(--sh-linea);
+        }
+        .sihla-mov:first-child .sihla-mov-punto::before { top: .55rem; }
+        .sihla-mov:last-child .sihla-mov-punto::before { bottom: calc(100% - .55rem); }
+        .sihla-mov-punto::after {
+            content: ''; position: absolute; left: 50%; top: .3rem;
+            width: .55rem; height: .55rem; border-radius: 999px; transform: translateX(-50%);
+            background: var(--mov); box-shadow: 0 0 0 3px var(--sh-fondo);
+        }
+
+        .sihla-mov-titulo { line-height: 1.35; color: var(--sh-texto); }
+        .sihla-mov-verbo {
+            display: inline-block; margin-right: .3rem; padding: 0 .35rem; border-radius: .3rem;
+            font-size: .68rem; font-weight: 600; line-height: 1.35rem; vertical-align: .05em;
+            color: var(--mov); background: var(--mov-fondo);
+        }
+        .sihla-mov-que { font-weight: 600; }
+        .sihla-mov-que-muerto { color: var(--sh-tenue); }
+        .sihla-mov-meta { margin-top: .1rem; font-size: .72rem; color: var(--sh-tenue); }
+        .sihla-mov-motivo { margin-top: .15rem; font-size: .72rem; color: var(--sh-texto-2); }
+        .sihla-mov-nota { margin-top: .15rem; font-size: .7rem; font-style: italic; color: var(--sh-tenue); }
+
+        .sihla-mov-monto { padding-top: .05rem; white-space: nowrap; font-weight: 600; color: var(--sh-texto); }
+        .sihla-mov-cobro .sihla-mov-monto:not(.sihla-mov-monto-muerto) { color: var(--sh-verde); }
+        .sihla-mov-monto-resta { color: var(--sh-rojo); }
+        .sihla-mov-monto-muerto { color: var(--sh-tenue); font-weight: 400; text-decoration: line-through; }
+
+        .sihla-historial-mas {
+            margin: .5rem 0 0 3.1rem; padding: .3rem .65rem; border-radius: .4rem;
+            border: 1px solid var(--sh-linea); font-size: .75rem; color: var(--sh-texto-2); cursor: pointer;
+        }
+        .sihla-historial-mas:hover { background: var(--sh-suave); }
+
+        @media (max-width: 40rem) {
+            .sihla-mov { grid-template-columns: 2.3rem .75rem minmax(0, 1fr); }
+            .sihla-mov-monto { grid-column: 3; padding-top: .15rem; }
+            .sihla-historial-fecha, .sihla-historial-mas { margin-left: 2.9rem; }
+        }
+
 
         .sihla-factura-pie {
             padding: .6rem .85rem; background: rgb(250 250 250);
@@ -673,11 +803,6 @@
             background: rgb(24 24 27); color: rgb(244 244 245); border-color: rgb(146 64 14);
         }
         .dark .sihla-motivo-cancelar { background: rgb(63 63 70); color: rgb(212 212 216); }
-        .dark .sihla-bitacora { border-top-color: rgb(63 63 70); }
-        .dark .sihla-bitacora > summary:hover { color: rgb(212 212 216); }
-        .dark .sihla-bitacora-linea { border-bottom-color: rgb(39 39 42); }
-        .dark .sihla-bitacora-que { color: rgb(212 212 216); }
-        .dark .sihla-bitacora-monto { color: rgb(161 161 170); }
     
         /*
          * ─────────────────────────────────────────────────────────────

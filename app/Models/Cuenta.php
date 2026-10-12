@@ -8,6 +8,7 @@ use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\TipoDeMovimiento;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\RenglonDeCuenta;
@@ -307,7 +308,11 @@ class Cuenta extends Model
      * renglón, con su motivo: lo que se deshizo se ve deshecho, no
      * desaparece.
      *
-     * @return list<array{cuando: CarbonInterface, texto: string, detalle: string, monto: string, muerto: bool, tachado: bool}>
+     * Además del texto armado (`texto`, `detalle`), cada renglón trae sus
+     * piezas por separado —qué fue, quién, con qué, por qué— para que el
+     * historial de la cuenta las pinte sin tener que desarmar una frase.
+     *
+     * @return list<array{cuando: CarbonInterface, texto: string, detalle: string, monto: string, muerto: bool, tachado: bool, tipo: TipoDeMovimiento, titulo: string, quien: string, medios: ?string, nota: ?string, motivo: ?string}>
      */
     public function bitacoraDeCaja(): array
     {
@@ -339,14 +344,22 @@ class Cuenta extends Model
         foreach ($recibos as $recibo) {
             $anulado = $recibo->estado === EstadoAbono::Anulado;
 
+            $medios = $recibo->resumenDeMedios();
+
             $lineas[] = [
                 'cuando'  => $recibo->recibido_en,
-                'texto'   => 'Recibo '.$recibo->numero.' · '.$recibo->resumenDeMedios(),
+                'texto'   => 'Recibo '.$recibo->numero.' · '.$medios,
                 'detalle' => ($nombres[$recibo->recibido_por] ?? 'Sistema')
                     .($recibo->nota === null ? '' : ' · '.$recibo->nota),
                 'monto'   => 'L. '.number_format((float) $recibo->total, 2),
                 'muerto'  => $anulado,
                 'tachado' => $anulado,
+                'tipo'    => TipoDeMovimiento::Cobro,
+                'titulo'  => 'Recibo '.$recibo->numero,
+                'quien'   => $nombres[$recibo->recibido_por] ?? 'Sistema',
+                'medios'  => $medios === '' ? null : $medios,
+                'nota'    => $recibo->nota,
+                'motivo'  => null,
             ];
 
             if ($anulado && $recibo->anulado_en !== null) {
@@ -358,6 +371,12 @@ class Cuenta extends Model
                     'monto'   => '− L. '.number_format((float) $recibo->total, 2),
                     'muerto'  => true,
                     'tachado' => false,
+                    'tipo'    => TipoDeMovimiento::Anulo,
+                    'titulo'  => 'Recibo '.$recibo->numero,
+                    'quien'   => $nombres[(int) $recibo->anulado_por] ?? 'Sistema',
+                    'medios'  => null,
+                    'nota'    => null,
+                    'motivo'  => $recibo->motivo_anulacion,
                 ];
             }
         }
@@ -372,6 +391,12 @@ class Cuenta extends Model
                 'monto'   => 'L. '.number_format((float) $factura->total, 2),
                 'muerto'  => $anulada,
                 'tachado' => $anulada,
+                'tipo'    => TipoDeMovimiento::Facturo,
+                'titulo'  => 'Factura '.$factura->numero,
+                'quien'   => $factura->facturador ?? 'Sistema',
+                'medios'  => null,
+                'nota'    => null,
+                'motivo'  => null,
             ];
 
             if ($factura->anulada_en !== null) {
@@ -383,6 +408,12 @@ class Cuenta extends Model
                     'monto'   => '',
                     'muerto'  => true,
                     'tachado' => false,
+                    'tipo'    => TipoDeMovimiento::Anulo,
+                    'titulo'  => 'Factura '.$factura->numero,
+                    'quien'   => $nombres[(int) $factura->anulada_por] ?? 'Sistema',
+                    'medios'  => null,
+                    'nota'    => null,
+                    'motivo'  => $factura->motivo_anulacion,
                 ];
             }
         }

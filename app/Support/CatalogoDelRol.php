@@ -35,7 +35,7 @@ use Illuminate\Support\Facades\Auth;
  * ya está en el ítem, así que una tabla de «qué puede cargar cada rol»
  * sería una pantalla más para decir lo que el catálogo ya dice.
  *
- * El mapa vive en `config/sihla.php`. Un rol que NO aparece ahí no tiene
+ * El mapa vive en `config/sihla.php`, en `inventario.cargos_por_rol`. Un rol que NO aparece ahí no tiene
  * restricción: caja, admisión, enfermería y dirección cargan cualquier
  * cosa, que es lo que tienen que poder hacer.
  *
@@ -63,7 +63,14 @@ final class CatalogoDelRol
             return null;
         }
 
-        $mapa = config('sihla.catalogo.cargos_por_rol', []);
+        /*
+         * 🔴 `inventario`, que es donde está la clave en config/sihla.php.
+         * Hasta el 12-oct-2026 esto leía `sihla.catalogo.cargos_por_rol`,
+         * que no existe: el mapa volvía vacío, nadie quedaba restringido
+         * y laboratorio podía cargar cualquier cosa sin que nada avisara.
+         * Lo encontró la prueba de consulta externa.
+         */
+        $mapa = config('sihla.inventario.cargos_por_rol', []);
 
         if (! is_array($mapa) || $mapa === []) {
             return null;

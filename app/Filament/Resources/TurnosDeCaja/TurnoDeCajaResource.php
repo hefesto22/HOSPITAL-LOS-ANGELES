@@ -40,6 +40,11 @@ class TurnoDeCajaResource extends Resource
         return 'Turnos de caja';
     }
 
+    public static function getBreadcrumb(): string
+    {
+        return 'Turnos de caja';
+    }
+
     public static function getModelLabel(): string
     {
         return 'turno de caja';

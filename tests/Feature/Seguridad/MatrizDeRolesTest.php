@@ -68,7 +68,7 @@ beforeEach(function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('crea los once roles del hospital', function (): void {
+it('crea los roles del hospital', function (): void {
     $esperados = array_keys(RoleSeeder::ROLES);
 
     $existentes = Role::query()->pluck('name')->all();
@@ -77,9 +77,9 @@ it('crea los once roles del hospital', function (): void {
         expect($existentes)->toContain($rol);
     }
 
-    expect($esperados)->toHaveCount(10)
+    expect($esperados)->toHaveCount(11)
         ->and($existentes)->toContain('super_admin');
-})->note('Diez roles del hospital más super_admin, que es de soporte y no del hospital.');
+})->note('Once roles del hospital —los diez del §1.4 más consulta externa (12-oct-2026)— y super_admin, que es de soporte y no del hospital.');
 
 it('deja entrar al panel a un usuario activo con rol operativo', function (): void {
     /** @var User $medico */

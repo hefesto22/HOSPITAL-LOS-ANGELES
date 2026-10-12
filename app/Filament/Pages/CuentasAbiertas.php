@@ -580,6 +580,37 @@ class CuentasAbiertas extends Page
         return Gate::allows('create', Cargo::class);
     }
 
+    /**
+     * Abonar es de caja (y dirección). Laboratorio y consulta externa ven
+     * la tarjeta entera pero el botón apagado: antes se veía encendido y
+     * no hacía nada, que es peor que no estar.
+     */
+    public function puedeAbonar(): bool
+    {
+        return Gate::allows('create', Abono::class);
+    }
+
+    /**
+     * Por qué el botón «Facturar» está apagado, o `null` si se puede.
+     *
+     * Dos respuestas distintas porque son dos soluciones distintas: la
+     * cajera sin turno tiene que abrirlo (el botón está arriba, en el
+     * encabezado); el laboratorio no tiene nada que hacer — le toca a
+     * caja. La regla vive en `FacturaPolicy::create()`.
+     */
+    public function porQueNoFactura(): ?string
+    {
+        if (Gate::allows('create', Factura::class)) {
+            return null;
+        }
+
+        $usuario = Auth::user();
+
+        return $usuario instanceof User && $usuario->can('Create:Factura')
+            ? 'Abrí tu turno de caja para facturar.'
+            : 'Facturar es de caja, con el turno abierto.';
+    }
+
     // ── Abrir una cuenta ──────────────────────────────────────────────
 
     /**

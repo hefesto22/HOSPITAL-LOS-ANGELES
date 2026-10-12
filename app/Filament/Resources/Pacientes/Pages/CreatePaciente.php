@@ -18,6 +18,7 @@ use App\Models\Sede;
 use App\Services\RegistradorDePacientes;
 use App\Support\ContextoSede;
 use Carbon\CarbonInterface;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Filament\Support\Exceptions\Halt;
@@ -40,6 +41,32 @@ use Illuminate\Support\Facades\Auth;
 class CreatePaciente extends CreateRecord
 {
     protected static string $resource = PacienteResource::class;
+
+    public function getTitle(): string
+    {
+        return 'Registrar paciente';
+    }
+
+    public function getBreadcrumb(): string
+    {
+        return 'Registrar';
+    }
+
+    /**
+     * «Registrar paciente» y «Registrar y seguir con otro»: en admisión
+     * se registran varios seguidos —la familia que llega junta— y el
+     * segundo botón deja el formulario limpio con el cursor en el
+     * documento. Enter en cualquier campo también registra.
+     */
+    protected function getCreateFormAction(): Action
+    {
+        return parent::getCreateFormAction()->label('Registrar paciente');
+    }
+
+    protected function getCreateAnotherFormAction(): Action
+    {
+        return parent::getCreateAnotherFormAction()->label('Registrar y seguir con otro');
+    }
 
     /**
      * @param array<string, mixed> $data

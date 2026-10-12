@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Policies;
 
 use App\Models\Factura;
+use App\Models\TurnoDeCaja;
+use App\Models\User;
+use App\Services\AbridorDeTurnoDeCaja;
 use Illuminate\Auth\Access\HandlesAuthorization;
 use Illuminate\Foundation\Auth\User as AuthUser;
 
@@ -33,9 +36,42 @@ class FacturaPolicy
         return $authUser->can('View:Factura');
     }
 
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * FACTURA QUIEN TIENE LA GAVETA ABIERTA (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «facturar es exclusivo de las cajeras que estén en
+     * turno». El permiso dice QUIÉN puede facturar (caja y dirección);
+     * esto agrega CUÁNDO: con su turno de caja abierto. La factura casi
+     * siempre se cobra en el acto —primero se salda— y esa plata tiene
+     * que caer en una gaveta que alguien cuente al cerrar.
+     *
+     * Los roles de `sihla.caja.facturan_sin_turno` (dirección) facturan
+     * con o sin turno. Si en ese momento hay que cobrar, el abono les
+     * pide la gaveta igual: eso lo cuida `ReceptorDeAbono`, no esto.
+     *
+     * Laboratorio y consulta externa no llegan ni a preguntar el turno:
+     * no tienen el permiso.
+     */
     public function create(AuthUser $authUser): bool
     {
-        return $authUser->can('Create:Factura');
+        if (! $authUser->can('Create:Factura') || ! $authUser instanceof User) {
+            return false;
+        }
+
+        if (self::facturaSinTurno($authUser)) {
+            return true;
+        }
+
+        return app(AbridorDeTurnoDeCaja::class)->abiertoDe($authUser) instanceof TurnoDeCaja;
+    }
+
+    private static function facturaSinTurno(User $usuario): bool
+    {
+        $roles = config('sihla.caja.facturan_sin_turno', []);
+
+        return is_array($roles) && $roles !== [] && $usuario->hasAnyRole(array_values(array_filter($roles, 'is_string')));
     }
 
     public function update(AuthUser $authUser, Factura $Factura): bool

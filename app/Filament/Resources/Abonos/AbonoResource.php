@@ -70,6 +70,8 @@ class AbonoResource extends Resource
 
         return $consulta->with([
             'cuenta:id,numero,encuentro_id',
+            'cuenta.encuentro:id,persona_id',
+            'cuenta.encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido',
             'turno:id,numero,nombre,estado',
             'recibidoPor:id,name',
             'medios',

@@ -50,6 +50,23 @@ enum FormaDePago: string
     }
 
     /**
+     * Dónde se comprueba que esta plata entró — la línea que la cajera lee
+     * debajo de cada monto en «Caja».
+     *
+     * Existe para que nadie busque en la gaveta lo que se pagó con tarjeta
+     * ni espere ver en el arqueo un depósito: cada forma se cuadra en un
+     * lugar distinto, y la pantalla lo dice en vez de suponer que se sabe.
+     */
+    public function dondeSeCuadra(): string
+    {
+        return match ($this) {
+            self::Efectivo      => 'Se cuenta en la gaveta al cerrar.',
+            self::Tarjeta       => 'La liquida el POS.',
+            self::Transferencia => 'Se confirma en el estado de cuenta del banco.',
+        };
+    }
+
+    /**
      * ¿Exige decir a qué banco entró?
      *
      * Solo la transferencia. Es el único dato que el mostrador teclea

@@ -1,252 +1,406 @@
 {{--
-    La gaveta de quien está cobrando.
+    La gaveta de quien está cobrando (rediseño del 12-oct-2026).
 
-    Un solo turno —el suyo— y tres números que tiene que poder leer sin
-    pensar: con cuánto abrió, cuánto entró en efectivo y cuánto debería
-    haber. Los turnos de todos, con sus diferencias, están en «Turnos de
-    caja»: esa es la pregunta de dirección, no la del mostrador.
+    Se lee de arriba abajo, en el orden en que la cajera se pregunta las
+    cosas:
 
-    El CSS de Filament viene precompilado, así que lo que no usa el panel
-    no existe acá (§9.A7): de ahí el `<style>` propio.
+      1. ¿De quién es esta gaveta y desde cuándo está abierta?
+      2. ¿Cuánto efectivo tiene que haber? — escrito como la suma que es
+         (fondo + efectivo recibido = gaveta), no como cinco cuadros
+         sueltos del mismo tamaño donde el que importa no se distingue.
+      3. ¿Qué entró que NO está en la gaveta? — tarjeta y transferencia,
+         cada una con dónde se cuadra.
+      4. ¿Qué recibos hice? — con el nombre del paciente, que es lo que
+         se reconoce; el número de cuenta va debajo.
+
+    Los anulados se esconden por defecto (siguen a un clic, con su
+    motivo): eran cinco tachados entre dos vigentes.
+
+    ⚠️ Colores literales y no `rgb(var(--gray-200))`: en Filament 5 esas
+    variables traen `oklch(…)` completo, el `rgb()` queda inválido y el
+    navegador descarta la regla sin avisar — por eso esta pantalla se veía
+    sin bordes ni fondos. Las variables propias de abajo cambian solas con
+    `.dark`.
+
+    El CSS de Filament viene precompilado (§9.A7): lo que no usa el panel
+    no existe acá, de ahí el `<style>` propio.
 --}}
 <x-filament-panels::page>
-    @php($turno = $this->turno())
+    @php($resumen = $this->resumen())
+    @php($lempiras = static fn (\App\Domain\ValueObjects\Decimal $monto): string => 'L '.number_format((float) $monto->redondeado(2), 2))
 
-    @if ($turno === null)
-        <div class="sihla-caja-vacia">
-            <x-filament::icon icon="heroicon-o-lock-closed" class="sihla-caja-vacia-icono" />
+    <div class="sihla-caja">
+        @if ($resumen === null)
+            <x-filament::empty-state
+                heading="No tenés un turno abierto"
+                description="Abrí el turno con el fondo que hay en la gaveta para empezar a cobrar. Sin turno no se recibe plata: el efectivo tiene que caer en una gaveta que alguien cuente al final."
+                icon="heroicon-o-lock-closed"
+                icon-color="gray"
+            >
+                <x-slot name="footer">
+                    {{ $this->abrirTurnoAction }}
+                </x-slot>
+            </x-filament::empty-state>
+        @else
+            @php($turno = $resumen['turno'])
+            @php($vigentes = $resumen['vigentes'])
+            @php($anulados = $resumen['anulados'])
+            @php($tieneNombre = filled($turno->nombre))
 
-            <p class="sihla-caja-vacia-titulo">No tenés un turno abierto.</p>
-
-            <p class="sihla-caja-vacia-texto">
-                Sin turno no se puede recibir plata: el efectivo entra a una gaveta que alguien cuenta al final,
-                y un abono sin turno es plata que nadie cuadra contra billetes.
-            </p>
-
-            {{ $this->abrirTurnoAction }}
-        </div>
-    @else
-        @php($porForma = $this->porFormaDePago())
-        @php($abonos = $this->abonosDelTurno())
-
-        <div class="sihla-caja">
-            <div class="sihla-caja-cabecera">
+            {{-- 1 · De quién es la gaveta --}}
+            <header class="sihla-caja-turno">
                 <div>
-                    <p class="sihla-caja-numero">{{ $turno->etiqueta() }}</p>
-                    <p class="sihla-caja-desde">
-                        Abierto por {{ $turno->usuario?->name ?? 'vos' }} ·
-                        {{ $turno->abierto_en->format('d/m/Y H:i') }}
+                    <h2 class="sihla-caja-turno-nombre">{{ $tieneNombre ? $turno->nombre : $turno->numero }}</h2>
+                    <p class="sihla-caja-turno-detalle">
+                        @if ($tieneNombre)
+                            {{ $turno->numero }} ·
+                        @endif
+                        Abierto por {{ $turno->usuario?->name ?? 'vos' }}
+                        el {{ $turno->abierto_en->format('d/m/Y') }} a las {{ $turno->abierto_en->format('H:i') }}
                     </p>
                 </div>
 
                 {{ $this->cerrarTurnoAction }}
-            </div>
+            </header>
 
-            <div class="sihla-caja-numeros">
-                <div class="sihla-caja-dato">
-                    <span>Fondo inicial</span>
-                    <strong>L {{ number_format((float) $turno->fondo_inicial, 2) }}</strong>
+            @if ($resumen['abiertoHaceMucho'])
+                <div class="sihla-caja-aviso" role="status">
+                    <x-filament::icon icon="heroicon-o-clock" class="sihla-caja-aviso-icono" />
+                    <p>
+                        Este turno está abierto desde {{ haceCuanto($turno->abierto_en) }}.
+                        Si ya terminó tu jornada, cerralo: si no, el arqueo mezcla el efectivo de varios días.
+                    </p>
                 </div>
+            @endif
 
-                @foreach (\App\Domain\Enums\FormaDePago::cases() as $forma)
-                    <div class="sihla-caja-dato">
-                        <span>{{ $forma->etiqueta() }}</span>
-                        <strong>L {{ number_format((float) $porForma[$forma->value]->redondeado(2), 2) }}</strong>
+            <div class="sihla-caja-cuadre">
+                {{-- 2 · La gaveta, como la suma que es --}}
+                <section class="sihla-caja-bloque sihla-caja-gaveta" aria-labelledby="sihla-caja-gaveta-titulo">
+                    <h3 id="sihla-caja-gaveta-titulo" class="sihla-caja-bloque-titulo">En la gaveta</h3>
+
+                    <dl class="sihla-caja-cinta">
+                        <div class="sihla-caja-cinta-linea">
+                            <dt><span class="sihla-caja-signo" aria-hidden="true"></span>Fondo con que se abrió</dt>
+                            <dd>{{ $lempiras($resumen['fondo']) }}</dd>
+                        </div>
+
+                        @foreach ($resumen['enLaGaveta'] as $linea)
+                            <div class="sihla-caja-cinta-linea">
+                                <dt><span class="sihla-caja-signo" aria-hidden="true">+</span>{{ $linea['etiqueta'] }}</dt>
+                                <dd>{{ $lempiras($linea['monto']) }}</dd>
+                            </div>
+                        @endforeach
+
+                        {{--
+                            🔴 El número del arqueo. Solo efectivo: lo de
+                            tarjeta lo liquida el POS y lo de transferencia
+                            el banco; contarlos acá daría un sobrante que
+                            no existe todas las noches.
+                        --}}
+                        <div class="sihla-caja-cinta-linea sihla-caja-cinta-total">
+                            <dt><span class="sihla-caja-signo" aria-hidden="true">=</span>Tiene que haber</dt>
+                            <dd>{{ $lempiras($resumen['gaveta']) }}</dd>
+                        </div>
+                    </dl>
+
+                    <p class="sihla-caja-nota">Es el efectivo que vas a contar al cerrar el turno.</p>
+                </section>
+
+                {{-- 3 · Lo cobrado que no se cuenta en la gaveta --}}
+                <section class="sihla-caja-bloque" aria-labelledby="sihla-caja-fuera-titulo">
+                    <h3 id="sihla-caja-fuera-titulo" class="sihla-caja-bloque-titulo">Fuera de la gaveta</h3>
+
+                    <dl class="sihla-caja-fuera">
+                        @foreach ($resumen['fueraDeLaGaveta'] as $linea)
+                            <div class="sihla-caja-fuera-linea">
+                                <dt>
+                                    {{ $linea['etiqueta'] }}
+                                    <span class="sihla-caja-nota">{{ $linea['nota'] }}</span>
+                                </dt>
+                                <dd>{{ $lempiras($linea['monto']) }}</dd>
+                            </div>
+                        @endforeach
+                    </dl>
+
+                    <div class="sihla-caja-cobrado">
+                        <span>
+                            Total cobrado en el turno
+                            <span class="sihla-caja-nota">
+                                {{ count($vigentes) }} {{ count($vigentes) === 1 ? 'recibo' : 'recibos' }}, todas las formas de pago
+                            </span>
+                        </span>
+                        <strong>{{ $lempiras($resumen['cobrado']) }}</strong>
                     </div>
-                @endforeach
-
-                {{--
-                    🔴 El número del arqueo. Es efectivo y nada más: lo de
-                    tarjeta lo liquida el POS y lo de transferencia el
-                    banco, así que contarlos acá daría un sobrante que no
-                    existe todas las noches.
-                --}}
-                <div class="sihla-caja-dato sihla-caja-esperado">
-                    <span>Debería haber en efectivo</span>
-                    <strong>L {{ number_format((float) $turno->efectivoEsperado()->redondeado(2), 2) }}</strong>
-                </div>
+                </section>
             </div>
 
-            <div class="sihla-caja-lista">
-                <p class="sihla-caja-titulo">
-                    RECIBOS DE ESTE TURNO · {{ $abonos->count() }}
-                </p>
+            {{-- 4 · Los recibos --}}
+            <section class="sihla-caja-bloque sihla-caja-recibos" aria-labelledby="sihla-caja-recibos-titulo">
+                <header class="sihla-caja-recibos-cabecera">
+                    <h3 id="sihla-caja-recibos-titulo" class="sihla-caja-bloque-titulo">
+                        Recibos del turno
+                        <span class="sihla-caja-cuantos">{{ count($vigentes) }}</span>
+                    </h3>
 
-                @if ($abonos->isEmpty())
+                    @if (count($anulados) > 0)
+                        <x-filament::link
+                            tag="button"
+                            color="gray"
+                            size="sm"
+                            :icon="$this->verAnulados ? 'heroicon-o-eye-slash' : 'heroicon-o-eye'"
+                            wire:click="mostrarAnulados({{ $this->verAnulados ? 'false' : 'true' }})"
+                        >
+                            {{ $this->verAnulados ? 'Ocultar los anulados' : 'Ver los anulados ('.count($anulados).')' }}
+                        </x-filament::link>
+                    @endif
+                </header>
+
+                @if (count($vigentes) === 0 && ! ($this->verAnulados && count($anulados) > 0))
                     <p class="sihla-caja-nada">
-                        Todavía no entró nada. Los abonos se reciben desde la cuenta del paciente,
-                        en «Cuentas abiertas».
+                        Todavía no hay recibos en este turno. Los abonos se reciben desde la cuenta del paciente,
+                        en <a href="{{ \App\Filament\Pages\CuentasAbiertas::getUrl() }}">Cuentas abiertas</a>.
                     </p>
                 @else
-                    <table class="sihla-caja-tabla">
-                        <tbody>
-                            @foreach ($abonos as $abono)
-                                <tr wire:key="abono-{{ $abono->id }}" @class(['sihla-caja-anulado' => ! $abono->estado->bajaElSaldo()])>
-                                    <td class="sihla-caja-recibo">
-                                        {{ $abono->numero }}
-                                        <span class="sihla-caja-hora">{{ $abono->recibido_en->format('H:i') }}</span>
-                                    </td>
-
-                                    <td>
-                                        {{ $abono->cuenta?->numero }}
-                                        @if ($abono->entregado_por)
-                                            <span class="sihla-caja-quien">lo dejó {{ $abono->entregado_por }}</span>
-                                        @endif
-                                    </td>
-
-                                    <td class="sihla-caja-medios">{{ $abono->resumenDeMedios() }}</td>
-
-                                    <td class="sihla-caja-monto">
-                                        L {{ number_format((float) $abono->total, 2) }}
-                                    </td>
-
-                                    <td class="sihla-caja-acc">
-                                        @if ($abono->estado->bajaElSaldo())
-                                            <button
-                                                type="button"
-                                                wire:click="pedirElMotivo({{ $abono->id }})"
-                                                class="sihla-caja-boton"
-                                            >Anular</button>
-                                        @else
-                                            <span class="sihla-caja-sello">ANULADO</span>
-                                        @endif
-                                    </td>
+                    <div class="sihla-caja-tabla-ctn">
+                        <table class="sihla-caja-tabla">
+                            <thead>
+                                <tr>
+                                    <th>Hora</th>
+                                    <th>Recibo</th>
+                                    <th>Paciente</th>
+                                    <th>Cómo pagó</th>
+                                    <th class="sihla-caja-num">Monto</th>
+                                    <th><span class="sr-only">Acciones</span></th>
                                 </tr>
+                            </thead>
 
-                                {{--
-                                    El motivo se pide en la misma fila y
-                                    vive en el estado de Livewire: un
-                                    modal con argumentos se cierra solo en
-                                    cada re-render (lección del desglose
-                                    del paquete).
-                                --}}
-                                @if ($this->abonoAAnular === $abono->id)
-                                    <tr wire:key="motivo-{{ $abono->id }}">
-                                        <td colspan="5" class="sihla-caja-motivo">
-                                            <label for="sihla-caja-motivo-campo">
-                                                ¿Por qué se anula el recibo {{ $abono->numero }}?
-                                            </label>
-
-                                            <div class="sihla-caja-motivo-fila">
-                                                <input
-                                                    id="sihla-caja-motivo-campo"
-                                                    type="text"
-                                                    wire:model="motivoDeAnular"
-                                                    wire:keydown.enter="anularElAbono"
-                                                    class="sihla-caja-campo"
-                                                    style="text-transform: uppercase"
-                                                    placeholder="Se digitó el monto equivocado…"
-                                                    autofocus
-                                                >
-                                                <button type="button" wire:click="anularElAbono" class="sihla-caja-boton sihla-caja-peligro">
-                                                    Anular
-                                                </button>
-                                                <button type="button" wire:click="cancelarAnulacion" class="sihla-caja-boton">
-                                                    Cancelar
-                                                </button>
-                                            </div>
-
-                                            <p class="sihla-caja-ayuda">
-                                                Diez caracteres mínimo. El recibo no se borra: queda anulado, con tu nombre y la hora.
-                                            </p>
-                                        </td>
+                            <tbody>
+                                @if (count($vigentes) === 0)
+                                    <tr>
+                                        <td colspan="6" class="sihla-caja-sin-vigentes">No quedó ningún recibo vigente en este turno.</td>
                                     </tr>
                                 @endif
-                            @endforeach
-                        </tbody>
-                    </table>
+
+                                @foreach ($vigentes as $abono)
+                                    @include('filament.pages.partials.recibo-de-caja', ['abono' => $abono, 'anulado' => false])
+                                @endforeach
+
+                                @if ($this->verAnulados && count($anulados) > 0)
+                                    <tr class="sihla-caja-separador">
+                                        <td colspan="6">Anulados — no cuentan en la gaveta ni en el saldo de la cuenta</td>
+                                    </tr>
+
+                                    @foreach ($anulados as $abono)
+                                        @include('filament.pages.partials.recibo-de-caja', ['abono' => $abono, 'anulado' => true])
+                                    @endforeach
+                                @endif
+                            </tbody>
+                        </table>
+                    </div>
                 @endif
-            </div>
-        </div>
-    @endif
+            </section>
+        @endif
+    </div>
 
     <style>
-        .sihla-caja { display: flex; flex-direction: column; gap: 1rem; }
+        /* ── Fichas de color de la pantalla (claro y oscuro) ─────────── */
+        .sihla-caja {
+            --sc-fondo: rgb(255 255 255);
+            --sc-suave: rgb(250 250 250);
+            --sc-linea: rgb(228 228 231);
+            --sc-linea-suave: rgb(244 244 245);
+            --sc-texto: rgb(24 24 27);
+            --sc-texto-2: rgb(63 63 70);
+            --sc-tenue: rgb(113 113 122);
+            --sc-ambar: rgb(180 83 9);
+            --sc-ambar-fondo: rgb(255 251 235);
+            --sc-ambar-borde: rgb(253 230 138);
+            --sc-rojo: rgb(185 28 28);
+            --sc-motivo-fondo: rgb(254 252 232);
 
-        .sihla-caja-cabecera {
+            display: flex; flex-direction: column; gap: 1rem;
+            color: var(--sc-texto);
+        }
+        .dark .sihla-caja {
+            --sc-fondo: rgb(24 24 27);
+            --sc-suave: rgb(39 39 42);
+            --sc-linea: rgb(63 63 70);
+            --sc-linea-suave: rgb(39 39 42);
+            --sc-texto: rgb(244 244 245);
+            --sc-texto-2: rgb(212 212 216);
+            --sc-tenue: rgb(161 161 170);
+            --sc-ambar: rgb(251 191 36);
+            --sc-ambar-fondo: rgb(251 191 36 / .07);
+            --sc-ambar-borde: rgb(251 191 36 / .35);
+            --sc-rojo: rgb(248 113 113);
+            --sc-motivo-fondo: rgb(251 191 36 / .06);
+        }
+
+        .sihla-caja-nota { display: block; font-size: .75rem; font-weight: 400; color: var(--sc-tenue); }
+
+        /* ── 1 · El turno ────────────────────────────────────────────── */
+        .sihla-caja-turno {
             display: flex; align-items: center; justify-content: space-between;
             gap: 1rem; flex-wrap: wrap;
-            padding: 1rem 1.25rem;
-            border: 1px solid rgb(var(--gray-200)); border-radius: .75rem;
-            background: rgb(var(--gray-50));
         }
-        .dark .sihla-caja-cabecera { border-color: rgb(var(--gray-700)); background: rgb(var(--gray-900)); }
+        .sihla-caja-turno-nombre { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
+        .sihla-caja-turno-detalle { font-size: .85rem; color: var(--sc-tenue); }
 
-        .sihla-caja-numero { font-weight: 700; font-size: 1.05rem; }
-        .sihla-caja-desde { font-size: .8rem; color: rgb(var(--gray-500)); }
+        .sihla-caja-aviso {
+            display: flex; gap: .6rem; align-items: flex-start;
+            padding: .7rem .9rem; border-radius: .6rem;
+            border: 1px solid var(--sc-ambar-borde); background: var(--sc-ambar-fondo);
+            font-size: .85rem; color: var(--sc-texto-2);
+        }
+        .sihla-caja-aviso-icono { width: 1.15rem; height: 1.15rem; flex-shrink: 0; margin-top: .1rem; color: var(--sc-ambar); }
 
-        .sihla-caja-numeros {
-            display: grid; gap: .75rem;
-            grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+        /* ── Bloques ─────────────────────────────────────────────────── */
+        .sihla-caja-cuadre { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+        @media (min-width: 56rem) {
+            .sihla-caja-cuadre { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
         }
 
-        .sihla-caja-dato {
-            display: flex; flex-direction: column; gap: .15rem;
-            padding: .75rem 1rem;
-            border: 1px solid rgb(var(--gray-200)); border-radius: .75rem;
+        .sihla-caja-bloque {
+            padding: 1.1rem 1.25rem; border-radius: .75rem;
+            border: 1px solid var(--sc-linea); background: var(--sc-fondo);
         }
-        .dark .sihla-caja-dato { border-color: rgb(var(--gray-700)); }
-        .sihla-caja-dato span { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: rgb(var(--gray-500)); }
-        .sihla-caja-dato strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+        .sihla-caja-bloque-titulo { font-size: .95rem; font-weight: 600; margin-bottom: .6rem; }
 
-        .sihla-caja-esperado { border-color: rgb(var(--warning-400)); }
-        .sihla-caja-esperado strong { color: rgb(var(--warning-600)); }
+        /* ── 2 · La gaveta: una suma que se lee como en papel ────────── */
+        .sihla-caja-gaveta { border-color: var(--sc-ambar-borde); }
 
-        .sihla-caja-lista {
-            border: 1px solid rgb(var(--gray-200)); border-radius: .75rem; overflow: hidden;
+        .sihla-caja-cinta { font-variant-numeric: tabular-nums; }
+        .sihla-caja-cinta-linea {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+            padding: .5rem 0; border-bottom: 1px dashed var(--sc-linea);
+            font-size: .95rem; color: var(--sc-texto-2);
         }
-        .dark .sihla-caja-lista { border-color: rgb(var(--gray-700)); }
-
-        .sihla-caja-titulo {
-            padding: .65rem 1rem; font-size: .72rem; letter-spacing: .06em;
-            color: rgb(var(--gray-500)); background: rgb(var(--gray-50));
+        .sihla-caja-cinta-linea dd { font-weight: 600; white-space: nowrap; color: var(--sc-texto); }
+        .sihla-caja-signo {
+            display: inline-block; width: 1.25rem;
+            font-weight: 700; color: var(--sc-tenue);
         }
-        .dark .sihla-caja-titulo { background: rgb(var(--gray-900)); }
-
-        .sihla-caja-nada { padding: 1.25rem 1rem; font-size: .85rem; color: rgb(var(--gray-500)); }
-
-        .sihla-caja-tabla { width: 100%; border-collapse: collapse; font-size: .85rem; }
-        .sihla-caja-tabla td { padding: .55rem 1rem; border-top: 1px solid rgb(var(--gray-100)); vertical-align: middle; }
-        .dark .sihla-caja-tabla td { border-color: rgb(var(--gray-800)); }
-
-        .sihla-caja-recibo { font-weight: 600; white-space: nowrap; }
-        .sihla-caja-hora { display: block; font-weight: 400; font-size: .72rem; color: rgb(var(--gray-500)); }
-        .sihla-caja-quien { display: block; font-size: .72rem; color: rgb(var(--gray-500)); }
-        .sihla-caja-medios { color: rgb(var(--gray-500)); }
-        .sihla-caja-monto { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        .sihla-caja-acc { text-align: right; white-space: nowrap; }
-
-        .sihla-caja-anulado td { opacity: .5; text-decoration: line-through; }
-        .sihla-caja-sello { font-size: .7rem; letter-spacing: .06em; color: rgb(var(--danger-500)); }
-
-        .sihla-caja-boton {
-            padding: .2rem .6rem; font-size: .75rem; border-radius: .375rem;
-            border: 1px solid rgb(var(--gray-300)); background: transparent;
+        .sihla-caja-cinta-total {
+            margin-top: .35rem; padding-top: .75rem; border-bottom: none;
+            border-top: 2px solid var(--sc-texto-2);
+            align-items: center;
         }
-        .dark .sihla-caja-boton { border-color: rgb(var(--gray-600)); }
-        .sihla-caja-boton:hover { background: rgb(var(--gray-100)); }
-        .dark .sihla-caja-boton:hover { background: rgb(var(--gray-800)); }
-        .sihla-caja-peligro { border-color: rgb(var(--danger-400)); color: rgb(var(--danger-600)); }
+        .sihla-caja-cinta-total dt { font-weight: 600; color: var(--sc-texto); }
+        .sihla-caja-cinta-total dd { font-size: 2rem; font-weight: 700; line-height: 1.1; color: var(--sc-ambar); }
+        .sihla-caja-gaveta > .sihla-caja-nota { margin-top: .5rem; }
 
-        .sihla-caja-motivo { background: rgb(var(--gray-50)); }
-        .dark .sihla-caja-motivo { background: rgb(var(--gray-900)); }
-        .sihla-caja-motivo label { display: block; font-size: .8rem; margin-bottom: .35rem; }
-        .sihla-caja-motivo-fila { display: flex; gap: .5rem; align-items: center; }
-        .sihla-caja-campo {
-            flex: 1; padding: .3rem .6rem; font-size: .85rem; border-radius: .375rem;
-            border: 1px solid rgb(var(--gray-300)); background: transparent;
+        /* ── 3 · Fuera de la gaveta ──────────────────────────────────── */
+        .sihla-caja-fuera { font-variant-numeric: tabular-nums; }
+        .sihla-caja-fuera-linea {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+            padding: .5rem 0; border-bottom: 1px solid var(--sc-linea-suave);
+            font-size: .9rem; color: var(--sc-texto-2);
         }
-        .dark .sihla-caja-campo { border-color: rgb(var(--gray-600)); }
-        .sihla-caja-ayuda { margin-top: .35rem; font-size: .72rem; color: rgb(var(--gray-500)); }
+        .sihla-caja-fuera-linea dd { font-weight: 600; white-space: nowrap; color: var(--sc-texto); }
 
-        .sihla-caja-vacia {
-            display: flex; flex-direction: column; align-items: center; gap: .75rem;
-            padding: 3rem 1.5rem; text-align: center;
-            border: 1px dashed rgb(var(--gray-300)); border-radius: .75rem;
+        .sihla-caja-cobrado {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+            margin-top: .75rem; padding: .7rem .85rem; border-radius: .5rem;
+            background: var(--sc-suave); font-size: .9rem; font-variant-numeric: tabular-nums;
         }
-        .dark .sihla-caja-vacia { border-color: rgb(var(--gray-700)); }
-        .sihla-caja-vacia-icono { width: 2rem; height: 2rem; color: rgb(var(--gray-400)); }
-        .sihla-caja-vacia-titulo { font-weight: 600; }
-        .sihla-caja-vacia-texto { max-width: 34rem; font-size: .85rem; color: rgb(var(--gray-500)); }
+        .sihla-caja-cobrado strong { font-size: 1.15rem; white-space: nowrap; }
+
+        /* ── 4 · Recibos ─────────────────────────────────────────────── */
+        .sihla-caja-recibos { padding: 0; overflow: hidden; }
+        .sihla-caja-recibos-cabecera {
+            display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+            padding: .9rem 1.25rem;
+        }
+        .sihla-caja-recibos-cabecera .sihla-caja-bloque-titulo { margin-bottom: 0; }
+        .sihla-caja-cuantos {
+            display: inline-block; min-width: 1.5rem; margin-left: .35rem; padding: 0 .45rem;
+            border-radius: 999px; background: var(--sc-suave);
+            font-size: .75rem; font-weight: 600; text-align: center; color: var(--sc-tenue);
+        }
+
+        .sihla-caja-nada { padding: 0 1.25rem 1.25rem; font-size: .9rem; color: var(--sc-tenue); }
+        .sihla-caja-nada a { text-decoration: underline; color: var(--sc-ambar); }
+
+        .sihla-caja-tabla-ctn { overflow-x: auto; }
+        .sihla-caja-tabla { width: 100%; border-collapse: collapse; font-size: .875rem; }
+        .sihla-caja-tabla > thead > tr > th {
+            padding: .55rem 1rem; text-align: start; white-space: nowrap;
+            font-size: .75rem; font-weight: 600; color: var(--sc-tenue);
+            background: var(--sc-suave);
+            border-top: 1px solid var(--sc-linea); border-bottom: 1px solid var(--sc-linea);
+        }
+        .sihla-caja-tabla > tbody > tr > td {
+            padding: .7rem 1rem; vertical-align: top;
+            border-bottom: 1px solid var(--sc-linea-suave);
+        }
+        .sihla-caja-tabla > tbody > tr:last-child > td { border-bottom: none; }
+        .sihla-caja-tabla .sihla-caja-num { text-align: end; }
+
+        .sihla-caja-hora { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+        .sihla-caja-hora span { display: block; font-size: .75rem; font-weight: 400; color: var(--sc-tenue); }
+        .sihla-caja-recibo { white-space: nowrap; color: var(--sc-texto-2); font-variant-numeric: tabular-nums; }
+        .sihla-caja-paciente-nombre { display: block; font-weight: 600; }
+        .sihla-caja-sub { display: block; font-size: .75rem; color: var(--sc-tenue); }
+        .sihla-caja-motivo-anulado { display: block; margin-top: .15rem; font-size: .75rem; color: var(--sc-rojo); }
+        .sihla-caja-medios span { display: block; color: var(--sc-texto-2); }
+        .sihla-caja-medios em { font-style: normal; color: var(--sc-tenue); font-variant-numeric: tabular-nums; }
+        .sihla-caja-monto { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .sihla-caja-acc { text-align: end; white-space: nowrap; }
+
+        .sihla-caja-sin-vigentes { color: var(--sc-tenue); }
+
+        .sihla-caja-tabla > tbody > tr.sihla-caja-separador > td {
+            padding: .45rem 1rem;
+            font-size: .75rem; font-weight: 600; color: var(--sc-tenue);
+            background: var(--sc-suave);
+        }
+        .sihla-caja-fila-anulada > td { color: var(--sc-tenue); }
+        .sihla-caja-fila-anulada .sihla-caja-paciente-nombre,
+        .sihla-caja-fila-anulada .sihla-caja-medios span { color: var(--sc-tenue); }
+        .sihla-caja-fila-anulada .sihla-caja-monto { text-decoration: line-through; font-weight: 500; }
+
+        /* La fila del motivo se lee como parte del recibo que se anula. */
+        .sihla-caja-fila-motivo > td { background: var(--sc-motivo-fondo); }
+        .sihla-caja-fila-motivo label { display: block; margin-bottom: .45rem; font-size: .85rem; font-weight: 600; }
+        .sihla-caja-motivo-fila { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+        .sihla-caja-motivo-campo { flex: 1 1 16rem; }
+        .sihla-caja-fila-motivo .sihla-caja-nota { margin-top: .45rem; }
+
+        /*
+         * En el celular la tabla de seis columnas no cabe: cada recibo se
+         * vuelve una ficha — paciente y monto arriba, cómo pagó y el botón
+         * en medio, hora y número de recibo abajo, en chico.
+         */
+        @media (max-width: 40rem) {
+            .sihla-caja-cinta-total dd { font-size: 1.6rem; }
+
+            .sihla-caja-tabla > thead { display: none; }
+            .sihla-caja-tabla,
+            .sihla-caja-tabla > tbody { display: block; }
+            .sihla-caja-tabla > tbody > tr {
+                display: grid; gap: .15rem .75rem;
+                grid-template-columns: minmax(0, 1fr) auto;
+                grid-template-areas:
+                    "paciente monto"
+                    "medios   acc"
+                    "hora     acc"
+                    "recibo   acc";
+                padding: .8rem 1rem; border-bottom: 1px solid var(--sc-linea-suave);
+            }
+            .sihla-caja-tabla > tbody > tr:last-child { border-bottom: none; }
+            .sihla-caja-tabla > tbody > tr > td { display: block; padding: 0; border-bottom: none; }
+            .sihla-caja-tabla > tbody > tr > td[colspan] { grid-column: 1 / -1; }
+            .sihla-caja-tabla > tbody > tr.sihla-caja-separador > td { padding: 0; background: transparent; }
+            .sihla-caja-tabla > tbody > tr.sihla-caja-separador { background: var(--sc-suave); padding: .45rem 1rem; }
+            .sihla-caja-tabla > tbody > tr.sihla-caja-fila-motivo { background: var(--sc-motivo-fondo); }
+
+            .sihla-caja-paciente { grid-area: paciente; }
+            .sihla-caja-monto { grid-area: monto; }
+            .sihla-caja-medios { grid-area: medios; font-size: .8rem; }
+            .sihla-caja-acc { grid-area: acc; align-self: center; }
+            .sihla-caja-hora { grid-area: hora; font-size: .75rem; font-weight: 400; color: var(--sc-tenue); }
+            .sihla-caja-hora span { display: inline; margin-left: .3rem; }
+            .sihla-caja-recibo { grid-area: recibo; font-size: .75rem; color: var(--sc-tenue); }
+        }
     </style>
 </x-filament-panels::page>

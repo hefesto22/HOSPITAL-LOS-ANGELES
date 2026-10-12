@@ -33,16 +33,17 @@ class RoleSeeder extends Seeder
      * @var array<string, string>
      */
     public const ROLES = [
-        'direccion'   => 'Dirección / propietario: márgenes, costos, tarifarios, reportes y autorizaciones excepcionales. Cruza sedes.',
-        'admision'    => 'Recepción: registra pacientes, abre encuentros, asigna cama, captura póliza y autorización. NO ve notas clínicas ni costos.',
-        'caja'        => 'Cajera / facturación: cobra, emite factura y nota de crédito, aplica anticipos, liquida cuentas. NO ve expediente clínico ni edita precios.',
-        'medico'      => 'Médico tratante: nota clínica, diagnóstico, órdenes, prescripción, informe. NO ve costos ni expedientes sin relación de atención.',
-        'enfermeria'  => 'Enfermería: signos vitales, administración de medicamentos, notas, censo. NO prescribe ni factura.',
-        'farmacia'    => 'Regente y auxiliares: dispensa, recibe, controla lotes, libro de controlados, reporte ARSA. NO prescribe.',
-        'laboratorio' => 'Químico / técnico: registra al paciente ambulatorio, le abre cuenta y le carga SOLO exámenes de laboratorio; recibe muestra, procesa y valida resultado. NO cobra, no cierra cuentas y no puede cargar nada que no sea laboratorio.',
-        'imagenes'    => 'Técnico radiólogo / radiólogo: ejecuta estudio, informa, adjunta enlace PACS. NO factura ni edita la orden.',
-        'bodega'      => 'Almacén central: entradas, traslados, conteos, ajustes con motivo. NO vende, no dispensa a paciente, no ve expediente.',
-        'auditoria'   => 'Auditoría médica y de privacidad: lee bitácoras, revisa break-the-glass, audita glosas. NO escribe en expediente ni factura.',
+        'direccion'        => 'Dirección / propietario: márgenes, costos, tarifarios, reportes y autorizaciones excepcionales. Cruza sedes.',
+        'admision'         => 'Recepción: registra pacientes, abre encuentros, asigna cama, captura póliza y autorización. NO ve notas clínicas ni costos.',
+        'caja'             => 'Cajera / facturación: cobra, emite factura y nota de crédito, aplica anticipos, liquida cuentas. NO ve expediente clínico ni edita precios.',
+        'medico'           => 'Médico tratante: nota clínica, diagnóstico, órdenes, prescripción, informe. NO ve costos ni expedientes sin relación de atención.',
+        'enfermeria'       => 'Enfermería: signos vitales, administración de medicamentos, notas, censo. NO prescribe ni factura.',
+        'farmacia'         => 'Regente y auxiliares: dispensa, recibe, controla lotes, libro de controlados, reporte ARSA. NO prescribe.',
+        'laboratorio'      => 'Químico / técnico: registra al paciente ambulatorio, le abre cuenta y le carga SOLO exámenes de laboratorio; recibe muestra, procesa y valida resultado. NO cobra, no cierra cuentas y no puede cargar nada que no sea laboratorio.',
+        'consulta_externa' => 'Consulta externa: registra al paciente que viene a consulta, le abre cuenta y le carga SOLO consultas y procedimientos. NO cobra, no factura y no carga laboratorio, medicamentos ni estancias.',
+        'imagenes'         => 'Técnico radiólogo / radiólogo: ejecuta estudio, informa, adjunta enlace PACS. NO factura ni edita la orden.',
+        'bodega'           => 'Almacén central: entradas, traslados, conteos, ajustes con motivo. NO vende, no dispensa a paciente, no ve expediente.',
+        'auditoria'        => 'Auditoría médica y de privacidad: lee bitácoras, revisa break-the-glass, audita glosas. NO escribe en expediente ni factura.',
     ];
 
     public function run(): void

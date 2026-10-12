@@ -58,6 +58,13 @@ class Caja extends Page
 
     public string $motivoDeAnular = '';
 
+    /**
+     * Los anulados se esconden por defecto: son historia, no plata en la
+     * gaveta, y con cinco tachados entre dos vigentes la lista no se lee.
+     * Siguen a un clic, con su motivo.
+     */
+    public bool $verAnulados = false;
+
     public static function getNavigationLabel(): string
     {
         return 'Caja';
@@ -75,7 +82,7 @@ class Caja extends Page
 
     public function getSubheading(): string
     {
-        return 'Tu turno: con cuánto abriste, qué entró y cuánto tiene que haber en la gaveta al cerrar.';
+        return 'Lo que entró en tu turno y cuánto efectivo tiene que haber en la gaveta.';
     }
 
     public static function canAccess(): bool
@@ -86,51 +93,113 @@ class Caja extends Page
     // ── Lo que la vista pregunta ──────────────────────────────────────
 
     /**
-     * Los recibos del turno, el último primero.
+     * Todo lo que la pantalla pinta, resuelto una sola vez por pintada.
      *
-     * @return ColeccionDeModelos<int, Abono>
+     * Antes la vista le preguntaba el turno a tres métodos distintos y
+     * cada uno lo volvía a buscar; las sumas por forma de pago también
+     * salían dos veces (una para los cuadros, otra para «debería haber»).
+     * Ahora es una consulta para el turno, una para las sumas y la de los
+     * recibos con lo suyo.
+     *
+     * La cuenta de la gaveta se arma con las formas que se cuentan en el
+     * arqueo (hoy, solo efectivo): si el hospital agrega una forma nueva
+     * que vaya a la gaveta, aparece sola en la suma.
+     *
+     * @return array{
+     *     turno: TurnoDeCaja,
+     *     fondo: Decimal,
+     *     enLaGaveta: list<array{etiqueta: string, monto: Decimal}>,
+     *     gaveta: Decimal,
+     *     fueraDeLaGaveta: list<array{etiqueta: string, monto: Decimal, nota: string}>,
+     *     cobrado: Decimal,
+     *     vigentes: list<Abono>,
+     *     anulados: list<Abono>,
+     *     abiertoHaceMucho: bool,
+     * }|null
      */
-    public function abonosDelTurno(): ColeccionDeModelos
+    public function resumen(): ?array
     {
         $turno = $this->turno();
 
         if (! $turno instanceof TurnoDeCaja) {
-            /** @var ColeccionDeModelos<int, Abono> $vacia */
-            $vacia = new ColeccionDeModelos;
-
-            return $vacia;
+            return null;
         }
 
+        $porForma = $turno->porFormaDePago();
+        $fondo = Decimal::de($turno->fondo_inicial);
+
+        $gaveta = $fondo;
+        $cobrado = Decimal::cero();
+        $enLaGaveta = [];
+        $fueraDeLaGaveta = [];
+
+        foreach (FormaDePago::cases() as $forma) {
+            $monto = $porForma[$forma->value] ?? Decimal::cero();
+            $cobrado = $cobrado->sumar($monto);
+
+            if ($forma->seCuentaEnElArqueo()) {
+                $gaveta = $gaveta->sumar($monto);
+                $enLaGaveta[] = ['etiqueta' => $forma->etiqueta().' recibido', 'monto' => $monto];
+
+                continue;
+            }
+
+            $fueraDeLaGaveta[] = ['etiqueta' => $forma->etiqueta(), 'monto' => $monto, 'nota' => $forma->dondeSeCuadra()];
+        }
+
+        $vigentes = [];
+        $anulados = [];
+
+        foreach ($this->abonosDe($turno) as $abono) {
+            if ($abono->estado->bajaElSaldo()) {
+                $vigentes[] = $abono;
+            } else {
+                $anulados[] = $abono;
+            }
+        }
+
+        $horas = (int) config('sihla.caja.horas_para_avisar_turno_largo', 14);
+
+        return [
+            'turno'            => $turno,
+            'fondo'            => $fondo,
+            'enLaGaveta'       => $enLaGaveta,
+            'gaveta'           => $gaveta,
+            'fueraDeLaGaveta'  => $fueraDeLaGaveta,
+            'cobrado'          => $cobrado,
+            'vigentes'         => $vigentes,
+            'anulados'         => $anulados,
+            'abiertoHaceMucho' => $horas > 0 && $turno->abierto_en->lessThan(now()->subHours($horas)),
+        ];
+    }
+
+    public function mostrarAnulados(bool $ver = true): void
+    {
+        $this->verAnulados = $ver;
+    }
+
+    /**
+     * Los recibos del turno, el último primero, con el nombre del
+     * paciente: «CTA-HLA-2026-000006» no le dice nada a la cajera; el
+     * nombre de quien pagó, sí.
+     *
+     * @return ColeccionDeModelos<int, Abono>
+     */
+    private function abonosDe(TurnoDeCaja $turno): ColeccionDeModelos
+    {
         /** @var ColeccionDeModelos<int, Abono> $abonos */
         $abonos = $turno->abonos()
-            ->with(['medios', 'cuenta:id,numero'])
+            ->with([
+                'medios',
+                'cuenta:id,numero,encuentro_id',
+                'cuenta.encuentro:id,persona_id',
+                'cuenta.encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido',
+            ])
             ->orderByDesc('id')
             ->limit(100)
             ->get();
 
         return $abonos;
-    }
-
-    /**
-     * Cuánto entró por cada forma, para el pie del turno.
-     *
-     * @return array<string, Decimal>
-     */
-    public function porFormaDePago(): array
-    {
-        $turno = $this->turno();
-
-        if (! $turno instanceof TurnoDeCaja) {
-            $vacio = [];
-
-            foreach (FormaDePago::cases() as $forma) {
-                $vacio[$forma->value] = Decimal::cero();
-            }
-
-            return $vacio;
-        }
-
-        return $turno->porFormaDePago();
     }
 
     // ── Anular un recibo ──────────────────────────────────────────────
