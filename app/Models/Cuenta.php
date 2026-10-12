@@ -65,6 +65,11 @@ use Illuminate\Support\Collection;
  * @property string|null $motivo_descuento_hospital
  * @property int|null $descuento_hospital_por
  * @property CarbonInterface|null $descuento_hospital_en
+ * @property numeric-string|null $descuento_servicios
+ * @property numeric-string|null $descuento_servicios_monto
+ * @property string|null $motivo_descuento_servicios
+ * @property int|null $descuento_servicios_por
+ * @property CarbonInterface|null $descuento_servicios_en
  */
 class Cuenta extends Model
 {
@@ -110,6 +115,9 @@ class Cuenta extends Model
 
             'descuento_hospital_en'  => 'datetime',
             'descuento_hospital_por' => 'integer',
+
+            'descuento_servicios_en'  => 'datetime',
+            'descuento_servicios_por' => 'integer',
         ];
     }
 

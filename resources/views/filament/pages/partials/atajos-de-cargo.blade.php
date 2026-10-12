@@ -11,8 +11,13 @@
     naturaleza: no se decide por línea sino por tanda, y no lo decide quien
     teclea sino quien autoriza. Se pone una vez y queda puesto hasta que se
     borre o se cambie de cuenta.
+
+    Son DOS desde el 11-oct-2026 (Mauricio): el de farmacia, solo para
+    medicamentos y materiales, y el de servicios, para todo lo demás, en
+    porcentaje o en lempiras. Cada uno con sus topes.
 --}}
 @php($cuenta = $cuenta ?? null)
+@php($servicios = $servicios ?? ['grupos' => [], 'maximo' => null, 'puede' => false, 'valor' => null, 'modo' => 'porcentaje', 'motivo' => null])
 
 @if ($cuenta && $puede)
     <div class="sihla-cabecera">
@@ -58,8 +63,9 @@
             nada. Con `.live.blur` se aplica al salir del campo, y Enter
             sale del campo en vez de mandar el formulario de abajo.
         --}}
+        <div class="sihla-descuentos">
         <div class="sihla-descuento" x-data="{ desc: @js($descuento), motivo: @js($motivo ?? '') }">
-            <label class="sihla-descuento-titulo" for="sihla-descuento-tanda">Descuento del hospital</label>
+            <label class="sihla-descuento-titulo" for="sihla-descuento-tanda">Descuento en farmacia</label>
 
             <div class="sihla-descuento-campo">
                 <input
@@ -112,6 +118,94 @@
             </p>
 
         </div>
+
+        {{--
+            EL DESCUENTO EN SERVICIOS (11-oct-2026).
+
+            Todo lo que no sale de farmacia: hospitalización, consultas,
+            laboratorio, rayos X. En % o en L. Los topes se dicen antes de
+            teclear, porque cada cosa aguanta distinto según la ley: teclear
+            30 y ver que quedó en 20 parece un error si nadie lo avisó.
+
+            `wire:key` con el modo: al pasar de % a L, Alpine vuelve a
+            nacer con el campo vacío y el motivo escondido, en vez de
+            quedarse con el número de antes.
+        --}}
+        <div
+            class="sihla-descuento"
+            wire:key="servicios-{{ $cuenta->id }}-{{ $servicios['modo'] }}"
+            x-data="{ desc: @js($servicios['valor']), motivo: @js($servicios['motivo'] ?? '') }"
+        >
+            <label class="sihla-descuento-titulo" for="sihla-descuento-servicios">Descuento en servicios</label>
+
+            <div class="sihla-descuento-fila">
+                <div class="sihla-descuento-modo" role="group" aria-label="Cómo se rebaja">
+                    <button
+                        type="button"
+                        wire:click="cambiarModoDeServicios('porcentaje')"
+                        @class(['activo' => $servicios['modo'] === 'porcentaje'])
+                    >%</button>
+                    <button
+                        type="button"
+                        wire:click="cambiarModoDeServicios('monto')"
+                        @class(['activo' => $servicios['modo'] === 'monto'])
+                    >L</button>
+                </div>
+
+                <div class="sihla-descuento-campo">
+                    @if ($servicios['modo'] === 'monto')
+                        <span class="sihla-descuento-signo">L</span>
+                    @endif
+                    <input
+                        id="sihla-descuento-servicios"
+                        type="number"
+                        inputmode="decimal"
+                        min="0"
+                        step="0.01"
+                        placeholder="0"
+                        @class(['sihla-descuento-monto' => $servicios['modo'] === 'monto'])
+                        wire:model.live.blur="descuentoServicios"
+                        x-on:input="desc = $event.target.value"
+                        x-on:keydown.enter.prevent="$el.blur()"
+                        @disabled(! $servicios['puede'])
+                    >
+                    @if ($servicios['modo'] === 'porcentaje')
+                        <span class="sihla-descuento-signo">%</span>
+                    @endif
+                </div>
+            </div>
+
+            <ul class="sihla-descuento-topes">
+                @foreach ($servicios['grupos'] as $grupo)
+                    <li><strong>{{ $grupo['tope'] }}</strong> · {{ $grupo['que'] }}</li>
+                @endforeach
+            </ul>
+
+            <p class="sihla-descuento-ayuda">
+                @if ($servicios['modo'] === 'monto' && $servicios['maximo'] !== null)
+                    Se reparte entre lo cargado: hasta L {{ number_format((float) $servicios['maximo'], 2) }}.
+                @endif
+                No toca farmacia, honorarios ni paquetes.
+            </p>
+
+            <input
+                type="text"
+                class="sihla-descuento-motivo"
+                style="text-transform: uppercase"
+                maxlength="200"
+                placeholder="¿Por qué? Lo puede dar cualquiera"
+                wire:model.live.blur="motivoServicios"
+                x-on:input="motivo = $event.target.value"
+                x-on:keydown.enter.prevent="$el.blur()"
+                x-show="Number(desc) > 0"
+                x-cloak
+            >
+
+            <p class="sihla-descuento-falta" x-show="Number(desc) > 0 && motivo.trim().length < 10" x-cloak>
+                Faltan <span x-text="10 - motivo.trim().length"></span> caracteres para que quede explicado.
+            </p>
+        </div>
+        </div>
     </div>
 
     <style>
@@ -141,7 +235,25 @@
         }
         .sihla-atajo-nota { font-size: .65rem; color: rgb(161 161 170); }
 
+        .sihla-descuentos { flex: 0 0 auto; display: flex; flex-direction: column; gap: .9rem; }
         .sihla-descuento { flex: 0 0 auto; text-align: right; }
+        .sihla-descuento-fila { display: inline-flex; align-items: stretch; gap: .4rem; }
+        .sihla-descuento-modo {
+            display: inline-flex; overflow: hidden;
+            border: 1px solid rgb(228 228 231); border-radius: .5rem;
+        }
+        .sihla-descuento-modo button {
+            padding: 0 .6rem; font-size: .78rem; font-weight: 600; cursor: pointer;
+            background: rgb(255 255 255); color: rgb(113 113 122); border: 0;
+        }
+        .sihla-descuento-modo button + button { border-left: 1px solid rgb(228 228 231); }
+        .sihla-descuento-modo button.activo { background: rgb(180 120 20); color: rgb(255 255 255); }
+        .sihla-descuento-campo input.sihla-descuento-monto { width: 6.5rem; }
+        .sihla-descuento-topes {
+            list-style: none; margin: .35rem 0 0; padding: 0;
+            font-size: .7rem; line-height: 1.35; color: rgb(161 161 170);
+        }
+        .sihla-descuento-topes strong { color: rgb(113 113 122); font-weight: 600; }
         .sihla-descuento-titulo {
             display: block; font-size: .75rem; font-weight: 600; text-transform: uppercase;
             letter-spacing: .04em; color: rgb(113 113 122); margin-bottom: .5rem;
@@ -185,5 +297,10 @@
         .dark .sihla-descuento-campo input,
         .dark .sihla-descuento-motivo { color: rgb(228 228 231); }
         .dark .sihla-descuento-signo { background: rgb(52 52 56); color: rgb(161 161 170); }
+        .dark .sihla-descuento-modo { border-color: rgb(63 63 70); }
+        .dark .sihla-descuento-modo button { background: rgb(39 39 42); color: rgb(161 161 170); }
+        .dark .sihla-descuento-modo button + button { border-left-color: rgb(63 63 70); }
+        .dark .sihla-descuento-modo button.activo { background: rgb(180 120 20); color: rgb(255 255 255); }
+        .dark .sihla-descuento-topes strong { color: rgb(212 212 216); }
     </style>
 @endif

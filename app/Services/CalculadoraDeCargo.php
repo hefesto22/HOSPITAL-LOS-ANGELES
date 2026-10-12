@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Domain\Enums\BaseDelDescuentoLegal;
+use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Exceptions\CargoException;
 use App\Domain\ValueObjects\CargoCalculado;
@@ -99,6 +100,7 @@ final class CalculadoraDeCargo
             $descuentoLegal,
             $fraccionLegal,
             $fraccionAplicada,
+            $fechaServicio,
         );
 
         $descuentos = $montoLegal->sumar($montoComercial);
@@ -308,17 +310,22 @@ final class CalculadoraDeCargo
         DescuentoAplicable $deLey,
         Decimal $leTocaba,
         Decimal $recibio,
+        CarbonInterface $fechaServicio,
     ): void {
         if ($comercial->esCero() || $bruto->esCero()) {
             return;
         }
 
         $rango = $deLey->aplica() ? $deLey->rango : null;
-        $tope = $this->politicaDelHospital->topeParaLaLinea($rango, $leTocaba, $recibio);
+        $categoria = $this->categoriaDeLaPolitica($linea);
+        $deServicios = $this->politicaDelHospital->esDeServicios($categoria);
+        $tope = $this->politicaDelHospital->topeParaLaLinea($rango, $leTocaba, $recibio, $categoria, $fechaServicio);
         $aQuien = $this->politicaDelHospital->aQuien($rango);
 
         if ($tope->esCero()) {
-            throw CargoException::sinMargenParaDescuentoComercial($linea->item->nombre, $aQuien);
+            throw $deServicios
+                ? CargoException::sinDescuentoDelHospitalEnServicios($linea->item->nombre, $aQuien)
+                : CargoException::sinMargenParaDescuentoComercial($linea->item->nombre, $aQuien);
         }
 
         /*
@@ -340,12 +347,29 @@ final class CalculadoraDeCargo
             return;
         }
 
-        throw CargoException::descuentoComercialSuperaLaPolitica(
-            $linea->item->nombre,
-            $comercial->cantidad()->entre($bruto->cantidad())->comoPorcentaje(),
-            $tope->comoPorcentaje(),
-            $aQuien,
-        );
+        $aplicado = $comercial->cantidad()->entre($bruto->cantidad())->comoPorcentaje();
+
+        throw $deServicios
+            ? CargoException::descuentoEnServiciosSuperaElTope($linea->item->nombre, $aplicado, $tope->comoPorcentaje(), $aQuien)
+            : CargoException::descuentoComercialSuperaLaPolitica($linea->item->nombre, $aplicado, $tope->comoPorcentaje(), $aQuien);
+    }
+
+    /**
+     * De qué es la rebaja, que no siempre es de qué es el renglón.
+     *
+     * El renglón del paquete quirúrgico es un servicio, pero la única
+     * rebaja que lleva es la de los medicamentos entregados adentro
+     * (`AgregadorDePresupuestoALaCuenta`): se topa como farmacia. Con la
+     * regla de servicios, a la tercera edad no se le podría rebajar en
+     * el paquete ni un centavo de lo que sí se le rebaja en el mostrador.
+     */
+    private function categoriaDeLaPolitica(LineaDeCargo $linea): CategoriaLegalDeDescuento
+    {
+        if ($linea->presupuestoId !== null && $linea->presupuestoLineaId === null) {
+            return CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico;
+        }
+
+        return $linea->item->categoria_legal_descuento;
     }
 
     private function topeDe(Item $item, CarbonInterface $fechaServicio): Decimal

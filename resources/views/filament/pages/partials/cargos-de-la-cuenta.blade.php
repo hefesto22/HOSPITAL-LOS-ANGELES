@@ -341,8 +341,21 @@
                 --}}
                 @if (filled($armado) && (float) $armado > 0)
                     <div class="sihla-pie-linea sihla-pie-armado">
-                        <span>Descuento del hospital · {{ rtrim(rtrim(number_format((float) $armado, 2), '0'), '.') }} %</span>
+                        <span>Descuento en farmacia · {{ rtrim(rtrim(number_format((float) $armado, 2), '0'), '.') }} %</span>
                         <span>aplicado a toda la cuenta</span>
+                    </div>
+                @endif
+
+                {{-- El de servicios se lee de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
+                @if ($cuenta->descuento_servicios_monto !== null)
+                    <div class="sihla-pie-linea sihla-pie-armado">
+                        <span>Descuento en servicios · L {{ number_format((float) $cuenta->descuento_servicios_monto, 2) }}</span>
+                        <span>repartido entre los servicios</span>
+                    </div>
+                @elseif ($cuenta->descuento_servicios !== null)
+                    <div class="sihla-pie-linea sihla-pie-armado">
+                        <span>Descuento en servicios · {{ rtrim(rtrim(number_format((float) $cuenta->descuento_servicios * 100, 2), '0'), '.') }} %</span>
+                        <span>cada servicio hasta su tope</span>
                     </div>
                 @endif
 

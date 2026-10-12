@@ -105,6 +105,44 @@ final class CuentaException extends SihlaException
         );
     }
 
+    public static function descuentoEnServiciosEnUnaForma(): self
+    {
+        return new self(
+            'El descuento en servicios va en porcentaje o en lempiras, uno de los dos. '
+            .'«10 % y L 500» no dice cuánto se le rebajó.'
+        );
+    }
+
+    public static function descuentoEnServiciosInvalido(): self
+    {
+        return new self(
+            'El descuento en servicios tiene que ser mayor que cero, y en porcentaje no puede pasar de 100 %.'
+        );
+    }
+
+    public static function faltaElMotivoDelDescuento(): self
+    {
+        return new self(
+            'Falta el motivo del descuento, de al menos diez letras. Un descuento sin explicación es uno que nadie va a poder defender.'
+        );
+    }
+
+    public static function noHayServiciosParaRepartir(string $monto): self
+    {
+        return new self(
+            "En la cuenta no hay servicios entre los que repartir L {$monto}. "
+            .'El descuento en lempiras se reparte entre lo que ya está cargado: cargá primero y rebajá después.'
+        );
+    }
+
+    public static function descuentoEnServiciosMayorQueElTope(string $monto, string $maximo): self
+    {
+        return new self(
+            "A este paciente se le pueden rebajar hasta L {$maximo} en servicios, y se pidieron L {$monto}. "
+            .'Cada servicio tiene su tope según la ley: nadie más joven puede quedar pagando menos que un adulto mayor.'
+        );
+    }
+
     public static function saldoNoCuadra(string $numero): self
     {
         return new self(

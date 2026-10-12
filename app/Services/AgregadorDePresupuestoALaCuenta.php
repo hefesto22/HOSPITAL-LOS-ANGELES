@@ -321,10 +321,15 @@ final class AgregadorDePresupuestoALaCuenta
             $presupuesto->farmaciaEntregada()->por($fraccion)->redondeado(2)
         );
 
+        /*
+         * La ley es la del renglón (el paquete); la política, la de lo
+         * que se rebaja (los medicamentos). Ver `topeEnLaCuenta()`.
+         */
         $tope = $this->politicaDelHospital->topeEnLaCuenta(
             $cuenta,
             $paquete->categoria_legal_descuento,
             now(),
+            CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico,
         );
 
         $maximo = Decimal::de($bruto->por($tope)->redondeado(2));

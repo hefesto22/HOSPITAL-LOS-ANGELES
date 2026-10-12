@@ -525,6 +525,22 @@ return [
         ],
 
         /*
+         * EN SERVICIOS, CUÁNTO MÁS ABAJO DE LA TERCERA EDAD (11-oct-2026)
+         *
+         * Los números de arriba son de medicamentos. En los servicios del
+         * Art. 30 el tope del hospital no se configura: para quien no
+         * tiene descuento de ley es lo que la ley le da a la tercera edad
+         * en esa categoría MENOS este colchón. Con 5 puntos: 20 % en
+         * hospitalización y consulta general, 25 % en especialista,
+         * cirugía, laboratorio y rayos X. Tercera y cuarta edad llevan
+         * solo la de ley. Ver `PoliticaDeDescuentoComercial`.
+         *
+         * Subirlo es seguro; bajarlo a cero dejaría al joven pagando lo
+         * mismo que la tercera edad.
+         */
+        'descuento_en_servicios_colchon' => '0.05',
+
+        /*
          * Ventana para registrar un cargo con fecha anterior. Después de
          * esto, requiere autorización. Es política, no constante: se
          * sobrescribe por sede.

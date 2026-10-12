@@ -61,6 +61,7 @@ use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
+use App\Services\AplicadorDeDescuentoEnServicios;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
 use App\Services\FormasDeCobro;
@@ -227,6 +228,17 @@ class CuentasAbiertas extends Page
     public ?string $descuentoDeLaTanda = null;
 
     public ?string $motivoDeLaTanda = null;
+
+    /*
+     * El descuento en servicios (11-oct-2026): el hermano del de
+     * farmacia, en porcentaje o en lempiras. Vive en la cuenta; esto es
+     * solo lo que muestra la banda.
+     */
+    public ?string $descuentoServicios = null;
+
+    public string $modoServicios = 'porcentaje';
+
+    public ?string $motivoServicios = null;
 
     /**
      * ─────────────────────────────────────────────────────────────────
@@ -1418,6 +1430,7 @@ class CuentasAbiertas extends Page
                     'ayuda'     => $this->ayudaDelDescuento($cuenta),
                     'descuento' => $this->descuentoDeLaTanda,
                     'motivo'    => $this->motivoDeLaTanda,
+                    'servicios' => $this->datosDelDescuentoEnServicios($cuenta),
                 ]);
             })
             ->modalFooter(fn (array $arguments) => view(
@@ -1609,6 +1622,23 @@ class CuentasAbiertas extends Page
             ? $cuenta->motivo_descuento_hospital
             : null;
 
+        $autorizado = $descuento instanceof Decimal ? $cuenta->descuento_hospital_por : null;
+
+        /*
+         * Y lo que NO sale de farmacia lleva el descuento en servicios,
+         * si la cuenta lo tiene en porcentaje: topado con la categoría
+         * del ítem. En lempiras se reparte después, entre todos.
+         */
+        $enServicios = $item->se_almacena
+            ? null
+            : app(AplicadorDeDescuentoEnServicios::class)->fraccionParaLaLineaNueva($cuenta, $item, now());
+
+        if ($enServicios instanceof Decimal) {
+            $descuento = $enServicios;
+            $motivo = $cuenta->motivo_descuento_servicios;
+            $autorizado = $cuenta->descuento_servicios_por;
+        }
+
         try {
             $cargos = app(RegistradorDeCargo::class)->registrar(
                 cuenta: $cuenta,
@@ -1631,7 +1661,7 @@ class CuentasAbiertas extends Page
                      * cargo cargado por una interfaz no son la misma
                      * persona.
                      */
-                    autorizadoPor: $descuento instanceof Decimal ? $cuenta->descuento_hospital_por : null,
+                    autorizadoPor: $autorizado,
 
                     /*
                      * ─────────────────────────────────────────────────
@@ -1705,6 +1735,8 @@ class CuentasAbiertas extends Page
          * trayendo la clave vieja y no duplique.
          */
         $this->claveDeEnvio = (string) Str::uuid();
+
+        $this->repartirDeNuevoLosServicios($cuenta, $item);
 
         /*
          * Se suma con SIGNO y no con `montoTotal()`, que devuelve el
@@ -3242,6 +3274,16 @@ class CuentasAbiertas extends Page
                 ->send();
 
             return false;
+        }
+
+        $item = Item::query()->find($cargo->item_id);
+
+        if ($item instanceof Item && AplicadorDeDescuentoEnServicios::aplicaAlItem($item)) {
+            $cuenta = Cuenta::query()->find($cargo->cuenta_id);
+
+            if ($cuenta instanceof Cuenta) {
+                $this->repartirDeNuevoLosServicios($cuenta, $item);
+            }
         }
 
         Notification::make()
@@ -5339,11 +5381,15 @@ class CuentasAbiertas extends Page
             $this->cuentaDelDescuento = null;
             $this->descuentoDeLaTanda = null;
             $this->motivoDeLaTanda = null;
+            $this->descuentoServicios = null;
+            $this->motivoServicios = null;
+            $this->modoServicios = 'porcentaje';
 
             return;
         }
 
         $this->cuentaDelDescuento = $cuenta->id;
+        $this->cargarElDescuentoEnServiciosDe($cuenta);
 
         /*
          * De fracción a porcentaje: 0.3000 → «30». La pantalla habla en
@@ -5442,6 +5488,244 @@ class CuentasAbiertas extends Page
          * precios por el mismo medicamento sin que nadie lo haya querido.
          */
         $this->rehacerLasLineasConElDescuento($cuenta);
+    }
+
+    // ── Descuento en servicios ────────────────────────────────────────
+
+    /**
+     * Lo que muestra la banda del descuento en servicios.
+     *
+     * Los topes se dicen ANTES de teclear, agrupados por cuánto aguanta
+     * cada cosa: «20 % hospitalización, consulta general». Teclear 30 y
+     * enterarse después de que quedó en 20 parece un error del sistema.
+     *
+     * @return array{grupos: list<array{tope: string, que: string}>, maximo: string|null, puede: bool, valor: string|null, modo: string, motivo: string|null}
+     */
+    public function datosDelDescuentoEnServicios(?Cuenta $cuenta): array
+    {
+        $base = [
+            'valor'  => $this->descuentoServicios,
+            'modo'   => $this->modoServicios,
+            'motivo' => $this->motivoServicios,
+        ];
+
+        if (! $cuenta instanceof Cuenta) {
+            return ['grupos' => [], 'maximo' => null, 'puede' => false, ...$base];
+        }
+
+        $aplicador = app(AplicadorDeDescuentoEnServicios::class);
+        $porTope = [];
+        $puede = false;
+
+        foreach ($aplicador->topesDe($cuenta, now()) as $fila) {
+            $tope = $fila['tope']->esCero() ? 'Solo ley' : $fila['tope']->comoPorcentaje(0);
+            $puede = $puede || ! $fila['tope']->esCero();
+            $porTope[$tope][] = self::nombreCortoDeLaCategoria($fila['categoria']);
+        }
+
+        $grupos = [];
+
+        foreach ($porTope as $tope => $que) {
+            $grupos[] = ['tope' => (string) $tope, 'que' => implode(', ', $que)];
+        }
+
+        return [
+            'grupos' => $grupos,
+            'maximo' => $aplicador->maximoEnLempiras($cuenta)->redondeado(2),
+            'puede'  => $puede,
+            ...$base,
+        ];
+    }
+
+    private static function nombreCortoDeLaCategoria(CategoriaLegalDeDescuento $categoria): string
+    {
+        return match ($categoria) {
+            CategoriaLegalDeDescuento::ServicioHospitalario   => 'hospitalización',
+            CategoriaLegalDeDescuento::ConsultaGeneral        => 'consulta general',
+            CategoriaLegalDeDescuento::ConsultaEspecializada  => 'especialista',
+            CategoriaLegalDeDescuento::IntervencionQuirurgica => 'cirugía',
+            CategoriaLegalDeDescuento::RadiologiaYLaboratorio => 'laboratorio y rayos X',
+            CategoriaLegalDeDescuento::SinDescuentoLegal      => 'cafetería y otros',
+            default                                           => mb_strtolower($categoria->etiqueta()),
+        };
+    }
+
+    /**
+     * De la cuenta a la banda. Igual que el de farmacia: se lee de la
+     * cuenta cada vez que se abre el modal, no se confía en lo que quedó
+     * en la memoria de Livewire.
+     */
+    private function cargarElDescuentoEnServiciosDe(Cuenta $cuenta): void
+    {
+        $this->motivoServicios = $cuenta->motivo_descuento_servicios;
+
+        if ($cuenta->descuento_servicios_monto !== null) {
+            $this->modoServicios = 'monto';
+            $this->descuentoServicios = Decimal::de($cuenta->descuento_servicios_monto)->redondeado(2);
+
+            return;
+        }
+
+        $this->modoServicios = 'porcentaje';
+        $this->descuentoServicios = $cuenta->descuento_servicios === null
+            ? null
+            : rtrim(rtrim(Decimal::de($cuenta->descuento_servicios)->por('100')->redondeado(2), '0'), '.');
+    }
+
+    public function updatedDescuentoServicios(): void
+    {
+        $this->guardarElDescuentoEnServicios();
+    }
+
+    public function updatedMotivoServicios(): void
+    {
+        $this->guardarElDescuentoEnServicios();
+    }
+
+    /**
+     * De % a L, o al revés.
+     *
+     * No convierte el número: 10 % y L 10 no son lo mismo. Vacía el campo
+     * y espera el número nuevo; lo que está guardado en la cuenta no se
+     * toca hasta que se escriba.
+     */
+    public function cambiarModoDeServicios(string $modo): void
+    {
+        if (! in_array($modo, ['porcentaje', 'monto'], true) || $modo === $this->modoServicios) {
+            return;
+        }
+
+        $this->modoServicios = $modo;
+        $this->descuentoServicios = null;
+    }
+
+    /**
+     * Igual que el de farmacia: el número y el motivo valen juntos, y
+     * vaciar el número lo quita.
+     */
+    private function guardarElDescuentoEnServicios(): void
+    {
+        $cuenta = $this->cuentaDelDescuento === null
+            ? null
+            : Cuenta::query()->find($this->cuentaDelDescuento);
+
+        if (! $cuenta instanceof Cuenta || ! Gate::allows('update', $cuenta)) {
+            return;
+        }
+
+        $aplicador = app(AplicadorDeDescuentoEnServicios::class);
+        $valor = NumeroDeFormulario::aDecimal($this->descuentoServicios);
+
+        if (! $valor instanceof Decimal || $valor->esCero() || $valor->esNegativo()) {
+            if ($cuenta->descuento_servicios === null && $cuenta->descuento_servicios_monto === null) {
+                return;
+            }
+
+            try {
+                $aplicador->quitar($cuenta);
+            } catch (SihlaException $e) {
+                Notification::make()
+                    ->danger()
+                    ->title('No se pudo quitar el descuento en servicios')
+                    ->body($e->getMessage())
+                    ->persistent()
+                    ->send();
+
+                return;
+            }
+
+            $this->motivoServicios = null;
+
+            Notification::make()
+                ->success()
+                ->title('Descuento en servicios quitado')
+                ->body('Los servicios volvieron a su precio.')
+                ->send();
+
+            return;
+        }
+
+        $motivo = is_string($this->motivoServicios) ? $this->motivoServicios : '';
+
+        if (mb_strlen(trim($motivo)) < 10) {
+            return;
+        }
+
+        $enLempiras = $this->modoServicios === 'monto';
+
+        try {
+            $topadas = $aplicador->fijar(
+                $cuenta,
+                $enLempiras ? null : $valor->entre('100'),
+                $enLempiras ? $valor : null,
+                $motivo,
+                UsuarioAutenticado::id(),
+            );
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se aplicó el descuento en servicios')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->cargarElDescuentoEnServiciosDe($cuenta->refresh());
+
+        Notification::make()
+            ->success()
+            ->title('Descuento en servicios aplicado')
+            ->body($topadas === []
+                ? 'Farmacia, honorarios y paquetes no se tocan.'
+                : self::dichoDeLasTopadas($topadas))
+            ->send();
+    }
+
+    /**
+     * Con el descuento en lempiras, el reparto depende de qué servicios
+     * hay: si entra o sale uno, «L 500 en servicios» se vuelve a repartir
+     * entre los que quedan.
+     *
+     * 🔴 NUNCA BLOQUEA LO QUE YA PASÓ. La línea ya entró (o ya salió); si
+     * el monto no cabe en lo que quedó, se avisa y se sigue.
+     */
+    private function repartirDeNuevoLosServicios(Cuenta $cuenta, Item $item): void
+    {
+        if (! AplicadorDeDescuentoEnServicios::aplicaAlItem($item)) {
+            return;
+        }
+
+        $cuenta->refresh();
+
+        if ($cuenta->descuento_servicios_monto === null) {
+            return;
+        }
+
+        try {
+            app(AplicadorDeDescuentoEnServicios::class)->ponerAlDia($cuenta);
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->warning()
+                ->title('El descuento en servicios quedó sin repartir')
+                ->body($e->getMessage().' Cambialo arriba, en «Descuento en servicios».')
+                ->persistent()
+                ->send();
+        }
+    }
+
+    /**
+     * @param list<string> $topadas
+     */
+    private static function dichoDeLasTopadas(array $topadas): string
+    {
+        $nombres = array_slice($topadas, 0, 3);
+        $resto = count($topadas) - count($nombres);
+        $lista = implode(', ', $nombres).($resto > 0 ? " y {$resto} más" : '');
+
+        return (count($topadas) === 1 ? "{$lista} quedó en su tope" : "{$lista} quedaron en su tope")
+            .': cada servicio rebaja hasta lo que su categoría permite.';
     }
 
     /**
@@ -5690,12 +5974,12 @@ class CuentasAbiertas extends Page
          * escrito que se rehizo.
          */
         if (! $caso instanceof RangoEdad || ! $caso->tieneDescuentoLegal() || ! $cuenta instanceof Cuenta) {
-            return 'Hasta '.$tope->comoPorcentaje().'. Aplica a toda la cuenta.';
+            return 'Hasta '.$tope->comoPorcentaje().'. Solo medicamentos y materiales.';
         }
 
         return $cuenta->convenio->aplicaDescuentoLegal()
-            ? 'Hasta '.$tope->comoPorcentaje().', además del de ley. Aplica a toda la cuenta.'
-            : 'Hasta '.$tope->comoPorcentaje().'. Este pagador no da el de ley: es todo su descuento. Aplica a toda la cuenta.';
+            ? 'Hasta '.$tope->comoPorcentaje().', además del de ley. Solo medicamentos y materiales.'
+            : 'Hasta '.$tope->comoPorcentaje().'. Este pagador no da el de ley: es todo su descuento. Solo medicamentos y materiales.';
     }
 
     /**

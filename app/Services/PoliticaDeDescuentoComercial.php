@@ -107,6 +107,83 @@ final class PoliticaDeDescuentoComercial
     }
 
     /**
+     * Lo que la dirección deja agregar en UNA categoría del Art. 30.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EN SERVICIOS EL TOPE NO SE CONFIGURA: SALE DE LA LEY (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Los números de la configuración —joven 30 %, tercera +10 %, cuarta
+     * 0 %— se pensaron para medicamentos, donde la ley le da 40 % a la
+     * cuarta edad y el orden queda: joven 30 < tercera 35 < cuarta 40.
+     * En un servicio ese orden se rompe. La alimentación lleva 25 % de
+     * ley a la tercera edad y 30 % a la cuarta: con el 30 % de farmacia,
+     * un joven pagaría igual que alguien de 85 años y menos que alguien
+     * de 65. Es la primera línea roja del esquema.
+     *
+     * Por eso, en los servicios del Art. 30 (Mauricio, 11-oct-2026):
+     *
+     *   · Sin descuento de ley → lo que la ley le da a la tercera edad en
+     *     esa categoría, menos un colchón (`descuento_en_servicios_colchon`,
+     *     5 puntos): 20 % en hospitalización y consulta general, 25 % en
+     *     especialista, cirugía, laboratorio y rayos X.
+     *   · Tercera y cuarta edad → 0 %: llevan la de ley. Si el pagador no
+     *     la da, `topeParaLaLinea()` les suma lo que no les llegó.
+     *
+     * Si cambia la ley de la tercera edad en la tabla de descuentos
+     * legales, estos topes se mueven solos.
+     *
+     * Medicamentos y lo que queda fuera del Art. 30 (cafetería, parqueo)
+     * siguen con la configuración de siempre.
+     */
+    public function topeDeLaCategoria(
+        ?RangoEdad $rango,
+        CategoriaLegalDeDescuento $categoria,
+        CarbonInterface $fecha,
+    ): Decimal {
+        if (! $this->esDeServicios($categoria)) {
+            return $this->topePara($rango);
+        }
+
+        if ($rango instanceof RangoEdad && $rango->tieneDescuentoLegal()) {
+            return Decimal::cero();
+        }
+
+        $deLaTercera = $this->ley->paraCategoria($categoria, RangoEdad::Tercera, $fecha);
+
+        if (! $deLaTercera->aplica()) {
+            return $this->topePara(null);
+        }
+
+        $colchon = config('sihla.facturacion.descuento_en_servicios_colchon');
+
+        /*
+         * Falla cerrado, como el resto de la clase: sin el colchón
+         * configurado no hay descuento en servicios. Caer en un número
+         * por defecto escondería una configuración rota.
+         */
+        if (! is_string($colchon)) {
+            return Decimal::cero();
+        }
+
+        $tope = $deLaTercera->fraccion->restar(Decimal::de($colchon));
+
+        return $tope->esNegativo() ? Decimal::cero() : $tope;
+    }
+
+    /**
+     * ¿La categoría se topa con la regla de servicios?
+     *
+     * Todo lo del Art. 30 menos medicamentos y material. Lo que queda
+     * fuera de la ley sigue con la configuración.
+     */
+    public function esDeServicios(CategoriaLegalDeDescuento $categoria): bool
+    {
+        return $categoria !== CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico
+            && $categoria !== CategoriaLegalDeDescuento::SinDescuentoLegal;
+    }
+
+    /**
      * Cuánto puede rebajar el hospital en UNA línea.
      *
      * La política del rango, más lo que la ley le tocaba a esa línea y
@@ -125,10 +202,17 @@ final class PoliticaDeDescuentoComercial
      * @param RangoEdad|null $rango el de la fila de ley que le tocaba a la línea; nulo si no le tocaba ninguna
      * @param Decimal $leTocaba la fracción de ley que le correspondía por edad y categoría
      * @param Decimal $recibio la que de verdad se aplicó, según la base del pagador
+     * @param CategoriaLegalDeDescuento $categoria de qué es la rebaja: decide si rige la configuración o la regla de servicios
+     * @param CarbonInterface|null $fecha la del servicio; con ella se lee la ley de la tercera edad
      */
-    public function topeParaLaLinea(?RangoEdad $rango, Decimal $leTocaba, Decimal $recibio): Decimal
-    {
-        $tope = $this->topePara($rango);
+    public function topeParaLaLinea(
+        ?RangoEdad $rango,
+        Decimal $leTocaba,
+        Decimal $recibio,
+        CategoriaLegalDeDescuento $categoria = CategoriaLegalDeDescuento::MedicamentoYMaterialQuirurgico,
+        ?CarbonInterface $fecha = null,
+    ): Decimal {
+        $tope = $this->topeDeLaCategoria($rango, $categoria, $fecha ?? now());
         $loQueNoLlego = $leTocaba->restar($recibio);
 
         if ($loQueNoLlego->esCero() || $loQueNoLlego->esNegativo()) {
@@ -152,27 +236,34 @@ final class PoliticaDeDescuentoComercial
      * poco más. Este número queda por DEBAJO de lo que la calculadora
      * acepta, nunca por encima: la pantalla nunca ofrece algo que el
      * cargo después rechace.
+     *
+     * `$politica` es de qué es la rebaja, cuando no es lo mismo que el
+     * renglón: el paquete quirúrgico es un servicio, pero lo único que
+     * se le rebaja son los medicamentos de adentro, y eso se topa como
+     * farmacia. Sin ella, la categoría del renglón decide las dos cosas.
      */
     public function topeEnLaCuenta(
         Cuenta $cuenta,
         CategoriaLegalDeDescuento $categoria,
         CarbonInterface $fecha,
+        ?CategoriaLegalDeDescuento $politica = null,
     ): Decimal {
+        $politica ??= $categoria;
         $rango = $cuenta->encuentro->persona->rangoDeEdadEn($fecha);
 
         if (! $rango instanceof RangoEdad) {
-            return $this->topePara(null);
+            return $this->topeDeLaCategoria(null, $politica, $fecha);
         }
 
         $deLey = $this->ley->paraCategoria($categoria, $rango, $fecha);
 
         if (! $deLey->aplica()) {
-            return $this->topePara(null);
+            return $this->topeDeLaCategoria(null, $politica, $fecha);
         }
 
         $recibe = $cuenta->convenio->aplicaDescuentoLegal() ? $deLey->fraccion : Decimal::cero();
 
-        return $this->topeParaLaLinea($deLey->rango, $deLey->fraccion, $recibe);
+        return $this->topeParaLaLinea($deLey->rango, $deLey->fraccion, $recibe, $politica, $fecha);
     }
 
     /**

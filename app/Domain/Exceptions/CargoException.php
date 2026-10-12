@@ -111,6 +111,27 @@ final class CargoException extends SihlaException
         );
     }
 
+    public static function sinDescuentoDelHospitalEnServicios(string $item, string $aQuien): self
+    {
+        return new self(
+            "Sobre «{$item}» no se le agrega descuento del hospital a {$aQuien}: en servicios lleva solo el de "
+            .'ley. El descuento del hospital en servicios es para quien no tiene el de ley, y siempre por debajo de él.'
+        );
+    }
+
+    public static function descuentoEnServiciosSuperaElTope(
+        string $item,
+        string $aplicado,
+        string $tope,
+        string $aQuien,
+    ): self {
+        return new self(
+            "El descuento del hospital sobre «{$item}» es de {$aplicado}, y para {$aQuien} el máximo es {$tope}. "
+            .'En servicios el tope sale de la ley: queda debajo de lo que la ley le da a la tercera edad, para que '
+            .'nadie más joven pague menos que un adulto mayor.'
+        );
+    }
+
     public static function descuentoMayorQueElCargo(string $item): self
     {
         return new self(
