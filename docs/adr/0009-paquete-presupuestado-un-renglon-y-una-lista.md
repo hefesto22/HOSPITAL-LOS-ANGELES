@@ -87,6 +87,19 @@ cargos.presupuesto_linea_id -> qué renglón del presupuesto consume
 - Un test que verifique que el medicamento incluido SÍ descontó existencia y congeló costo.
 - Un test de que un ítem gravado nunca entra al paquete.
 
+## Enmienda (12-oct-2026) — el descuento de la cuenta también alcanza al paquete
+
+Mauricio: «el descuento se maneja siempre desde la cuenta; en el presupuesto solo se modifican los precios, pero el descuento se calcula ahí».
+
+Hasta acá el renglón del paquete solo llevaba la rebaja de farmacia sobre lo entregado. Desde ahora lleva también la de **servicios** y la de **honorarios** de la cuenta, sobre la parte del paquete que es de cada rubro:
+
+- Cada renglón del presupuesto cae en el rubro de su ítem (`AplicadorDeDescuentoDeLaCuenta::rubroDelRenglon()`). La holgura y lo agregado a mano sin ítem, en servicios. Lo de farmacia sigue su regla: el porcentaje de farmacia sobre lo **entregado**.
+- En porcentaje: ese porcentaje de la porción del rubro. En lempiras: el monto se reparte entre los renglones sueltos del rubro y la porción de cada paquete, en proporción, y suma exacto.
+- Todo va en el único `descuento_comercial` del renglón del paquete, con un motivo que dice de dónde sale cada parte. Lo asienta `AgregadorDePresupuestoALaCuenta`; el cálculo es de `AplicadorDeDescuentoDeLaCuenta`.
+- El precio acordado («Se le cobrará») es el **bruto**: el descuento se ve aparte en la cuenta y en la factura.
+
+Verificado en `tests/Feature/Cuentas/DescuentoDeLaCuentaEnElPaqueteTest.php`.
+
 ## Referencias
 
 - ADR-0003 — `PoliticaCargo::IncluidoEnTarifa`, la pieza que hace posible esto.

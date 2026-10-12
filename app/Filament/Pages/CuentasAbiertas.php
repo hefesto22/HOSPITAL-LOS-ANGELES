@@ -6379,7 +6379,11 @@ class CuentasAbiertas extends Page
         if ($rubro instanceof RubroDeDescuento) {
             $aplicador = app(AplicadorDeDescuentoDeLaCuenta::class);
 
-            if (! self::tieneDescuentoEn($cuenta, $rubro) || $aplicador->lineasDe($cuenta, $rubro)->isNotEmpty()) {
+            /*
+             * «Algo» incluye el paquete: si queda una cirugía con servicios
+             * adentro, el descuento sigue alcanzándola (12-oct-2026).
+             */
+            if (! self::tieneDescuentoEn($cuenta, $rubro) || $aplicador->alcanzaAAlgo($cuenta, $rubro)) {
                 return false;
             }
 

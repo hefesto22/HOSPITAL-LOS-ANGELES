@@ -10,6 +10,7 @@ use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RegimenIsv;
+use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
@@ -58,6 +59,7 @@ final class AgregadorDePresupuestoALaCuenta
         private readonly RegistradorDeCargo $cargos,
         private readonly AnuladorDeCargo $anulador,
         private readonly PoliticaDeDescuentoComercial $politicaDelHospital,
+        private readonly AplicadorDeDescuentoDeLaCuenta $descuentos,
     ) {}
 
     /**
@@ -71,14 +73,16 @@ final class AgregadorDePresupuestoALaCuenta
         $cuenta = $this->cuentaAbiertaDe($presupuesto);
         $item = $this->itemDeCobro($presupuesto);
         $total = Decimal::de($presupuesto->total);
-        $descuento = $this->descuentoDeFarmacia($presupuesto, $cuenta, $item, $total);
+        $rebaja = $this->rebajaDelPaquete($presupuesto, $cuenta, $item, $total);
+        $descuento = $rebaja['monto'];
 
-        return DB::transaction(function () use ($presupuesto, $cuenta, $item, $total, $descuento): ?Cargo {
+        return DB::transaction(function () use ($presupuesto, $cuenta, $item, $total, $descuento, $rebaja): ?Cargo {
             $vigente = $this->cargoVigente($presupuesto);
 
             if ($total->esCero()) {
                 if ($vigente instanceof Cargo) {
                     $this->anulador->anular($vigente, 'El presupuesto quedó sin renglones que cobrar.');
+                    $this->reacomodarLosRepartos($cuenta);
                 }
 
                 return null;
@@ -153,13 +157,22 @@ final class AgregadorDePresupuestoALaCuenta
                  * calculado sobre lo que salió de farmacia.
                  */
                 descuentoComercial: $descuento->esCero() ? null : Monto::de($descuento->redondeado(2)),
-                motivoDescuento: $descuento->esCero() ? null : $this->motivoDelDescuento($cuenta),
-                autorizadoPor: $descuento->esCero() ? null : $cuenta->descuento_hospital_por,
+                motivoDescuento: $descuento->esCero() ? null : $rebaja['motivo'],
+                autorizadoPor: $descuento->esCero() ? null : $rebaja['quien'],
                 ocurridoEn: now(),
                 precioAcordado: Monto::de($total->redondeado(2)),
                 referenciaAcordada: $presupuesto->numero,
                 presupuestoId: $presupuesto->id,
                 textoDelCargo: $presupuesto->titulo,
+
+                /*
+                 * Con rebaja de servicios u honorarios, el renglón sigue la
+                 * regla del descuento de la cuenta (12-oct-2026) y no la de
+                 * farmacia: la parte de farmacia ya viene topada acá
+                 * (`descuentoDeFarmacia()`), y la de los rubros, por su
+                 * porcentaje o su reparto.
+                 */
+                descuentoDeLaCuenta: $descuento->esCero() ? null : $rebaja['rubro'],
             ));
 
             $cargo = $cargos->first();
@@ -175,6 +188,8 @@ final class AgregadorDePresupuestoALaCuenta
                     'vence_el'   => now()->addDays($this->diasDeVigencia($presupuesto))->toDateString(),
                 ]);
             }
+
+            $this->reacomodarLosRepartos($cuenta);
 
             return $cargo;
         });
@@ -264,6 +279,100 @@ final class AgregadorDePresupuestoALaCuenta
                 'vigencia_desde'            => now()->toDateString(),
             ],
         );
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * TODO LO QUE SE LE REBAJA AL RENGLÓN DEL PAQUETE (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «el descuento se maneja siempre de acá; en el presupuesto
+     * solo se modifican los precios, pero el descuento se calcula acá». El
+     * renglón de la cirugía lleva, sumadas:
+     *
+     *   · la rebaja de farmacia, sobre lo entregado (`descuentoDeFarmacia()`);
+     *   · la de servicios y la de honorarios de la cuenta, sobre la parte
+     *     del paquete que es de cada rubro
+     *     (`AplicadorDeDescuentoDeLaCuenta::rebajaDelPaquete()`).
+     *
+     * Todo en lempiras y en un solo `descuento_comercial`, porque es un solo
+     * renglón; el motivo dice de dónde sale cada parte. Nunca más que lo que
+     * vale el renglón después de la ley.
+     *
+     * @return array{monto: Decimal, rubro: RubroDeDescuento|null, motivo: string|null, quien: int|null}
+     */
+    private function rebajaDelPaquete(Presupuesto $presupuesto, Cuenta $cuenta, Item $item, Decimal $bruto): array
+    {
+        $monto = $this->descuentoDeFarmacia($presupuesto, $cuenta, $item, $bruto);
+        $motivos = [];
+        $quien = null;
+        $rubroDeLaCuenta = null;
+
+        if (! $monto->esCero()) {
+            $motivos[] = $this->motivoDelDescuento($cuenta);
+            $quien = $cuenta->descuento_hospital_por;
+        }
+
+        foreach (RubroDeDescuento::cases() as $rubro) {
+            $parte = $bruto->esCero() ? Decimal::cero() : $this->descuentos->rebajaDelPaquete($cuenta, $presupuesto, $rubro);
+
+            if ($parte->esCero()) {
+                continue;
+            }
+
+            $monto = $monto->sumar($parte);
+            $rubroDeLaCuenta ??= $rubro;
+            $quien ??= AplicadorDeDescuentoDeLaCuenta::quienLoDio($cuenta, $rubro);
+            $motivos[] = 'En '.$rubro->enPlural().': '
+                .(AplicadorDeDescuentoDeLaCuenta::motivoDe($cuenta, $rubro) ?? 'descuento de la cuenta');
+        }
+
+        $maximo = $this->loQueAguantaElPaquete($presupuesto, $bruto);
+
+        if ($monto->mayorQue($maximo)) {
+            $monto = $maximo;
+        }
+
+        return [
+            'monto'  => Decimal::de($monto->redondeado(2)),
+            'rubro'  => $rubroDeLaCuenta,
+            'motivo' => $motivos === [] ? null : mb_substr(implode(' · ', $motivos), 0, 200),
+            'quien'  => $quien,
+        ];
+    }
+
+    /**
+     * Hasta cuánto se le puede rebajar al renglón del paquete: lo que vale
+     * después del descuento de ley que ya lleva. Sin renglón todavía, el
+     * bruto entero.
+     */
+    private function loQueAguantaElPaquete(Presupuesto $presupuesto, Decimal $bruto): Decimal
+    {
+        $vigente = $this->cargoVigente($presupuesto);
+
+        if (! $vigente instanceof Cargo || ! Decimal::de($vigente->bruto)->mayorQue('0')) {
+            return $bruto;
+        }
+
+        $deLey = Decimal::de($vigente->descuento_legal)->entre($vigente->bruto);
+        $aguanta = Decimal::de($bruto->restar($bruto->por($deLey))->redondeado(2));
+
+        return $aguanta->esNegativo() ? Decimal::cero() : $aguanta;
+    }
+
+    /**
+     * Con el descuento en lempiras, lo que le toca a cada renglón suelto
+     * depende de lo que vale el paquete: si su porción cambió, se vuelven
+     * a repartir. Solo las líneas —el paquete ya quedó—, y por eso no hay
+     * vuelta en círculo con `AplicadorDeDescuentoDeLaCuenta::ponerAlDia()`.
+     */
+    private function reacomodarLosRepartos(Cuenta $cuenta): void
+    {
+        foreach (RubroDeDescuento::cases() as $rubro) {
+            if (AplicadorDeDescuentoDeLaCuenta::montoDe($cuenta, $rubro) instanceof Decimal) {
+                $this->descuentos->ponerAlDiaLasLineas($cuenta, $rubro);
+            }
+        }
     }
 
     /**
@@ -369,7 +478,7 @@ final class AgregadorDePresupuestoALaCuenta
             return "El presupuesto {$presupuesto->numero} cambió de monto y se vuelve a asentar.";
         }
 
-        return "Cambió el descuento de farmacia del paquete {$presupuesto->numero}: "
+        return "Cambió el descuento del paquete {$presupuesto->numero}: "
             ."de L {$vigente->descuento_comercial} a L {$descuento->redondeado(2)}.";
     }
 

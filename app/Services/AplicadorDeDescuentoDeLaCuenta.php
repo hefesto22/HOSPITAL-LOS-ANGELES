@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\RubroDeDescuento;
 use App\Domain\Enums\TipoItem;
@@ -14,6 +15,8 @@ use App\Domain\ValueObjects\Monto;
 use App\Models\Cargo;
 use App\Models\Cuenta;
 use App\Models\Item;
+use App\Models\Presupuesto;
+use App\Models\PresupuestoLinea;
 use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -52,10 +55,17 @@ use Illuminate\Support\Str;
  *     nueva nace con su parte; en lempiras, el monto se vuelve a repartir
  *     entre todos, porque «L 500» sigue siendo L 500.
  *
- * Ningún rubro toca el paquete quirúrgico ni lo que va adentro: tiene un
- * precio acordado con la familia, y su única rebaja es la de los
- * medicamentos entregados (ADR-0009). Tampoco lo que no se cobra ni lo
- * que ya se facturó.
+ * 🔴 EL PAQUETE QUIRÚRGICO TAMBIÉN LO LLEVA (Mauricio, 12-oct-2026: «el
+ * descuento se maneja siempre de acá; en el presupuesto solo se modifican
+ * los precios, pero el descuento se calcula acá»). Antes ningún rubro lo
+ * tocaba y un 5 % en servicios sobre una cuenta con una apendicectomía no
+ * hacía nada. Ahora cada renglón del presupuesto cae en su rubro
+ * (`rubroDelRenglon()`): servicios, honorarios, o farmacia —que sigue su
+ * propia regla, sobre lo entregado—. Al renglón de la cirugía se le rebaja
+ * la parte de lo suyo que es del rubro: en porcentaje, el porcentaje; en
+ * lempiras, lo que le toca al repartir entre todo lo del rubro. La rebaja
+ * la asienta `AgregadorDePresupuestoALaCuenta`, porque el renglón del
+ * paquete es suyo. Lo que no se cobra y lo que ya se facturó, no.
  *
  * ─────────────────────────────────────────────────────────────────────
  * REHACER ES REHACER IGUAL (§9.M-12)
@@ -88,6 +98,97 @@ final class AplicadorDeDescuentoDeLaCuenta
         return $item->tipo === TipoItem::Honorario
             ? RubroDeDescuento::Honorarios
             : RubroDeDescuento::Servicios;
+    }
+
+    /**
+     * A qué rubro pertenece un renglón del paquete presupuestado.
+     *
+     * El de su ítem. La holgura y lo agregado a mano sin ítem caen en
+     * servicios: no son medicamento ni honorario, y son parte de lo que el
+     * hospital cobra por la cirugía. Nulo para lo que sale de farmacia,
+     * que lleva su rebaja aparte (sobre lo entregado).
+     *
+     * ⚠️ Usa el ítem: cargarlo antes (`with('item')`).
+     */
+    public static function rubroDelRenglon(PresupuestoLinea $linea): ?RubroDeDescuento
+    {
+        $item = $linea->item_id === null ? null : $linea->item;
+
+        return $item instanceof Item ? self::rubroDe($item) : RubroDeDescuento::Servicios;
+    }
+
+    /**
+     * Cuánto del paquete es del rubro: la suma de sus renglones, a los
+     * precios que quedaron congelados en el presupuesto (ADR-0008).
+     */
+    public static function porcionDelPaquete(Presupuesto $presupuesto, RubroDeDescuento $rubro): Decimal
+    {
+        $suma = Decimal::cero();
+
+        foreach ($presupuesto->detalle()->with('item')->get() as $linea) {
+            if (self::rubroDelRenglon($linea) === $rubro) {
+                $suma = $suma->sumar($linea->total);
+            }
+        }
+
+        return $suma;
+    }
+
+    /**
+     * Lo que el descuento del rubro le rebaja al renglón de un paquete, en
+     * lempiras.
+     *
+     * En porcentaje, ese porcentaje de su porción del rubro. En lempiras,
+     * lo que le toca al repartir el monto entre todo lo del rubro —los
+     * renglones sueltos y la porción de cada paquete—, en proporción a lo
+     * que vale cada uno.
+     *
+     * Sin efectos: solo calcula. Lo asienta `AgregadorDePresupuestoALaCuenta`.
+     *
+     * @throws CuentaException si el monto en lempiras ya no cabe
+     */
+    public function rebajaDelPaquete(Cuenta $cuenta, Presupuesto $presupuesto, RubroDeDescuento $rubro): Decimal
+    {
+        $porcion = self::porcionDelPaquete($presupuesto, $rubro);
+
+        if (! $porcion->mayorQue('0')) {
+            return Decimal::cero();
+        }
+
+        $monto = self::montoDe($cuenta, $rubro);
+
+        if ($monto instanceof Decimal) {
+            $objetivos = $this->repartir(
+                $cuenta,
+                $rubro,
+                $this->lineasDe($cuenta, $rubro),
+                $monto,
+                $this->paquetesDe($cuenta, $rubro, $presupuesto),
+            );
+
+            return $objetivos[-$presupuesto->id]['monto'] ?? Decimal::cero();
+        }
+
+        $pedida = self::fraccionDe($cuenta, $rubro);
+
+        if (! $pedida instanceof Decimal) {
+            return Decimal::cero();
+        }
+
+        $tope = $this->politica->topeDelDescuentoDeLaCuenta();
+        $aplica = $pedida->mayorQue($tope) ? $tope : $pedida;
+
+        return Decimal::de($porcion->por($aplica)->redondeado(2));
+    }
+
+    /**
+     * ¿Hay algo en la cuenta a lo que alcance el descuento del rubro? Un
+     * renglón suelto, o un paquete con algo de ese rubro adentro.
+     */
+    public function alcanzaAAlgo(Cuenta $cuenta, RubroDeDescuento $rubro): bool
+    {
+        return $this->lineasDe($cuenta, $rubro)->isNotEmpty()
+            || $this->paquetesDe($cuenta, $rubro) !== [];
     }
 
     /**
@@ -150,7 +251,13 @@ final class AplicadorDeDescuentoDeLaCuenta
              * mensaje dice hasta cuánto se puede.
              */
             if ($monto instanceof Decimal) {
-                $this->repartir($bloqueada, $rubro, $this->lineasDe($bloqueada, $rubro), $monto);
+                $this->repartir(
+                    $bloqueada,
+                    $rubro,
+                    $this->lineasDe($bloqueada, $rubro),
+                    $monto,
+                    $this->paquetesDe($bloqueada, $rubro),
+                );
             }
 
             $bloqueada->forceFill([
@@ -196,6 +303,44 @@ final class AplicadorDeDescuentoDeLaCuenta
      * @return list<string> los renglones que quedaron en su tope
      */
     public function ponerAlDia(Cuenta $cuenta, RubroDeDescuento $rubro): array
+    {
+        /** @var list<string> $topadas */
+        $topadas = DB::transaction(function () use ($cuenta, $rubro): array {
+            $topadas = $this->ponerAlDiaLasLineas($cuenta, $rubro);
+
+            /*
+             * Y el renglón de cada paquete, que lo asienta su agregador:
+             * vuelve a calcular su rebaja y solo lo rehace si cambió.
+             *
+             * ⚠️ `app()` y no el constructor: el agregador ya depende de
+             * este servicio para calcular la rebaja, y por constructor
+             * serían dos que se piden mutuamente. El agregador, al
+             * terminar, solo pone al día LAS LÍNEAS —no vuelve a llamar
+             * acá—, así que no hay vuelta en círculo.
+             */
+            $agregador = app(AgregadorDePresupuestoALaCuenta::class);
+
+            foreach ($this->presupuestosDeLosPaquetes($cuenta) as $presupuesto) {
+                $agregador->sincronizar($presupuesto);
+            }
+
+            return $topadas;
+        });
+
+        return $topadas;
+    }
+
+    /**
+     * Rehace los renglones sueltos del rubro que no tienen lo que les toca,
+     * sin tocar el de los paquetes.
+     *
+     * Es lo que llama `AgregadorDePresupuestoALaCuenta` después de asentar
+     * un paquete: si la porción del paquete cambió, en lempiras cambia lo
+     * que les toca a los demás.
+     *
+     * @return list<string> los renglones que quedaron en su tope
+     */
+    public function ponerAlDiaLasLineas(Cuenta $cuenta, RubroDeDescuento $rubro): array
     {
         /** @var list<string> $topadas */
         $topadas = DB::transaction(function () use ($cuenta, $rubro): array {
@@ -256,6 +401,10 @@ final class AplicadorDeDescuentoDeLaCuenta
 
         foreach ($this->lineasDe($cuenta, $rubro) as $cargo) {
             $maximo = $maximo->sumar(self::loQueQuedaDe($cargo));
+        }
+
+        foreach ($this->paquetesDe($cuenta, $rubro) as $paquete) {
+            $maximo = $maximo->sumar($paquete['tope']);
         }
 
         return $maximo;
@@ -321,7 +470,7 @@ final class AplicadorDeDescuentoDeLaCuenta
         $monto = self::montoDe($cuenta, $rubro);
 
         if ($monto instanceof Decimal) {
-            return $this->repartir($cuenta, $rubro, $lineas, $monto);
+            return $this->repartir($cuenta, $rubro, $lineas, $monto, $this->paquetesDe($cuenta, $rubro));
         }
 
         $objetivos = [];
@@ -366,17 +515,26 @@ final class AplicadorDeDescuentoDeLaCuenta
      * repartir entre los demás, en proporción. Termina porque en cada vuelta o se reparte todo o al
      * menos un renglón se llena.
      *
+     * Los paquetes entran como un renglón más, con su porción del rubro
+     * y la clave en negativo (`paquetesDe()`).
+     *
      * @param Collection<int, Cargo> $lineas
+     * @param array<int, array{presupuesto: Presupuesto, porcion: Decimal, tope: Decimal}> $paquetes
      *
      * @return array<int, array{monto: Decimal, topada: bool}>
      *
      * @throws CuentaException
      */
-    private function repartir(Cuenta $cuenta, RubroDeDescuento $rubro, Collection $lineas, Decimal $monto): array
-    {
+    private function repartir(
+        Cuenta $cuenta,
+        RubroDeDescuento $rubro,
+        Collection $lineas,
+        Decimal $monto,
+        array $paquetes = [],
+    ): array {
         $pedido = self::aCentavos($monto);
 
-        if ($lineas->isEmpty()) {
+        if ($lineas->isEmpty() && $paquetes === []) {
             throw CuentaException::noHayNadaParaRepartir($rubro->enPlural(), $monto->redondeado(2));
         }
 
@@ -386,6 +544,11 @@ final class AplicadorDeDescuentoDeLaCuenta
         foreach ($lineas as $cargo) {
             $bruto[$cargo->id] = self::aCentavos(Decimal::de($cargo->bruto));
             $tope[$cargo->id] = self::aCentavos(self::loQueQuedaDe($cargo));
+        }
+
+        foreach ($paquetes as $clave => $paquete) {
+            $bruto[$clave] = self::aCentavos($paquete['porcion']);
+            $tope[$clave] = self::aCentavos($paquete['tope']);
         }
 
         $cabe = array_sum($tope);
@@ -465,6 +628,107 @@ final class AplicadorDeDescuentoDeLaCuenta
         }
 
         return $objetivos;
+    }
+
+    /**
+     * Los presupuestos cuyo paquete está vivo en la cuenta: los que tienen
+     * su renglón pendiente (presupuesto sin línea, ADR-0009).
+     *
+     * @return list<Presupuesto>
+     */
+    private function presupuestosDeLosPaquetes(Cuenta $cuenta): array
+    {
+        $cargos = $cuenta->cargos()
+            ->with('presupuesto')
+            ->whereNotNull('presupuesto_id')
+            ->whereNull('presupuesto_linea_id')
+            ->where('estado', EstadoCargo::Pendiente->value)
+            ->orderBy('id')
+            ->get();
+
+        $presupuestos = [];
+
+        foreach ($cargos as $cargo) {
+            $presupuesto = $cargo->presupuesto;
+
+            if ($presupuesto instanceof Presupuesto) {
+                $presupuestos[$presupuesto->id] = $presupuesto;
+            }
+        }
+
+        return array_values($presupuestos);
+    }
+
+    /**
+     * Los paquetes de la cuenta que tienen algo del rubro, listos para
+     * repartir junto con los renglones sueltos.
+     *
+     * La clave es el id del presupuesto en NEGATIVO: los renglones usan el
+     * id de su cargo, positivo, y así conviven en el mismo reparto sin
+     * chocar. `$tambien` suma un presupuesto que todavía no tiene renglón
+     * en la cuenta —el que se está agregando—, para que su parte ya salga
+     * bien la primera vez.
+     *
+     * @return array<int, array{presupuesto: Presupuesto, porcion: Decimal, tope: Decimal}>
+     */
+    private function paquetesDe(Cuenta $cuenta, RubroDeDescuento $rubro, ?Presupuesto $tambien = null): array
+    {
+        $paquetes = [];
+
+        $cargos = $cuenta->cargos()
+            ->with('presupuesto')
+            ->whereNotNull('presupuesto_id')
+            ->whereNull('presupuesto_linea_id')
+            ->where('estado', EstadoCargo::Pendiente->value)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($cargos as $cargo) {
+            $presupuesto = $cargo->presupuesto;
+
+            if (! $presupuesto instanceof Presupuesto || isset($paquetes[-$presupuesto->id])) {
+                continue;
+            }
+
+            $porcion = self::porcionDelPaquete($presupuesto, $rubro);
+
+            if ($porcion->mayorQue('0')) {
+                $paquetes[-$presupuesto->id] = [
+                    'presupuesto' => $presupuesto,
+                    'porcion'     => $porcion,
+                    'tope'        => self::loQueQuedaDeLaPorcion($cargo, $porcion),
+                ];
+            }
+        }
+
+        if ($tambien instanceof Presupuesto && ! isset($paquetes[-$tambien->id])) {
+            $porcion = self::porcionDelPaquete($tambien, $rubro);
+
+            if ($porcion->mayorQue('0')) {
+                $paquetes[-$tambien->id] = ['presupuesto' => $tambien, 'porcion' => $porcion, 'tope' => $porcion];
+            }
+        }
+
+        return $paquetes;
+    }
+
+    /**
+     * Lo que queda de la porción después del descuento de ley del paquete:
+     * la misma fracción de ley que lleva el renglón entero. Hasta ahí
+     * llega el descuento en lempiras.
+     */
+    private static function loQueQuedaDeLaPorcion(Cargo $paquete, Decimal $porcion): Decimal
+    {
+        $bruto = Decimal::de($paquete->bruto);
+
+        if (! $bruto->mayorQue('0')) {
+            return Decimal::cero();
+        }
+
+        $deLey = Decimal::de($paquete->descuento_legal)->entre($bruto);
+        $queda = Decimal::de($porcion->restar($porcion->por($deLey))->redondeado(2));
+
+        return $queda->esNegativo() ? Decimal::cero() : $queda;
     }
 
     /**

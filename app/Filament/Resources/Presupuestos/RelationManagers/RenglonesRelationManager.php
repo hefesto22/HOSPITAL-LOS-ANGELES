@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Presupuestos\RelationManagers;
 
 use App\Domain\Enums\EstadoPresupuesto;
 use App\Domain\Enums\OrigenLineaPresupuesto;
+use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PresupuestoException;
 use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
@@ -16,9 +17,11 @@ use App\Models\PresupuestoLinea;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\ConsultorDeExistencias;
 use App\Services\CotizadorDePresupuesto;
+use App\Services\ResolutorDePrecio;
 use App\Support\AlmacenesDelUsuario;
 use Closure;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -27,6 +30,7 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
+use Filament\Schemas\Schema;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Enums\TextSize;
 use Filament\Support\Enums\Width;
@@ -37,6 +41,7 @@ use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 use Livewire\Attributes\On;
 use Marcelorodrigo\FilamentBarcodeScannerField\Forms\Components\BarcodeInput;
 use Throwable;
@@ -168,20 +173,44 @@ class RenglonesRelationManager extends RelationManager
 
     // ── Acciones ──────────────────────────────────────────────────────
 
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * AGREGAR DEL CATÁLOGO (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «no puedo agregar medicamentos acá». El selector cargaba
+     * los primeros 200 ítems por código —CON-, HOS-, LAB-…— y buscaba
+     * solo entre esos: los medicamentos, que vienen después, no aparecían
+     * nunca. Ahora busca en la base, por código o por cualquier parte del
+     * nombre, en todo el catálogo.
+     *
+     * Y se ve lo que se va a agregar antes de agregarlo: el precio del
+     * tarifario de este pagador, el importe y —si sale del estante— cuánto
+     * hay. «Agregar y seguir» deja el modal abierto: un presupuesto son
+     * diez, veinte renglones, y cerrar y abrir en cada uno era la mitad
+     * del trabajo.
+     */
     private function agregarDelCatalogo(): Action
     {
         return Action::make('agregar_del_catalogo')
             ->label('Agregar del catálogo')
             ->icon(Heroicon::OutlinedPlus)
             ->visible(fn (): bool => $this->esBorrador())
+            ->modalHeading('Agregar del catálogo')
+            ->modalDescription('Servicios, honorarios, laboratorio, medicamentos y materiales. El precio sale del tarifario del pagador de este presupuesto.')
+            ->modalWidth(Width::ThreeExtraLarge)
+            ->modalSubmitActionLabel('Agregar')
+            ->extraModalFooterActions(fn (Action $action): array => [
+                $action->makeModalSubmitAction('agregarYSeguir', arguments: ['seguir' => true])
+                    ->label('Agregar y seguir')
+                    ->color('gray'),
+            ])
             ->schema([
                 /*
-                 * El mismo escaneo de la pantalla de cuentas: la pistola
-                 * o la cámara. El código del envase resuelve el producto
-                 * y lo deja elegido abajo — nadie teclea un MED-101 con
-                 * el paciente esperando.
-                 *
-                 * ⚠️ El escaneo dice QUÉ es; cuánto lo dice la persona.
+                 * El mismo escaneo de la pantalla de cuentas: la pistola o
+                 * la cámara. El código del envase resuelve el producto y
+                 * lo deja elegido abajo. El escaneo dice QUÉ es; cuánto lo
+                 * dice la persona.
                  */
                 BarcodeInput::make('escaneo')
                     ->label('Escaneá el código')
@@ -190,15 +219,9 @@ class RenglonesRelationManager extends RelationManager
                         $set('presentacion_id', null);
 
                         /*
-                         * 🔴 EL CÓDIGO DE BARRAS ES DE LA PRESENTACIÓN,
-                         * NO DEL PRODUCTO.
-                         *
-                         * La caja de 100 tabletas y el blíster de 10
-                         * tienen códigos distintos porque SON envases
-                         * distintos, y de eso depende el precio. Cargar
-                         * solo el producto y dejar el envase vacío
-                         * obligaba a elegirlo a mano el dato que el
-                         * escaneo acababa de decir.
+                         * 🔴 EL CÓDIGO DE BARRAS ES DE LA PRESENTACIÓN, NO
+                         * DEL PRODUCTO: la caja de 100 y el blíster de 10
+                         * son envases distintos y de eso depende el precio.
                          */
                         $presentacion = $this->presentacionPorCodigo($state);
 
@@ -224,117 +247,82 @@ class RenglonesRelationManager extends RelationManager
                 Select::make('item_id')
                     ->label('Ítem')
                     ->required()
-                    ->searchable(['codigo', 'nombre'])
-                    ->preload()
+                    ->searchable()
                     ->live()
                     ->afterStateUpdated(fn (Set $set): mixed => $set('presentacion_id', null))
-                    ->options(fn (): array => Item::query()
-                        ->orderBy('codigo')
-                        ->limit(200)
-                        ->get()
-                        ->mapWithKeys(fn (Item $i): array => [$i->id => "{$i->codigo} — {$i->nombre}"])
-                        ->all())
-                    ->helperText('El precio sale del tarifario del pagador de este presupuesto, no se escribe.'),
+                    ->getSearchResultsUsing(fn (string $search): array => $this->itemsQueCoinciden($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => $this->etiquetaDelItem($value))
+                    ->searchPrompt('Escribí el código o parte del nombre: «acetam», «MED-101», «hemograma».')
+                    ->searchingMessage('Buscando…')
+                    ->noSearchResultsMessage('No hay ningún ítem con eso. Probá con otra parte del nombre.'),
 
-                /*
-                 * 🔴 EN UN MEDICAMENTO, EL ENVASE ES EL PRECIO.
-                 *
-                 * El frasco de 60 ML y el de 120 ML costaron distinto el
-                 * mililitro, y `ResolutorDePrecio` resuelve por
-                 * presentación. Cotizar sin envase toma el precio del
-                 * producto entero y el número sale mal.
-                 *
-                 * Solo aparece si el ítem tiene presentaciones: para una
-                 * habitación o un honorario no significa nada.
-                 */
-                Select::make('presentacion_id')
-                    ->label('¿De qué presentación sale?')
-                    ->options(function (Get $get): array {
-                        $item = $get('item_id');
-
-                        if (! is_numeric($item)) {
-                            return [];
-                        }
-
-                        return ItemPresentacion::query()
-                            ->where('item_id', (int) $item)
-                            ->orderByDesc('es_predeterminada')
-                            ->orderBy('nombre')
-                            ->pluck('nombre', 'id')
-                            ->all();
-                    })
-                    ->visible(function (Get $get): bool {
-                        $item = $get('item_id');
-
-                        return is_numeric($item)
-                            && ItemPresentacion::query()->where('item_id', (int) $item)->exists();
-                    })
-                    ->helperText('El precio sale del envase del que se sirve. Vacío = el precio del producto entero.'),
-
-                TextInput::make('cantidad')
-                    ->label('Cantidad')
-                    ->numeric()
-                    ->minValue(0.0001)
-                    ->default(1)
-                    ->required()
+                Grid::make(['default' => 1, 'sm' => 12])->schema([
                     /*
-                     * 🔴 SE MUESTRA EL STOCK, PERO NO SE BLOQUEA.
-                     *
-                     * El presupuesto es una PROYECCIÓN: se cotiza hoy una
-                     * cirugía que puede ser la semana que viene, con
-                     * medicamentos que farmacia todavía no compró.
-                     *
-                     * Toparlo en la existencia de hoy haría que lo que
-                     * falta quede FUERA del presupuesto — y el día que se
-                     * use se cobre como excedente, a una familia que solo
-                     * tiene lo presupuestado. El estante manda al
-                     * ENTREGAR, no al cotizar.
+                     * 🔴 EN UN MEDICAMENTO, EL ENVASE ES EL PRECIO: el frasco
+                     * de 60 ML y el de 120 ML costaron distinto el mililitro.
+                     * Solo aparece si el ítem tiene presentaciones.
                      */
-                    /*
-                     * 🔴 TOPADO EN LA EXISTENCIA (decisión de Mauricio,
-                     * 26-ago-2026).
-                     *
-                     * No se puede presupuestar más de lo que hay hoy en
-                     * el estante.
-                     *
-                     * ⚠️ Queda escrito el costo, que se discutió y se
-                     * aceptó: una cirugía PROGRAMADA para la semana que
-                     * viene no se puede cotizar completa si farmacia
-                     * todavía no compró. Lo que no entre al presupuesto
-                     * se cobrará después como excedente — a una familia
-                     * que a veces solo tiene lo presupuestado.
-                     *
-                     * Si algún día eso duele, la alternativa discutida
-                     * era avisar en vez de bloquear.
-                     */
-                    ->maxValue(function (Get $get): float|int {
-                        $item = $this->itemDe($get('item_id'));
+                    Select::make('presentacion_id')
+                        ->label('Presentación')
+                        ->columnSpan(['default' => 1, 'sm' => 8])
+                        ->live()
+                        ->placeholder('El producto entero')
+                        ->options(function (Get $get): array {
+                            $item = $get('item_id');
 
-                        if (! $item instanceof Item || ! $item->mueveInventario()) {
-                            return PHP_INT_MAX;
-                        }
+                            if (! is_numeric($item)) {
+                                return [];
+                            }
 
-                        return (float) $this->cuantoHayDe($item)->redondeado(4);
-                    })
-                    ->helperText(function (Get $get): string {
-                        $item = $this->itemDe($get('item_id'));
+                            return ItemPresentacion::query()
+                                ->where('item_id', (int) $item)
+                                ->orderByDesc('es_predeterminada')
+                                ->orderBy('nombre')
+                                ->pluck('nombre', 'id')
+                                ->all();
+                        })
+                        ->visible(function (Get $get): bool {
+                            $item = $get('item_id');
 
-                        if (! $item instanceof Item || ! $item->mueveInventario()) {
-                            return 'Cuánto lleva este caso.';
-                        }
+                            return is_numeric($item)
+                                && ItemPresentacion::query()->where('item_id', (int) $item)->exists();
+                        }),
 
-                        $hay = $this->cuantoHayDe($item);
+                    TextInput::make('cantidad')
+                        ->label('Cantidad')
+                        ->columnSpan(['default' => 1, 'sm' => 4])
+                        ->numeric()
+                        ->minValue(0.0001)
+                        ->default(1)
+                        ->required()
+                        ->live(debounce: 400)
+                        /*
+                         * 🔴 TOPADO EN LA EXISTENCIA (decisión de Mauricio,
+                         * 26-ago-2026): no se puede presupuestar más de lo
+                         * que hay hoy en el estante. El costo se discutió y
+                         * se aceptó: lo que no entre se cobrará después
+                         * como excedente.
+                         */
+                        ->maxValue(function (Get $get): float|int {
+                            $item = $this->itemDe($get('item_id'));
 
-                        return $hay->esCero()
-                            ? '⚠️ No hay existencia de este producto: no se puede presupuestar hasta que farmacia lo tenga.'
-                            : "Hay {$hay->redondeado(2)} en existencia. No se puede presupuestar más que eso.";
-                    }),
+                            if (! $item instanceof Item || ! $item->mueveInventario()) {
+                                return PHP_INT_MAX;
+                            }
+
+                            return (float) $this->cuantoHayDe($item)->redondeado(4);
+                        }),
+                ]),
+
+                Placeholder::make('resumen_del_renglon')
+                    ->hiddenLabel()
+                    ->content(fn (Get $get): HtmlString => $this->resumenDelRenglon($get)),
 
                 Toggle::make('opcional')
                     ->label('Es opcional')
                     ->helperText('Igual suma al total: el presupuesto dice el techo, no el piso.'),
             ])
-            ->action(function (array $data): void {
+            ->action(function (array $data, array $arguments, Schema $schema, Action $action): void {
                 $presupuesto = $this->presupuesto();
 
                 abort_unless(Gate::allows('update', $presupuesto), 403);
@@ -380,7 +368,115 @@ class RenglonesRelationManager extends RelationManager
 
                 $cotizador->recalcular($presupuesto);
                 $this->sincronizarConLaCuenta();
+
+                if ($arguments['seguir'] ?? false) {
+                    Notification::make()
+                        ->success()
+                        ->title('Agregado: '.$item->nombre)
+                        ->send();
+
+                    $schema->fill();
+                    $schema->dispatchClientSideStateReset();
+                    $action->halt();
+                }
             });
+    }
+
+    /**
+     * Los ítems que coinciden con lo que se escribió, en TODO el catálogo:
+     * por código o por cualquier parte del nombre, sin importar mayúsculas.
+     * Nunca el ítem técnico del paquete, que no se cotiza.
+     *
+     * @return array<int, string>
+     */
+    private function itemsQueCoinciden(string $buscado): array
+    {
+        $texto = trim($buscado);
+
+        if ($texto === '') {
+            return [];
+        }
+
+        $patron = '%'.addcslashes($texto, '%_\\').'%';
+
+        return Item::query()
+            ->where('tipo', '!=', TipoItem::Paquete->value)
+            ->where(fn (Builder $query): Builder => $query
+                ->where('codigo', 'ilike', $patron)
+                ->orWhere('nombre', 'ilike', $patron))
+            ->orderBy('nombre')
+            ->limit(50)
+            ->get()
+            ->mapWithKeys(fn (Item $item): array => [$item->id => self::etiquetaDe($item)])
+            ->all();
+    }
+
+    private function etiquetaDelItem(mixed $id): ?string
+    {
+        $item = $this->itemDe($id);
+
+        return $item instanceof Item ? self::etiquetaDe($item) : null;
+    }
+
+    /**
+     * «MED-101 — ACETAMINOFEN 500 MG · Medicamento»: el tipo al final dice
+     * de un vistazo si es de farmacia o un servicio.
+     */
+    private static function etiquetaDe(Item $item): string
+    {
+        return $item->codigo.' — '.$item->nombre.' · '.$item->tipo->etiquetaCorta();
+    }
+
+    /**
+     * Lo que se va a agregar, antes de agregarlo: el precio del tarifario
+     * de este pagador, el importe y —si sale del estante— cuánto hay.
+     *
+     * ⚠️ Estilos en línea: el CSS del panel viene precompilado (§9.A7).
+     */
+    private function resumenDelRenglon(Get $get): HtmlString
+    {
+        $item = $this->itemDe($get('item_id'));
+
+        if (! $item instanceof Item) {
+            return new HtmlString(
+                '<div style="padding:.6rem .85rem;border-radius:.6rem;font-size:.85rem;opacity:.7;'
+                .'background:rgb(127 127 127 / .08)">Elegí un ítem para ver su precio.</div>'
+            );
+        }
+
+        $presupuesto = $this->presupuesto();
+        $presentacionId = $get('presentacion_id');
+        $presentacion = is_numeric($presentacionId) ? ItemPresentacion::query()->find((int) $presentacionId) : null;
+        $presentacion = $presentacion instanceof ItemPresentacion ? $presentacion : null;
+        $cantidad = Decimal::de($this->comoCantidad($get('cantidad')));
+        $precios = app(ResolutorDePrecio::class);
+        $partes = [];
+
+        if ($precios->hayPrecio($item, $presupuesto->convenio, now(), $presupuesto->sede, $presentacion)) {
+            $unitario = $precios->para($item, $presupuesto->convenio, now(), $presupuesto->sede, $presentacion)
+                ->precio
+                ->cantidad();
+
+            $partes[] = 'Precio <strong>'.e(self::lempiras($unitario->redondeado(2))).'</strong> c/u';
+            $partes[] = 'Importe <strong>'.e(self::lempiras($unitario->por($cantidad)->redondeado(2))).'</strong>';
+        } else {
+            $partes[] = '<span style="color:#d97706">Sin precio en el tarifario de este pagador: entra en L 0.00 y hay que ponérselo a mano.</span>';
+        }
+
+        if ($item->mueveInventario()) {
+            $hay = $this->cuantoHayDe($item);
+
+            $partes[] = $hay->esCero()
+                ? '<span style="color:#dc2626">Sin existencia: no se puede presupuestar hasta que farmacia lo tenga</span>'
+                : 'En existencia <strong>'.e(rtrim(rtrim($hay->redondeado(2), '0'), '.')).'</strong>';
+        }
+
+        return new HtmlString(
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:.35rem 1.1rem;padding:.6rem .85rem;'
+            .'border-radius:.6rem;font-size:.85rem;background:rgb(127 127 127 / .08)">'
+            .implode('<span style="opacity:.3">|</span>', $partes)
+            .'</div>'
+        );
     }
 
     private function agregarAMano(): Action
