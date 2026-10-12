@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enums\TipoIdentificador;
+use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Filament\Pages\CuentasAbiertas;
 use App\Models\Convenio;
@@ -170,12 +171,41 @@ it('arriba del umbral del sar se propone al paciente y no consumidor final', fun
     expect(clienteQueProponeLaCaja($cuenta)['nombre'])->toBe(elPacienteDeLaCuenta($cuenta));
 })->note('Más de L 10,000 sin identificar al cliente no se emite (Acuerdo 481-2017). Proponer «CONSUMIDOR FINAL» ahí era proponer un rechazo.');
 
-it('con reembolso el cliente es el paciente: su seguro le pide la factura a su nombre', function (): void {
-    $cuenta = unaCuentaCon(Convenio::factory()->reembolso()->create());
+it('🔴 con reembolso el paciente paga todo y la factura sale a nombre del seguro', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->reembolso()->create(['rtn' => '08019001234567']));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
     conUnServicioDe($cuenta, '1000.0000');
 
-    expect(clienteQueProponeLaCaja($cuenta)['nombre'])->toBe(elPacienteDeLaCuenta($cuenta));
-})->note('Paga el paciente y le reclama a su seguro. Con «CONSUMIDOR FINAL» no tiene con qué reclamar.');
+    $propuesto = clienteQueProponeLaCaja($cuenta);
+
+    expect($cuenta->refresh()->saldoPendienteDelPaciente()->redondeado(2))->toBe('1000.00')
+        ->and($propuesto['nombre'])->toBe($cuenta->convenio->nombre)
+        ->and($propuesto['numero'])->toBe('08019001234567');
+
+    abonarle($cuenta, '1000.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura($propuesto['nombre']),
+    );
+
+    expect($factura->cliente_nombre)->toBe($cuenta->convenio->nombre)
+        ->and($factura->cliente_documento)->toBe('08019001234567')
+        ->and($factura->cliente_documento_tipo)->toBe(TipoIdentificador::Rtn)
+        ->and($factura->paciente_nombre)->toBe(elPacienteDeLaCuenta($cuenta));
+})->note('Mauricio, 11-oct-2026: «el paciente nos paga todo; solo nos aseguramos de que la factura salga a nombre del seguro».');
+
+it('con reembolso y sin rtn del seguro no se emite', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->reembolso()->create(['rtn' => null]));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+    conUnServicioDe($cuenta, '1000.0000');
+    abonarle($cuenta, '1000.00');
+
+    expect(fn () => app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura($cuenta->convenio->nombre),
+    ))->toThrow(FacturaException::class, 'no está cargado');
+});
 
 it('🔴 el paciente de una factura emitida no se edita', function (string $columna, string $valor): void {
     $cuenta = unaCuentaCon(unSeguroQueCubre('1.0000'));
@@ -198,3 +228,56 @@ it('🔴 el paciente de una factura emitida no se edita', function (string $colu
     'la identidad' => ['paciente_documento', '0801199099999'],
     'la póliza'    => ['paciente_poliza', 'OTRA-POLIZA'],
 ])->note('Se corrige en el expediente; la factura del año pasado sigue diciendo lo que decía.');
+
+/**
+ * El cliente con el que la pantalla emitiría, con lo que mande el
+ * formulario.
+ *
+ * @param array<string, mixed> $formulario
+ */
+function clienteConElQueSeEmite(Cuenta $cuenta, array $formulario): ClienteDeFactura
+{
+    $pagina = app(CuentasAbiertas::class);
+    $pagina->cuentaAFacturar = $cuenta->id;
+
+    /** @var ClienteDeFactura $cliente */
+    $cliente = (new ReflectionMethod(CuentasAbiertas::class, 'clienteParaEmitir'))->invoke($pagina, $formulario);
+
+    return $cliente;
+}
+
+it('🔴 el cliente no se escribe: sale el de la regla aunque el formulario traiga otro', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
+    conUnServicioDe($cuenta, '1000.0000');
+
+    $cliente = clienteConElQueSeEmite($cuenta, [
+        'otro_cliente'   => false,
+        'cliente_nombre' => 'ALGUIEN QUE NO VA',
+    ]);
+
+    expect($cliente->nombre)->toBe('CONSUMIDOR FINAL')
+        ->and($cliente->documento)->toBeNull();
+})->note('Mauricio: «¿por qué hay que escribirlo?». Con el interruptor apagado los campos ni se muestran.');
+
+it('a nombre de alguien sale lo que se escribio', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
+    conUnServicioDe($cuenta, '1000.0000');
+
+    $cliente = clienteConElQueSeEmite($cuenta, [
+        'otro_cliente'           => true,
+        'cliente_nombre'         => 'EMPRESA DEL PACIENTE S.A.',
+        'cliente_documento'      => '08019001234567',
+        'cliente_documento_tipo' => TipoIdentificador::Rtn->value,
+    ]);
+
+    expect($cliente->nombre)->toBe('EMPRESA DEL PACIENTE S.A.')
+        ->and($cliente->documento)->toBe('08019001234567')
+        ->and($cliente->tipoDocumento)->toBe(TipoIdentificador::Rtn);
+});
+
+it('desde L 10,000 exactos ya sale a nombre del paciente', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create());
+    conUnServicioDe($cuenta, '10000.0000');
+
+    expect(clienteQueProponeLaCaja($cuenta)['nombre'])->toBe(elPacienteDeLaCuenta($cuenta));
+})->note('Mauricio: «si es 10,000 o más sale a nombre del paciente».');

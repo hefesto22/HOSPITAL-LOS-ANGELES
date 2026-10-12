@@ -276,6 +276,107 @@ class Cuenta extends Model
     }
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 LA CAJA TAMBIÉN VA AL LIBRO (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «sigue diciendo que abonó cuando no hay registro de
+     * ningún abono». El pie decía «Abonado − 26.95» y la bitácora solo
+     * tenía cargos: el recibo que dejó «Cobrar ahora» al emitir existía,
+     * pero en la cuenta no había dónde verlo, ni la factura que se emitió
+     * y se anuló.
+     *
+     * Los recibos —vivos y anulados— y las facturas —emitidas y
+     * anuladas—, en el orden en que pasaron. Cada anulación es su propio
+     * renglón, con su motivo: lo que se deshizo se ve deshecho, no
+     * desaparece.
+     *
+     * @return list<array{cuando: CarbonInterface, texto: string, detalle: string, monto: string, muerto: bool, tachado: bool}>
+     */
+    public function bitacoraDeCaja(): array
+    {
+        $recibos = $this->abonos()->with('medios')->get();
+
+        $facturas = Factura::query()
+            ->where('cuenta_id', $this->id)
+            ->orderBy('id')
+            ->get(['id', 'numero', 'estado', 'emitida_en', 'anulada_en', 'anulada_por', 'motivo_anulacion', 'total', 'facturador']);
+
+        /*
+         * Los nombres en una sola consulta: quién recibió cada recibo y
+         * quién anuló cada cosa. Por relación serían dos consultas por
+         * renglón.
+         */
+        $ids = $recibos->pluck('recibido_por')
+            ->merge($recibos->pluck('anulado_por'))
+            ->merge($facturas->pluck('anulada_por'))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        /** @var array<int, string> $nombres */
+        $nombres = User::query()->whereIn('id', $ids)->pluck('name', 'id')->all();
+
+        $lineas = [];
+
+        foreach ($recibos as $recibo) {
+            $anulado = $recibo->estado === EstadoAbono::Anulado;
+
+            $lineas[] = [
+                'cuando'  => $recibo->recibido_en,
+                'texto'   => 'Recibo '.$recibo->numero.' · '.$recibo->resumenDeMedios(),
+                'detalle' => ($nombres[$recibo->recibido_por] ?? 'Sistema')
+                    .($recibo->nota === null ? '' : ' · '.$recibo->nota),
+                'monto'   => 'L. '.number_format((float) $recibo->total, 2),
+                'muerto'  => $anulado,
+                'tachado' => $anulado,
+            ];
+
+            if ($anulado && $recibo->anulado_en !== null) {
+                $lineas[] = [
+                    'cuando'  => $recibo->anulado_en,
+                    'texto'   => 'Recibo '.$recibo->numero.' anulado',
+                    'detalle' => ($nombres[(int) $recibo->anulado_por] ?? 'Sistema')
+                        .' — «'.$recibo->motivo_anulacion.'»',
+                    'monto'   => '− L. '.number_format((float) $recibo->total, 2),
+                    'muerto'  => true,
+                    'tachado' => false,
+                ];
+            }
+        }
+
+        foreach ($facturas as $factura) {
+            $anulada = $factura->anulada_en !== null;
+
+            $lineas[] = [
+                'cuando'  => $factura->emitida_en,
+                'texto'   => 'Factura '.$factura->numero.' emitida',
+                'detalle' => $factura->facturador ?? 'Sistema',
+                'monto'   => 'L. '.number_format((float) $factura->total, 2),
+                'muerto'  => $anulada,
+                'tachado' => $anulada,
+            ];
+
+            if ($factura->anulada_en !== null) {
+                $lineas[] = [
+                    'cuando'  => $factura->anulada_en,
+                    'texto'   => 'Factura '.$factura->numero.' anulada',
+                    'detalle' => ($nombres[(int) $factura->anulada_por] ?? 'Sistema')
+                        .' — «'.$factura->motivo_anulacion.'»',
+                    'monto'   => '',
+                    'muerto'  => true,
+                    'tachado' => false,
+                ];
+            }
+        }
+
+        usort($lineas, static fn (array $una, array $otra): int => $una['cuando'] <=> $otra['cuando']);
+
+        return $lineas;
+    }
+
+    /**
      * ¿Hay más de una persona cargando en esta cuenta?
      *
      * Es lo que decide si el renglón dice quién lo entregó. Con una sola

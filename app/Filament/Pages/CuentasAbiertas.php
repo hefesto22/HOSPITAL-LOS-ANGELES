@@ -3375,9 +3375,9 @@ class CuentasAbiertas extends Page
      *
      *   · Con un tercero que paga —aseguradora, Militar, IHSS—: el
      *     convenio, con SU RTN. Es quien paga y quien reembolsa.
-     *   · Con reembolso: el paciente con su documento. Paga él y le
-     *     reclama a su seguro, que le pide la factura a nombre del
-     *     asegurado — con «CONSUMIDOR FINAL» no le reembolsan.
+     *   · Con reembolso: también la aseguradora con su RTN. Paga el
+     *     paciente —todo, en caja— y reclama él con esa factura
+     *     (Mauricio, 11-oct-2026).
      *   · De contado: «CONSUMIDOR FINAL»… salvo arriba del umbral del
      *     SAR (L 10,000), donde hay que identificar al cliente y se
      *     propone al paciente con su documento.
@@ -3395,14 +3395,15 @@ class CuentasAbiertas extends Page
         $cuenta = $this->cuentaFacturando();
         $convenio = $cuenta?->convenio;
 
-        if ($convenio instanceof Convenio && $convenio->tipo->pagaUnTercero()) {
+        if ($convenio instanceof Convenio && $convenio->tipo->facturaANombreDelSeguro()) {
             $rtn = trim((string) $convenio->rtn);
 
             /*
              * 🔴 CON SEGURO VA EL RTN DEL SEGURO, Y NADA MÁS (regla
-             * del hospital, 10-oct-2026). Si falta, el campo queda vacío
-             * con el aviso de dónde cargarlo, y `EmisorDeFactura` no
-             * emite — es el que manda, no esta pantalla.
+             * del hospital, 10-oct-2026), pague quien pague: con el
+             * reembolso el paciente paga todo y la factura sale igual a
+             * nombre de la aseguradora (11-oct-2026). Si falta el RTN,
+             * la tarjeta lo dice y `EmisorDeFactura` no emite.
              */
             return [
                 'nombre' => $convenio->nombre,
@@ -3411,9 +3412,7 @@ class CuentasAbiertas extends Page
             ];
         }
 
-        $esReembolso = $convenio instanceof Convenio && $convenio->tipo === TipoConvenio::Reembolso;
-
-        if ($esReembolso || $this->superaElUmbralDelSar($cuenta)) {
+        if ($this->superaElUmbralDelSar($cuenta)) {
             $documento = $this->documentoDelPaciente();
 
             return [
@@ -3438,25 +3437,29 @@ class CuentasAbiertas extends Page
         $cuenta = $this->cuentaFacturando();
         $tipo = $cuenta?->convenio->tipo ?? null;
 
-        if ($tipo instanceof TipoConvenio && $tipo->pagaUnTercero()) {
-            return 'Con seguro el cliente es la aseguradora: ella es la que paga y reembolsa.';
+        if ($tipo === TipoConvenio::Reembolso) {
+            return 'El paciente paga todo y la factura sale a nombre de su aseguradora, con su RTN, para que la reclame.';
         }
 
-        if ($tipo === TipoConvenio::Reembolso) {
-            return 'Paga el paciente y le reclama a su seguro: la factura va a su nombre, que es la que el seguro le pide.';
+        if ($tipo instanceof TipoConvenio && $tipo->facturaANombreDelSeguro()) {
+            return 'Con seguro sale a nombre de la aseguradora, con su RTN.';
         }
 
         if ($this->superaElUmbralDelSar($cuenta)) {
-            return 'Arriba del umbral del SAR no vale «CONSUMIDOR FINAL»: se propone al paciente con su documento.';
+            return 'Desde L 10,000 el SAR pide identificar al cliente: sale a nombre del paciente.';
         }
 
-        return 'Sin seguro sale como «CONSUMIDOR FINAL». Si piden la factura a nombre de alguien, escribilo con su RTN.';
+        return 'Sin seguro y menos de L 10,000: sale como consumidor final.';
     }
 
     /**
-     * ¿La cuenta pasa el umbral arriba del cual «CONSUMIDOR FINAL» no
-     * vale? Es la misma vara que aplica `EmisorDeFactura`: más de L
-     * 10,000 —configurable— exige identificar al cliente.
+     * ¿La cuenta llega al umbral desde el cual se identifica al cliente?
+     *
+     * Mauricio, 11-oct-2026: «si es 10,000 o más, sale a nombre del
+     * paciente». `EmisorDeFactura` exige el documento solo cuando la
+     * venta SUPERA el umbral, que es lo que dice el SAR; proponer al
+     * paciente también en el número exacto no viola nada —identificar
+     * al cliente siempre está permitido— y evita discutirlo en caja.
      */
     private function superaElUmbralDelSar(?Cuenta $cuenta): bool
     {
@@ -3466,8 +3469,9 @@ class CuentasAbiertas extends Page
 
         $configurado = config('sihla.facturacion.umbral_rtn_obligatorio');
         $umbral = Decimal::de(is_string($configurado) ? $configurado : '10000.00');
+        $total = Decimal::de($cuenta->total);
 
-        return Decimal::de($cuenta->total)->mayorQue($umbral);
+        return $total->mayorQue($umbral) || $total->igualA($umbral);
     }
 
     /**
@@ -3505,7 +3509,7 @@ class CuentasAbiertas extends Page
 
         $convenio = $this->cuentaFacturando()?->convenio;
 
-        if ($convenio instanceof Convenio && $convenio->tipo->pagaUnTercero()) {
+        if ($convenio instanceof Convenio && $convenio->tipo->facturaANombreDelSeguro()) {
             return 'Falta el RTN de '.$convenio->nombre.' — cargalo en Seguros y convenios';
         }
 
@@ -3582,22 +3586,21 @@ class CuentasAbiertas extends Page
      */
     private function hayColumnaDerechaAlFacturar(): bool
     {
-        if ($this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false) {
-            return true;
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return false;
         }
 
-        return $this->laCuentaFacturandoTienePaquete();
-    }
-
-    /**
-     * ¿La cuenta que se está facturando la paga un seguro?
-     *
-     * Con seguro, el documento de la factura es el RTN del convenio y no
-     * se elige en la pantalla.
-     */
-    private function elPagadorEsUnTercero(): bool
-    {
-        return $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false;
+        /*
+         * El cobro y los recibos van a la derecha desde el 11-oct-2026:
+         * con eso la izquierda casi nunca va sola, y el modal cabe sin
+         * scroll aunque haya que cobrar.
+         */
+        return $cuenta->convenio->tipo->pagaUnTercero()
+            || $cuenta->saldoPendienteDelPaciente()->mayorQue('0')
+            || $cuenta->abonado()->mayorQue('0')
+            || $this->laCuentaFacturandoTienePaquete();
     }
 
     /**
@@ -3640,6 +3643,186 @@ class CuentasAbiertas extends Page
 
         return new HtmlString(
             '<table style="width:100%;border-collapse:collapse;font-size:.875rem">'.$filas.'</table>'
+        );
+    }
+
+    /**
+     * La franja de arriba del modal de factura: de quién es la cuenta y
+     * los números que deciden qué hacer —cuánto es, cuánto pone el
+     * seguro, cuánto abonó y cuánto falta—.
+     *
+     * 🔴 LO QUE FALTA ES LO DEL PACIENTE. Con seguro, el total y lo que
+     * hay que cobrar antes de facturar son dos números distintos: lo de
+     * la aseguradora se factura y se cobra después.
+     */
+    private function encabezadoDeLaFactura(): HtmlString
+    {
+        $cuenta = $this->cuentaFacturando();
+
+        if (! $cuenta instanceof Cuenta) {
+            return new HtmlString('&nbsp;');
+        }
+
+        $saldo = $cuenta->saldoPendienteDelPaciente();
+        $abonado = $cuenta->abonado();
+        $expediente = Expediente::query()->withTrashed()->find($cuenta->encuentro->expediente_id);
+
+        $quien = '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem .75rem;margin-bottom:.6rem">'
+            .'<span style="font-size:1.05rem;font-weight:600">'.e($this->nombreDelPacienteAFacturar() ?? '—').'</span>'
+            .($expediente instanceof Expediente
+                ? '<span style="font-size:.8rem;opacity:.6;font-family:ui-monospace,monospace">'.e($expediente->numero).'</span>'
+                : '')
+            .'<span style="font-size:.7rem;padding:.1rem .5rem;border-radius:999px;border:1px solid rgba(127,127,127,.35);opacity:.85">'
+            .e($cuenta->convenio->nombre).'</span>'
+            .'</div>';
+
+        $cajas = [self::cajaDeResumen('Total de la cuenta', 'L '.number_format((float) $cuenta->total, 2))];
+
+        /*
+         * `esCero()` y no `mayorQue('0')`: `Monto::mayorQue()` compara
+         * contra otro `Monto` —lleva moneda adentro— y un string suelto
+         * no lo es.
+         */
+        if (! $cuenta->saldoDeLaAseguradora()->esCero()) {
+            $cajas[] = self::cajaDeResumen(
+                'Lo pone el seguro',
+                'L '.number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2),
+                nota: 'Se factura y queda por cobrar',
+            );
+        }
+
+        if ($abonado->mayorQue('0') && $saldo->mayorQue('0')) {
+            $cajas[] = self::cajaDeResumen('Ya abonó', 'L '.number_format((float) $abonado->redondeado(2), 2), 'rgb(22 163 74)');
+        }
+
+        /*
+         * «Ya pagó» y «no le toca nada» son dos cosas distintas para
+         * quien cobra: una se explica con recibos y la otra con que el
+         * seguro cubre todo.
+         */
+        $cajas[] = $saldo->mayorQue('0')
+            ? self::cajaDeResumen('Falta cobrar', 'L '.number_format((float) $saldo->redondeado(2), 2), 'rgb(220 38 38)')
+            : self::cajaDeResumen(
+                'El paciente',
+                'Ya puso lo suyo',
+                'rgb(22 163 74)',
+                $abonado->mayorQue('0') ? 'Con sus abonos, en «Ya abonó»' : 'No le toca pagar nada',
+            );
+
+        return new HtmlString($quien.'<div style="display:flex;flex-wrap:wrap;gap:.6rem">'.implode('', $cajas).'</div>');
+    }
+
+    /**
+     * La tarjeta del cliente: a nombre de quién sale y por qué, sin que
+     * nadie tenga que escribirlo.
+     */
+    private function clienteQueSale(): HtmlString
+    {
+        $propuesto = $this->clientePropuesto();
+        $tipos = self::tiposDeDocumento();
+
+        $documento = $propuesto['numero'] === null
+            ? 'Sin documento'
+            : ($tipos[(string) $propuesto['tipo']] ?? 'Documento').' '.$propuesto['numero'];
+
+        $falta = $this->queDocumentoFalta();
+
+        return new HtmlString(
+            '<div style="padding:.65rem .8rem;border-radius:.6rem;border:1px solid rgba(127,127,127,.22);'
+            .'background:rgba(127,127,127,.06)">'
+            .'<div style="font-size:1rem;font-weight:600">'.e($propuesto['nombre']).'</div>'
+            .'<div style="font-size:.82rem;opacity:.8;font-variant-numeric:tabular-nums">'.e($documento).'</div>'
+            .($falta === null
+                ? ''
+                : '<div style="font-size:.78rem;color:rgb(220 38 38);margin-top:.2rem">'.e($falta).'</div>')
+            .'<div style="font-size:.75rem;opacity:.6;margin-top:.3rem">'.e($this->ayudaDelCliente()).'</div>'
+            .'</div>'
+        );
+    }
+
+    /**
+     * El cliente con el que se emite: el de la regla, salvo que quien
+     * cobra haya abierto «A nombre de alguien».
+     *
+     * Se arma ACÁ y no se confía en lo que viajó del formulario: con el
+     * interruptor apagado los campos ni se muestran, y la regla se vuelve
+     * a calcular con la cuenta de este momento.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function clienteParaEmitir(array $data): ClienteDeFactura
+    {
+        if ((bool) ($data['otro_cliente'] ?? false)) {
+            return new ClienteDeFactura(
+                nombre: is_string($data['cliente_nombre'] ?? null) ? $data['cliente_nombre'] : '',
+                documento: is_string($data['cliente_documento'] ?? null) ? $data['cliente_documento'] : null,
+                tipoDocumento: TipoIdentificador::tryFrom(
+                    is_string($data['cliente_documento_tipo'] ?? null) ? $data['cliente_documento_tipo'] : ''
+                ),
+                direccion: is_string($data['cliente_direccion'] ?? null) ? $data['cliente_direccion'] : null,
+            );
+        }
+
+        $propuesto = $this->clientePropuesto();
+
+        return new ClienteDeFactura(
+            nombre: $propuesto['nombre'],
+            documento: $propuesto['numero'],
+            tipoDocumento: TipoIdentificador::tryFrom((string) $propuesto['tipo']),
+        );
+    }
+
+    /**
+     * ¿Alguna de las formas de pago es efectivo? Solo ahí hay vuelto.
+     */
+    private function hayEfectivoEn(Get $get): bool
+    {
+        $medios = $get('medios');
+
+        foreach (is_array($medios) ? $medios : [] as $medio) {
+            if (is_array($medio) && ($medio['forma'] ?? null) === FormaDePago::Efectivo->value) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * El vuelto contra lo que se cobra EN EFECTIVO: con tarjeta no hay
+     * billete que devolver. Si el billete no alcanza, dice cuánto falta.
+     */
+    private function vueltoDe(Get $get): HtmlString
+    {
+        $efectivo = Decimal::cero();
+        $medios = $get('medios');
+
+        foreach (is_array($medios) ? $medios : [] as $medio) {
+            if (! is_array($medio) || ($medio['forma'] ?? null) !== FormaDePago::Efectivo->value) {
+                continue;
+            }
+
+            $efectivo = $efectivo->sumar(NumeroDeFormulario::aDecimalO($medio['monto'] ?? null, Decimal::cero()));
+        }
+
+        $paga = NumeroDeFormulario::aDecimalO($get('paga_con'), Decimal::cero());
+
+        if ($paga->esCero()) {
+            return new HtmlString('<span style="opacity:.55">Escribí con cuánto paga</span>');
+        }
+
+        $diferencia = $paga->restar($efectivo);
+
+        if ($diferencia->esNegativo()) {
+            return new HtmlString(
+                '<span style="font-weight:600;color:rgb(220 38 38)">Faltan L '
+                .number_format((float) Decimal::cero()->restar($diferencia)->redondeado(2), 2).'</span>'
+            );
+        }
+
+        return new HtmlString(
+            '<span style="font-size:1.25rem;font-weight:700;color:rgb(22 163 74);font-variant-numeric:tabular-nums">L '
+            .number_format((float) $diferencia->redondeado(2), 2).'</span>'
         );
     }
 
@@ -3810,7 +3993,7 @@ class CuentasAbiertas extends Page
             ->label('Facturar')
             ->icon(Heroicon::OutlinedDocumentText)
             ->color('primary')
-            ->modalWidth('5xl')
+            ->modalWidth('6xl')
             ->stickyModalFooter()
             ->modalHeading(function (array $arguments): string {
                 $cuenta = $this->cuentaDe($arguments);
@@ -3835,189 +4018,99 @@ class CuentasAbiertas extends Page
             })
             ->visible(fn (): bool => Gate::allows('create', Factura::class))
             ->schema([
+                /*
+                 * La franja de arriba: de quién es la cuenta y los números
+                 * que deciden qué hacer. El paciente se lee acá una vez y
+                 * no se repite en cada sección.
+                 */
                 Placeholder::make('resumen_a_facturar')
                     ->hiddenLabel()
-                    ->content(function (): HtmlString {
-                        $cuenta = $this->cuentaFacturando();
-
-                        if (! $cuenta instanceof Cuenta) {
-                            return new HtmlString('&nbsp;');
-                        }
-
-                        /*
-                                         * 🔴 LO QUE FALTA ES LO DEL PACIENTE.
-                                         *
-                                         * Con seguro, el total de la cuenta y lo que hay
-                                         * que cobrar antes de facturar son dos números
-                                         * distintos: los L 7,000 de la aseguradora se
-                                         * facturan y se cobran después. Anunciar el total
-                                         * en rojo mandaba a cobrarle al paciente una
-                                         * plata que no le toca.
-                                         */
-                        $saldo = $cuenta->saldoPendienteDelPaciente();
-
-                        $cajas = [self::cajaDeResumen('Total de la cuenta', 'L '.number_format((float) $cuenta->total, 2))];
-
-                        /*
-                         * `esCero()` y no `mayorQue('0')`: a diferencia
-                         * de `Decimal`, `Monto::mayorQue()` compara
-                         * contra otro `Monto` —lleva moneda adentro— y
-                         * un string suelto no lo es.
-                         */
-                        if (! $cuenta->saldoDeLaAseguradora()->esCero()) {
-                            $cajas[] = self::cajaDeResumen(
-                                'Lo pone el seguro',
-                                'L '.number_format((float) $cuenta->saldoDeLaAseguradora()->valor(), 2),
-                                nota: 'Se factura y queda por cobrar',
-                            );
-                        }
-
-                        $cajas[] = $saldo->mayorQue('0')
-                            ? self::cajaDeResumen(
-                                'Falta que pague el paciente',
-                                'L '.number_format((float) $saldo->redondeado(2), 2),
-                                'rgb(220 38 38)',
-                                'Se cobra abajo, en el mismo acto',
-                            )
-                            /*
-                             * «Ya pagó» y «no le toca nada» son dos cosas
-                             * distintas para quien cobra: una se explica con
-                             * recibos —abajo, en «Ya abonó»— y la otra con
-                             * que el seguro cubre todo.
-                             */
-                            : self::cajaDeResumen(
-                                'El paciente',
-                                'Ya puso lo suyo',
-                                'rgb(22 163 74)',
-                                $cuenta->abonado()->mayorQue('0') ? 'Pagó con abonos: el detalle está abajo' : 'No le toca pagar nada',
-                            );
-
-                        return new HtmlString('<div style="display:flex;flex-wrap:wrap;gap:.75rem">'.implode('', $cajas).'</div>');
-                    }),
+                    ->content(fn (): HtmlString => $this->encabezadoDeLaFactura()),
 
                 /*
                  * ─────────────────────────────────────────────────────
-                 * DOS COLUMNAS EN PANTALLA ANCHA (10-oct-2026)
+                 * 🔴 DOS COLUMNAS: A QUIÉN Y CÓMO SE PAGA (11-oct-2026)
                  * ─────────────────────────────────────────────────────
                  *
-                 * A la izquierda, a quién se le factura. A la derecha,
-                 * lo que cambia el reparto —la autorización del seguro—
-                 * y cómo sale el papel. En 2xl el modal era una tira de
-                 * cuatro secciones con un párrafo abajo de cada campo.
-                 *
-                 * Si la derecha no tiene nada (contado sin cirugía), la
-                 * izquierda toma el ancho entero en vez de dejar un
-                 * hueco. «Cobrar ahora» va abajo y a lo ancho: su tabla
-                 * de tres columnas no cabe en media pantalla.
+                 * Mauricio: «que sea aún más práctico pero con todo lo
+                 * necesario». A la izquierda el cliente, que casi nunca
+                 * se toca; a la derecha lo que de verdad se hace en el
+                 * mostrador: cobrar —con el vuelto—, ver lo que ya abonó
+                 * y, con seguro, lo que autorizó.
                  */
                 Grid::make(['default' => 1, 'lg' => 2])
                     ->schema([
                         /*
-                         * ─────────────────────────────────────────────────────
-                         * DOS SECCIONES Y NO OCHO CAMPOS SUELTOS
-                         * ─────────────────────────────────────────────────────
-                         *
-                         * El modal era una columna de ocho campos con un párrafo
-                         * abajo de cada uno: había que bajar dos pantallas para
-                         * llegar a «Emitir», y el ojo no tenía dónde apoyarse.
-                         *
-                         * Son dos preguntas distintas: A QUIÉN se le factura, y
-                         * CON QUÉ se paga. La segunda ya estaba separada; la
-                         * primera ahora también, con el documento y su número en
-                         * la misma fila —se llenan juntos, se leen juntos—.
-                         */
-                        /*
                          * ─────────────────────────────────────────────────
-                         * 🔴 UN TRÁMITE RÁPIDO, SIN SCROLL (11-oct-2026)
+                         * 🔴 EL CLIENTE NO SE ESCRIBE: LO DECIDE LA REGLA
                          * ─────────────────────────────────────────────────
                          *
-                         * Mauricio: «tiene que ser trámite rápido, y hay que
-                         * hacer scroll». Era una columna de seis campos con
-                         * un párrafo debajo de cada uno. Ahora:
+                         * Mauricio: «¿por qué hay que escribirlo? Desde
+                         * 10,000 sale a nombre del paciente con su RTN;
+                         * menos de 10,000, consumidor final; con seguro, a
+                         * nombre del seguro». Se muestra en una tarjeta y
+                         * se emite así.
                          *
-                         *   · el paciente va en la descripción de la
-                         *     sección —se lee, no se teclea—;
-                         *   · cliente, documento y número en UNA fila;
-                         *   · póliza, dirección y nota en la segunda, y la
-                         *     nota es de un renglón;
-                         *   · las explicaciones pasan al ícono (i): quien
-                         *     cobra cien veces al día ya se las sabe, y el
-                         *     que no, las tiene a un pase del mouse.
-                         *
-                         * Lo normal es abrir y apretar Enter: el cliente ya
-                         * viene propuesto y Enter en un campo emite.
+                         * La excepción —el paciente que pide factura con
+                         * su RTN por menos de 10,000, la empresa que lo
+                         * mandó— se abre con un interruptor. Con seguro no
+                         * hay excepción: la factura es de quien paga.
                          */
-                        Section::make('A quién se le factura')
+                        Section::make('Cliente')
                             ->icon(Heroicon::OutlinedUser)
                             ->compact()
-                            ->description(fn (): string => 'Paciente: '.($this->nombreDelPacienteAFacturar() ?? '—')
-                                .' · sale en su propio renglón, con seguro o sin él.')
                             ->columnSpan(fn (): array => $this->hayColumnaDerechaAlFacturar() ? ['default' => 1] : ['default' => 'full'])
-                            /*
-                             * Cuatro columnas cuando la sección va a lo
-                             * ancho; dos cuando comparte la fila con lo
-                             * del seguro, que si no deja campos de dos
-                             * dedos de ancho.
-                             */
-                            ->columns(fn (): array => $this->hayColumnaDerechaAlFacturar()
-                                ? ['default' => 1, 'sm' => 2]
-                                : ['default' => 1, 'sm' => 4])
+                            ->columns(2)
                             ->schema([
-                                /*
-                                 * ⚠️ El cliente es QUIEN PAGA, no quien se
-                                 * atendió: la aseguradora, «CONSUMIDOR FINAL»
-                                 * o la empresa o el familiar que pide la
-                                 * factura a su nombre. Se propone según el
-                                 * pagador y se puede cambiar.
-                                 */
-                                TextInput::make('cliente_nombre')
-                                    ->columnSpan(['default' => 1, 'sm' => 2])
-                                    ->label('Cliente')
-                                    ->required()
-                                    ->maxLength(200)
-                                    ->default(fn (): string => $this->clientePropuesto()['nombre'])
-                                    ->hintIcon('heroicon-o-information-circle', fn (): string => $this->ayudaDelCliente()),
+                                Placeholder::make('cliente_que_sale')
+                                    ->hiddenLabel()
+                                    ->columnSpanFull()
+                                    ->visible(fn (Get $get): bool => ! (bool) $get('otro_cliente'))
+                                    ->content(fn (): HtmlString => $this->clienteQueSale()),
+
+                                Toggle::make('otro_cliente')
+                                    ->label('A nombre de alguien: el paciente, un familiar o una empresa')
+                                    ->columnSpanFull()
+                                    ->live()
+                                    ->default(false)
+                                    ->visible(fn (): bool => ! ($this->cuentaFacturando()?->convenio->tipo->facturaANombreDelSeguro() ?? false)),
 
                                 /*
-                                 * 🔴 NO TODO PACIENTE TIENE RTN. Y arriba del
-                                 * umbral igual hay que identificarlo: RTN,
-                                 * identidad o pasaporte, precargado con lo que
-                                 * ya está en el expediente. Con seguro no se
-                                 * elige: es el RTN del convenio, y
-                                 * `dehydrated()` lo manda aunque esté bloqueado.
+                                 * Vienen con el paciente y su documento: es
+                                 * la excepción más común —pide la factura a
+                                 * su nombre— y la empresa se escribe encima.
                                  */
+                                TextInput::make('cliente_nombre')
+                                    ->label('Nombre')
+                                    ->columnSpanFull()
+                                    ->required()
+                                    ->maxLength(200)
+                                    ->default(fn (): string => $this->nombreDelPacienteAFacturar() ?? '')
+                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
+
                                 Select::make('cliente_documento_tipo')
                                     ->label('Documento')
                                     ->options(fn (): array => self::tiposDeDocumento())
                                     ->native(false)
-                                    ->disabled(fn (): bool => $this->elPagadorEsUnTercero())
-                                    ->dehydrated()
-                                    ->default(fn (): ?string => $this->clientePropuesto()['tipo'])
-                                    ->requiredWith('cliente_documento'),
+                                    ->default(fn (): ?string => $this->documentoDelPaciente()['tipo'])
+                                    ->requiredWith('cliente_documento')
+                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
 
-                                /*
-                                 * 🔴 EL AVISO APUNTA AL DATO QUE FALTA DE
-                                 * VERDAD: con seguro es el RTN de la
-                                 * aseguradora —se carga una vez en el
-                                 * convenio—, no la identidad del paciente.
-                                 */
                                 TextInput::make('cliente_documento')
                                     ->label('Número')
                                     ->maxLength(20)
-                                    ->disabled(fn (): bool => $this->elPagadorEsUnTercero())
-                                    ->dehydrated()
-                                    ->default(fn (): ?string => $this->clientePropuesto()['numero'])
-                                    ->hint(fn (): ?string => $this->queDocumentoFalta())
-                                    ->hintIcon('heroicon-o-information-circle', function (): string {
-                                        if ($this->elPagadorEsUnTercero()) {
-                                            return 'Con seguro va el RTN de la aseguradora, tal como está en Seguros y convenios.';
-                                        }
+                                    ->default(fn (): ?string => $this->documentoDelPaciente()['numero'])
+                                    ->hintIcon(
+                                        'heroicon-o-information-circle',
+                                        'RTN para que le sirva de crédito fiscal; sin RTN, sirve la identidad.',
+                                    )
+                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
 
-                                        $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
-
-                                        return 'Arriba de L '.number_format((float) (is_string($umbral) ? $umbral : '10000'), 2)
-                                            .' el SAR exige identificar al cliente. Sin RTN, sirve la identidad.';
-                                    }),
+                                TextInput::make('cliente_direccion')
+                                    ->label('Dirección')
+                                    ->columnSpanFull()
+                                    ->maxLength(250)
+                                    ->visible(fn (Get $get): bool => (bool) $get('otro_cliente')),
 
                                 /*
                                  * La póliza sale junto al paciente, que es de
@@ -4037,20 +4130,12 @@ class CuentasAbiertas extends Page
                                     )
                                     ->visible(fn (): bool => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado),
 
-                                /*
-                                 * Junto a la póliza cuando la hay; sola,
-                                 * ocupa lo que dejaría la póliza.
-                                 */
-                                TextInput::make('cliente_direccion')
-                                    ->label('Dirección')
+                                TextInput::make('nota')
+                                    ->label('Nota en la factura')
+                                    ->placeholder('Opcional')
                                     ->columnSpan(fn (): array => $this->cuentaFacturando()?->convenio?->tipo !== TipoConvenio::Contado
                                         ? ['default' => 1, 'sm' => 1]
                                         : ['default' => 1, 'sm' => 2])
-                                    ->maxLength(250),
-
-                                TextInput::make('nota')
-                                    ->label('Nota')
-                                    ->columnSpan(['default' => 1, 'sm' => 2])
                                     ->maxLength(300),
                             ]),
 
@@ -4112,6 +4197,124 @@ class CuentasAbiertas extends Page
                                 ]),
 
                             /*
+                             * ─────────────────────────────────────────────────
+                             * 🔴 SE TIENE QUE VER SI ABONÓ O SI SE LE COBRA
+                             * ─────────────────────────────────────────────────
+                             *
+                             * Mauricio, 11-oct-2026: «para que se sepa si
+                             * abonó o se le está cobrando». Los recibos vivos
+                             * de la cuenta, uno por renglón.
+                             */
+                            Section::make('Ya abonó')
+                                ->icon(Heroicon::OutlinedCheckCircle)
+                                ->compact()
+                                ->description(fn (): string => ($this->cuentaFacturando()?->saldoPendienteDelPaciente()->mayorQue('0') ?? false)
+                                    ? 'Lo que dejó antes. El resto se cobra abajo.'
+                                    : 'Pagó todo lo suyo: se emite y listo.')
+                                ->visible(fn (): bool => $this->cuentaFacturando()?->abonado()->mayorQue('0') ?? false)
+                                ->schema([
+                                    Placeholder::make('abonos_de_la_cuenta')
+                                        ->hiddenLabel()
+                                        ->content(fn (): HtmlString => $this->loQueYaAbono()),
+                                ]),
+
+                            /*
+                             * ─────────────────────────────────────────────────
+                             * 🔴 COBRAR Y FACTURAR SON UN SOLO ACTO
+                             * ─────────────────────────────────────────────────
+                             *
+                             * El caso más común del mostrador: consulta, paga
+                             * y se va. Solo aparece si al paciente le falta
+                             * algo; lo del seguro no se cobra acá.
+                             */
+                            Section::make('Cobrar ahora')
+                                ->icon(Heroicon::OutlinedBanknotes)
+                                ->compact()
+                                ->description('Lo que le falta al paciente: se cobra y se emite en un solo paso.')
+                                ->visible(fn (): bool => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->mayorQue('0') ?? false)
+                                ->schema([
+                                    Repeater::make('medios')
+                                        ->hiddenLabel()
+                                        ->table([
+                                            TableColumn::make('Forma de pago')->width('38%'),
+                                            TableColumn::make('Monto')->width('27%'),
+                                            TableColumn::make('¿A qué banco?')->width('35%'),
+                                        ])
+                                        ->addActionLabel('Agregar otra forma de pago')
+                                        ->reorderable(false)
+                                        ->defaultItems(1)
+                                        ->schema([
+                                            Select::make('forma')
+                                                ->hiddenLabel()
+                                                ->options(FormaDePago::paraSelector())
+                                                ->default(FormaDePago::Efectivo->value)
+                                                ->native(false)
+                                                ->live(),
+
+                                            /*
+                                             * Con el saldo exacto ya puesto: lo
+                                             * normal es que pague todo, y así es un
+                                             * clic en vez de teclear un número que
+                                             * la pantalla ya sabe.
+                                             */
+                                            TextInput::make('monto')
+                                                ->hiddenLabel()
+                                                ->prefix('L')
+                                                ->inputMode('decimal')
+                                                /*
+                                                 * 🔴 LA PORCIÓN DEL PACIENTE, NO EL
+                                                 * TOTAL. Con un seguro que cubre el
+                                                 * 70 %, proponer el total le cobra al
+                                                 * paciente los L 7,000 de la
+                                                 * aseguradora — y el que teclea está
+                                                 * mirando al paciente, no al número.
+                                                 */
+                                                ->live(onBlur: true)
+                                                ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->redondeado(2)),
+
+                                            Select::make('banco')
+                                                ->hiddenLabel()
+                                                ->options(self::bancos())
+                                                ->native(false)
+                                                ->searchable()
+                                                ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
+                                                    ? 'Elegí el banco'
+                                                    : '—')
+                                                ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
+                                                ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
+                                        ]),
+
+                                    /*
+                                     * El vuelto: paga con 50 una cuenta de
+                                     * 26.95 y la pantalla dice 23.05. No se
+                                     * guarda —el recibo dice lo que se
+                                     * aplicó, no el billete—; es para que
+                                     * nadie haga la resta de cabeza con la
+                                     * fila esperando.
+                                     */
+                                    Grid::make(2)
+                                        ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get))
+                                        ->schema([
+                                            TextInput::make('paga_con')
+                                                ->label('Paga con')
+                                                ->prefix('L')
+                                                ->inputMode('decimal')
+                                                ->placeholder('Lo que entrega')
+                                                ->dehydrated(false)
+                                                ->live(debounce: 400),
+
+                                            Placeholder::make('vuelto')
+                                                ->label('Vuelto')
+                                                ->content(fn (Get $get): HtmlString => $this->vueltoDe($get)),
+                                        ]),
+
+                                    TextInput::make('entregado_por_factura')
+                                        ->label('Lo entrega, si no es el paciente')
+                                        ->placeholder('Opcional')
+                                        ->maxLength(120),
+                                ]),
+
+                            /*
                              * ─────────────────────────────────────────────────────
                              * SOLO APARECE SI HAY UNA CIRUGÍA QUE ABRIR
                              * ─────────────────────────────────────────────────────
@@ -4150,111 +4353,6 @@ class CuentasAbiertas extends Page
                         ])
                             ->visible(fn (): bool => $this->hayColumnaDerechaAlFacturar()),
                     ]),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 SE TIENE QUE VER SI ABONÓ O SI SE LE ESTÁ COBRANDO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * Mauricio, 11-oct-2026: «para que se sepa si abonó o se
-                 * le está cobrando». Con la cuenta saldada el modal solo
-                 * decía «ya puso lo suyo», y quien emitía no sabía si esa
-                 * plata entró ayer, en qué forma ni en qué recibo — ni si
-                 * tenía que pedirle algo a la familia.
-                 *
-                 * Acá van los recibos vivos de la cuenta. Si además falta
-                 * algo, «Cobrar ahora» sigue abajo con lo que falta.
-                 */
-                Section::make('Ya abonó')
-                    ->icon(Heroicon::OutlinedCheckCircle)
-                    ->compact()
-                    ->description(fn (): string => ($this->cuentaFacturando()?->saldoPendienteDelPaciente()->mayorQue('0') ?? false)
-                        ? 'Lo que dejó antes de facturar. Lo que falta se cobra abajo.'
-                        : 'Con esto pagó todo lo suyo: no hay nada que cobrarle, se emite y listo.')
-                    ->visible(fn (): bool => $this->cuentaFacturando()?->abonado()->mayorQue('0') ?? false)
-                    ->schema([
-                        Placeholder::make('abonos_de_la_cuenta')
-                            ->hiddenLabel()
-                            ->content(fn (): HtmlString => $this->loQueYaAbono()),
-                    ]),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 COBRAR Y FACTURAR SON UN SOLO ACTO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * El caso más común del mostrador: consulta, paga y se
-                 * va. Obligarlo a pasar por «Abonar» y volver a
-                 * «Facturar» son dos pantallas para una sola cosa, con
-                 * el paciente parado enfrente.
-                 *
-                 * Solo aparece si la cuenta debe algo: al internado que
-                 * fue abonando durante la estadía no hay nada que
-                 * cobrarle acá.
-                 */
-                Section::make('Cobrar ahora')
-                    ->icon(Heroicon::OutlinedBanknotes)
-                    ->description(
-                        'Lo que le falta AL PACIENTE, en el mismo acto: se recibe el abono y se '
-                        .'emite la factura seguido. Lo que cubre el seguro no se cobra acá — se '
-                        .'factura y queda por cobrar.'
-                    )
-                    ->visible(fn (): bool => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->mayorQue('0') ?? false)
-                    ->schema([
-                        Repeater::make('medios')
-                            ->hiddenLabel()
-                            ->table([
-                                TableColumn::make('Forma de pago')->width('38%'),
-                                TableColumn::make('Monto')->width('27%'),
-                                TableColumn::make('¿A qué banco?')->width('35%'),
-                            ])
-                            ->addActionLabel('Agregar otra forma de pago')
-                            ->reorderable(false)
-                            ->defaultItems(1)
-                            ->schema([
-                                Select::make('forma')
-                                    ->hiddenLabel()
-                                    ->options(FormaDePago::paraSelector())
-                                    ->default(FormaDePago::Efectivo->value)
-                                    ->native(false)
-                                    ->live(),
-
-                                /*
-                                 * Con el saldo exacto ya puesto: lo
-                                 * normal es que pague todo, y así es un
-                                 * clic en vez de teclear un número que
-                                 * la pantalla ya sabe.
-                                 */
-                                TextInput::make('monto')
-                                    ->hiddenLabel()
-                                    ->prefix('L')
-                                    ->inputMode('decimal')
-                                    /*
-                                     * 🔴 LA PORCIÓN DEL PACIENTE, NO EL
-                                     * TOTAL. Con un seguro que cubre el
-                                     * 70 %, proponer el total le cobra al
-                                     * paciente los L 7,000 de la
-                                     * aseguradora — y el que teclea está
-                                     * mirando al paciente, no al número.
-                                     */
-                                    ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->redondeado(2)),
-
-                                Select::make('banco')
-                                    ->hiddenLabel()
-                                    ->options(self::bancos())
-                                    ->native(false)
-                                    ->searchable()
-                                    ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
-                                        ? 'Elegí el banco'
-                                        : '—')
-                                    ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
-                                    ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
-                            ]),
-
-                        TextInput::make('entregado_por_factura')
-                            ->label('¿Quién paga, si no es el paciente?')
-                            ->maxLength(120),
-                    ]),
             ])
             ->action(function (array $arguments, array $data): void {
                 $cuenta = $this->cuentaDe($arguments);
@@ -4274,11 +4372,42 @@ class CuentasAbiertas extends Page
                  * pregunta acá primero para que «no se pudo facturar»
                  * no deje plata cobrada a medio camino.
                  */
-                if ($cuenta->convenio->tipo->pagaUnTercero() && trim((string) $cuenta->convenio->rtn) === '') {
+                if ($cuenta->convenio->tipo->facturaANombreDelSeguro() && trim((string) $cuenta->convenio->rtn) === '') {
                     Notification::make()
                         ->danger()
                         ->title('No se pudo facturar')
                         ->body(FacturaException::faltaElRtnDelPagador($cuenta->convenio->nombre)->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                /*
+                 * 🔴 EL CLIENTE, ANTES DE COBRAR.
+                 *
+                 * Un documento mal escrito, o una cuenta de más de L
+                 * 10,000 a nombre de alguien sin documento, se descubría
+                 * en `EmisorDeFactura`: después de haber recibido la
+                 * plata. El recibo quedaba hecho y la factura no.
+                 */
+                try {
+                    $cliente = $this->clienteParaEmitir($data);
+                } catch (SihlaException $e) {
+                    Notification::make()->danger()->title('Revisá el cliente')->body($e->getMessage())->persistent()->send();
+
+                    return;
+                }
+
+                $umbral = config('sihla.facturacion.umbral_rtn_obligatorio');
+
+                if (! $cliente->tieneDocumento()
+                    && Decimal::de($cuenta->total)->mayorQue(Decimal::de(is_string($umbral) ? $umbral : '10000.00'))) {
+                    Notification::make()
+                        ->danger()
+                        ->title('Falta identificar al cliente')
+                        ->body('Pasa de L 10,000 y el SAR pide el documento del cliente. El paciente no tiene uno en su '
+                            .'expediente: abrí «A nombre de alguien» y escribí su RTN o su identidad.')
                         ->persistent()
                         ->send();
 
@@ -4341,14 +4470,7 @@ class CuentasAbiertas extends Page
                 try {
                     $factura = app(EmisorDeFactura::class)->emitir(
                         cuenta: $cuenta,
-                        cliente: new ClienteDeFactura(
-                            nombre: is_string($data['cliente_nombre'] ?? null) ? $data['cliente_nombre'] : '',
-                            documento: is_string($data['cliente_documento'] ?? null) ? $data['cliente_documento'] : null,
-                            tipoDocumento: TipoIdentificador::tryFrom(
-                                is_string($data['cliente_documento_tipo'] ?? null) ? $data['cliente_documento_tipo'] : ''
-                            ),
-                            direccion: is_string($data['cliente_direccion'] ?? null) ? $data['cliente_direccion'] : null,
-                        ),
+                        cliente: $cliente,
                         quien: UsuarioAutenticado::id(),
                         nota: is_string($data['nota'] ?? null) ? $data['nota'] : null,
 

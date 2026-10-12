@@ -82,6 +82,28 @@ enum TipoConvenio: string
     }
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 ¿LA FACTURA SALE A NOMBRE DEL SEGURO? (11-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «a nosotros el paciente nos paga todo; la factura la
+     * hacemos a nombre del seguro si tiene, pero recibimos el dinero
+     * total del paciente».
+     *
+     * Son dos preguntas distintas y antes se contestaban con una sola:
+     * QUIÉN PAGA (`pagaUnTercero()`, que decide el reparto, el crédito y
+     * la cuenta por cobrar) y A NOMBRE DE QUIÉN SALE EL PAPEL. Con el
+     * reembolso paga el paciente, pero la factura va igual a nombre de
+     * la aseguradora y con su RTN: es la que el paciente lleva a
+     * reclamar. Solo el contado sale a nombre del paciente o de
+     * consumidor final.
+     */
+    public function facturaANombreDelSeguro(): bool
+    {
+        return $this !== self::Contado;
+    }
+
+    /**
      * ¿Tiene sentido pactarle días de crédito?
      */
     public function admiteCredito(): bool
@@ -100,9 +122,8 @@ enum TipoConvenio: string
                 .'institución, no el hospital.',
             self::Institucional => 'Contrato con una entidad —militar, empresa, ONG— que '
                 .'responde por las atenciones de su gente.',
-            self::Reembolso => 'El hospital NO tiene convenio con esta aseguradora. El paciente '
-                .'paga en caja al precio de lista y reclama él con la factura. Se registra para '
-                .'que salga impresa junto a la póliza.',
+            self::Reembolso => 'El paciente paga todo en caja y reclama él a su aseguradora. La '
+                .'factura sale a nombre de la aseguradora, con su RTN y la póliza del paciente.',
         };
     }
 

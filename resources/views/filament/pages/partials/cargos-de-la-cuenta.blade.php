@@ -374,13 +374,21 @@
             Cerrada por defecto: se abre cuando hace falta y no le roba
             pantalla a lo que se usa cien veces por turno.
         --}}
+        {{--
+            🔴 La caja también va al libro (11-oct-2026): «Abonado − 26.95»
+            sin un renglón que lo explique es plata que nadie sabe de
+            dónde salió. Los recibos y las facturas —con sus anulaciones—
+            van debajo de los cargos, en el orden en que pasaron.
+        --}}
         @php($bitacora = $cuenta->bitacora())
+        @php($caja = $cuenta->bitacoraDeCaja())
+        @php($cuantos = $bitacora->count() + count($caja))
 
-        @if ($bitacora->isNotEmpty())
+        @if ($cuantos > 0)
             <details class="sihla-bitacora">
                 <summary>
-                    Bitácora · {{ $bitacora->count() }}
-                    {{ $bitacora->count() === 1 ? 'movimiento' : 'movimientos' }}
+                    Bitácora · {{ $cuantos }}
+                    {{ $cuantos === 1 ? 'movimiento' : 'movimientos' }}
                 </summary>
 
                 <div class="sihla-bitacora-cuerpo">
@@ -414,6 +422,27 @@
                             </span>
                         </div>
                     @endforeach
+
+                    @if ($caja !== [])
+                        <div class="sihla-bitacora-titulo">Caja · recibos y facturas</div>
+
+                        @foreach ($caja as $linea)
+                            <div class="sihla-bitacora-linea {{ $linea['muerto'] ? 'sihla-bitacora-muerta' : '' }}">
+                                <span class="sihla-bitacora-hora">
+                                    {{ $linea['cuando']->format('d/m H:i') }}
+                                </span>
+
+                                <span class="sihla-bitacora-que">
+                                    <span class="{{ $linea['tachado'] ? 'sihla-tachado' : '' }}">
+                                        {{ $linea['texto'] }}
+                                    </span>
+                                    <span class="sihla-bitacora-quien">{{ $linea['detalle'] }}</span>
+                                </span>
+
+                                <span class="sihla-bitacora-monto">{{ $linea['monto'] }}</span>
+                            </div>
+                        @endforeach
+                    @endif
                 </div>
             </details>
         @endif
@@ -529,6 +558,10 @@
         .sihla-bitacora-hora { color: rgb(161 161 170); white-space: nowrap; }
         .sihla-bitacora-que { flex: 1; min-width: 0; color: rgb(63 63 70); }
         .sihla-bitacora-quien { display: block; font-size: .68rem; color: rgb(161 161 170); }
+        .sihla-bitacora-titulo {
+            margin-top: .6rem; padding: .35rem 0 .2rem; font-size: .68rem; font-weight: 600;
+            letter-spacing: .04em; text-transform: uppercase; color: rgb(161 161 170);
+        }
         .sihla-bitacora-monto { white-space: nowrap; color: rgb(82 82 91); }
         .sihla-bitacora-muerta { opacity: .55; }
         .sihla-tachado { text-decoration: line-through; }

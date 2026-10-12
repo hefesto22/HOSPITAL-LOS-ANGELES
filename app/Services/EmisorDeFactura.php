@@ -894,7 +894,11 @@ final class EmisorDeFactura
     {
         $convenio = $cuenta->convenio;
 
-        if (! $convenio->tipo->pagaUnTercero()) {
+        /*
+         * Pague quien pague: con el reembolso el paciente paga todo y la
+         * factura sale igual a nombre de la aseguradora (11-oct-2026).
+         */
+        if (! $convenio->tipo->facturaANombreDelSeguro()) {
             return $cliente;
         }
 

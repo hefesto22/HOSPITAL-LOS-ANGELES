@@ -156,3 +156,21 @@ it('🔴 si el recibo no se puede anular la factura tampoco', function (): void 
     expect($factura->refresh()->estado)->toBe(EstadoFactura::Emitida)
         ->and($recibo->refresh()->estado)->toBe(EstadoAbono::Aplicado);
 })->note('Con el turno cerrado ese efectivo ya se contó y se entregó: devolverlo es otro hecho, y la factura no puede quedar anulada a medias.');
+
+it('🔴 la bitacora de la cuenta muestra el recibo, la factura y sus anulaciones', function (): void {
+    ['cuenta' => $cuenta, 'factura' => $factura, 'recibo' => $recibo, 'cajera' => $cajera] = unaFacturaCobradaEnCaja();
+
+    app(EmisorDeFactura::class)->anular(
+        $factura,
+        'El paciente no se llevó nada',
+        $cajera->id,
+        recibosDevueltos: [$recibo->id],
+    );
+
+    $textos = array_column($cuenta->refresh()->bitacoraDeCaja(), 'texto');
+
+    expect($textos)->toContain('Factura '.$factura->numero.' emitida')
+        ->and($textos)->toContain('Factura '.$factura->numero.' anulada')
+        ->and($textos)->toContain('Recibo '.$recibo->numero.' anulado')
+        ->and(array_filter($textos, static fn (string $texto): bool => str_starts_with($texto, 'Recibo '.$recibo->numero.' · ')))->toHaveCount(1);
+})->note('«Dice que abonó y no hay registro de ningún abono»: el pie decía «Abonado» y la bitácora solo tenía cargos.');
