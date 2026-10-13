@@ -205,6 +205,14 @@ final class CargoException extends SihlaException
         );
     }
 
+    public static function noHayEseEnvaseEnEseAlmacen(string $item, string $envase, string $almacen): self
+    {
+        return new self(
+            "En {$almacen} no hay {$envase} de «{$item}». Cárguelo como lo que sí hay ahí —el envase "
+            .'más chico o la unidad suelta—, o corrija lo que hay en Existencias → Lugares.'
+        );
+    }
+
     public static function yaNoSeAnula(string $estado): self
     {
         return new self(

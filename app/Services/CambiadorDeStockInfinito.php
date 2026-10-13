@@ -57,6 +57,7 @@ final class CambiadorDeStockInfinito
         private readonly RegistradorDeMovimiento $movimientos,
         private readonly CalculadoraDeCostoPromedio $costos,
         private readonly UbicadorDeProducto $ubicaciones,
+        private readonly FormasDeCobro $formas,
     ) {}
 
     /**
@@ -126,15 +127,16 @@ final class CambiadorDeStockInfinito
 
     /**
      * «Si tenía stock pasa a infinito»: queda en cada almacén donde había
-     * algo. Si no había en ninguno y tampoco tiene lugares anotados, en
-     * farmacia —donde nace todo producto nuevo—.
+     * algo, con los envases que había —cajas enteras, blísteres, o solo
+     * unidades sueltas—. Si no había en ninguno y tampoco tiene lugares
+     * anotados, en farmacia —donde nace todo producto nuevo—, de todo.
      *
-     * @param list<Almacen> $dondeHabia
+     * @param list<array{almacen: Almacen, envases: list<int>}> $dondeHabia
      */
     private function dejarloDondeEstaba(Item $item, array $dondeHabia): void
     {
-        foreach ($dondeHabia as $almacen) {
-            $this->ubicaciones->ubicar($item, $almacen);
+        foreach ($dondeHabia as $lugar) {
+            $this->ubicaciones->agregarEnvases($item, $lugar['almacen'], $lugar['envases']);
         }
 
         if ($this->ubicaciones->dondeEsta($item) !== []) {
@@ -150,13 +152,15 @@ final class CambiadorDeStockInfinito
      * Da de baja todo lo que el producto tenga, en cada estante y lote,
      * con un ajuste negativo valorizado al costo vigente —igual que
      * `RegistradorDeAjuste`—. Devuelve los almacenes donde había algo,
-     * sin repetir.
+     * sin repetir, con los envases que había ENTEROS en cada uno: un lote
+     * de cajas con 60 tabletas es una caja abierta, y ahí hay blísteres
+     * pero ninguna caja (`FormasDeCobro::sinAbrirEnElLote()`).
      *
      * Se buscan los almacenes de TODAS las sedes: la bandera es del
      * producto, no de una sede, y una existencia escondida por el filtro
      * de sede quedaría viva debajo de un producto infinito.
      *
-     * @return list<Almacen>
+     * @return list<array{almacen: Almacen, envases: list<int>}>
      */
     private function dejarEnCero(Item $item, string $motivo): array
     {
@@ -171,8 +175,10 @@ final class CambiadorDeStockInfinito
             ->lockForUpdate()
             ->get();
 
-        /** @var array<int, Almacen> $dondeHabia */
+        /** @var array<int, array{almacen: Almacen, envases: list<int>}> $dondeHabia */
         $dondeHabia = [];
+
+        $envases = $this->ubicaciones->envasesDe($item);
 
         foreach ($filas as $fila) {
             $almacen = Almacen::query()->deTodasLasSedes()->find($fila->almacen_id);
@@ -183,10 +189,21 @@ final class CambiadorDeStockInfinito
 
             $cantidad = $fila->cantidadDecimal();
             $vigente = $this->costos->vigenteBloqueado($item, $almacen);
+            $lote = $fila->lote_id === null ? null : $fila->lote;
+
+            $dondeHabia[$almacen->id] ??= ['almacen' => $almacen, 'envases' => []];
+
+            foreach ($envases as $envase) {
+                $enteros = $this->formas->sinAbrirEnElLote($envase, $lote?->item_presentacion_id, $cantidad, $envases);
+
+                if ($enteros->mayorQue('0') && ! in_array((int) $envase->id, $dondeHabia[$almacen->id]['envases'], true)) {
+                    $dondeHabia[$almacen->id]['envases'][] = (int) $envase->id;
+                }
+            }
 
             $this->movimientos->registrar(
                 item: $item,
-                lote: $fila->lote_id === null ? null : $fila->lote,
+                lote: $lote,
                 almacen: $almacen,
                 tipo: TipoMovimiento::AjusteNegativo,
                 cantidad: $cantidad,
@@ -197,8 +214,6 @@ final class CambiadorDeStockInfinito
             );
 
             $this->costos->sincronizarCantidadBase($item, $almacen);
-
-            $dondeHabia[$almacen->id] = $almacen;
         }
 
         return array_values($dondeHabia);

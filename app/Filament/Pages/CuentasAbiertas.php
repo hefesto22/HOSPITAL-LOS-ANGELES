@@ -343,12 +343,13 @@ class CuentasAbiertas extends Page
 
     /**
      * Memoria por pintada de los almacenes donde está cada producto con
-     * stock infinito (`UbicadorDeProducto`). Por la misma razón que la de
-     * arriba: se pregunta en cada pintada del modal.
+     * stock infinito, y qué envases hay en cada uno (`UbicadorDeProducto`:
+     * nulo es «de todo»). Por la misma razón que la de arriba: se pregunta
+     * en cada pintada del modal.
      *
-     * @var array<int, list<int>>
+     * @var array<int, array<int, list<int>|null>>
      */
-    private array $dondeEstaPorItem = [];
+    private array $lugaresPorItem = [];
 
     /**
      * Memoria por pintada de las presentaciones de cada ítem.
@@ -1654,6 +1655,25 @@ class CuentasAbiertas extends Page
         }
 
         /*
+         * Stock infinito por envase sin abrir: tiene que haber de ese
+         * envase en algún estante donde está. Sin esto, la línea saldría
+         * sin almacén y el historial diría que se entregó una caja de un
+         * lugar donde no hay cajas.
+         */
+        $sinEseEnvase = $this->envaseQueNoEstaEnNingunLado($item, $forma);
+
+        if ($sinEseEnvase instanceof ItemPresentacion) {
+            Notification::make()
+                ->danger()
+                ->title('No hay '.UbicadorDeProducto::comoSeLlama($sinEseEnvase).' en ningún almacén')
+                ->body($this->porQueNoHayEseEnvase($sinEseEnvase))
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        /*
          * 🔴 EL DESCUENTO DEL HOSPITAL ES SOLO PARA LO QUE SALE DE
          * FARMACIA.
          *
@@ -2309,25 +2329,33 @@ class CuentasAbiertas extends Page
      * Los estantes de quien carga donde está un producto con stock
      * infinito, en el mismo orden que `estantesDe()`.
      *
+     * Con un envase sin abrir elegido, solo donde HAY de ese envase: la
+     * caja, de donde hay cajas; el blíster, de donde hay blísteres o cajas
+     * —la caja los trae—. La unidad suelta sale de cualquiera donde esté.
+     *
      * Un producto sin ningún lugar anotado —los que se marcaron antes del
      * 13-oct-2026— sale de cualquiera: antes que no poder cargarlo, se
      * elige y queda anotado de dónde salió.
      *
      * @return Collection<int, array{almacen: Almacen, hay: Decimal}>
      */
-    private function estantesDelInfinito(Item $item): Collection
+    private function estantesDelInfinito(Item $item, ?string $unidadDeCobro = null): Collection
     {
-        $donde = $this->dondeEstaPorItem[$item->id]
-            ??= app(UbicadorDeProducto::class)->dondeEsta($item);
+        $ubicador = app(UbicadorDeProducto::class);
+        $lugares = $this->lugaresPorItem[$item->id] ??= $ubicador->lugaresDe($item);
 
         $estantes = $this->estantesDe($item);
 
-        if ($donde === []) {
+        if ($lugares === []) {
             return $estantes;
         }
 
+        $envase = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
+
         return $estantes
-            ->filter(fn (array $estante): bool => in_array($estante['almacen']->id, $donde, true))
+            ->filter(fn (array $estante): bool => array_key_exists((int) $estante['almacen']->id, $lugares)
+                && (! $envase instanceof ItemPresentacion
+                    || $ubicador->hayEnvase($lugares[(int) $estante['almacen']->id], $envase, $this->presentacionesDe($item))))
             ->values();
     }
 
@@ -2753,7 +2781,7 @@ class CuentasAbiertas extends Page
          * consumo.
          */
         if ($item->tieneStockInfinito()) {
-            return $this->estantesDelInfinito($item)
+            return $this->estantesDelInfinito($item, $unidadDeCobro)
                 ->mapWithKeys(fn (array $estante): array => [
                     $estante['almacen']->id => $estante['almacen']->nombre.' · stock infinito',
                 ])
@@ -3308,7 +3336,7 @@ class CuentasAbiertas extends Page
          * orden de preferencia —farmacia antes que bodega—.
          */
         if ($item->tieneStockInfinito()) {
-            return $this->estantesDelInfinito($item)->first()['almacen'] ?? null;
+            return $this->estantesDelInfinito($item, $unidadDeCobro)->first()['almacen'] ?? null;
         }
 
         $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
@@ -7885,6 +7913,12 @@ class CuentasAbiertas extends Page
          * Se dice qué pasa con lo que se carga (13-oct-2026).
          */
         if ($item->tieneStockInfinito()) {
+            $sinEseEnvase = $this->envaseQueNoEstaEnNingunLado($item, $forma);
+
+            if ($sinEseEnvase instanceof ItemPresentacion) {
+                return self::recuadro(e($this->porQueNoHayEseEnvase($sinEseEnvase)), esAlerta: true);
+            }
+
             $partes[] = 'stock infinito: no descuenta del inventario, queda registrado lo que se usó';
 
             return self::recuadro(implode(' · ', $partes));
@@ -7917,6 +7951,36 @@ class CuentasAbiertas extends Page
         }
 
         return self::recuadro(implode(' · ', $partes));
+    }
+
+    /**
+     * Stock infinito: el envase sin abrir que se eligió, cuando no hay de
+     * ese envase en ninguno de los estantes donde está el producto. Nulo si
+     * hay, si no se eligió un envase, o si quien carga no ve ningún estante
+     * donde esté —ahí se carga sin almacén, como siempre—.
+     */
+    private function envaseQueNoEstaEnNingunLado(Item $item, ?string $forma): ?ItemPresentacion
+    {
+        if (! $item->tieneStockInfinito()) {
+            return null;
+        }
+
+        $envase = $this->presentacionDeLaUnidad($item, $forma);
+
+        if (! $envase instanceof ItemPresentacion) {
+            return null;
+        }
+
+        return $this->estantesConLoQueHay($item) !== [] && $this->estantesConLoQueHay($item, $forma) === []
+            ? $envase
+            : null;
+    }
+
+    private function porQueNoHayEseEnvase(ItemPresentacion $envase): string
+    {
+        return 'En los almacenes donde está este producto no hay '.UbicadorDeProducto::comoSeLlama($envase)
+            .'. Cargalo como lo que sí hay ahí —el envase más chico o la unidad suelta—, o anotá ese '
+            .'envase en Existencias → Lugares.';
     }
 
     /**

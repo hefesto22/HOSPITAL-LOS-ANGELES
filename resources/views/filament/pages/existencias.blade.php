@@ -12,7 +12,8 @@
        ámbar cuando hay algo.
     3. La tabla: UN renglón por producto, con un chip por almacén. «Lotes»
        abre el detalle; «Mover» pide el lote adentro. Lo que tiene stock
-       infinito dice ∞ y, en vez de «Lotes», tiene «Lugares».
+       infinito dice ∞: su «Mover» anota de dónde salió y a dónde llegó, y
+       «Lugares» corrige en qué almacenes hay.
 
     Los estilos viven en `filament.partials.estilos-de-reporte`.
 --}}

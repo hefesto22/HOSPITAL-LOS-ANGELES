@@ -196,6 +196,170 @@
         .dark .sh-vence-warning { background: rgb(251 191 36 / .12); color: rgb(253 230 138); }
         .dark .sh-vence-success { background: rgb(74 222 128 / .12); color: rgb(134 239 172); }
 
+        /*
+         * «¿Dónde hay?» de un infinito, en el modal «Mover» de Existencias
+         * (`filament.forms.lugares-del-producto`): cada almacén es una
+         * tarjeta que se toca para marcar o desmarcar.
+         */
+        .sh.sh-compacto { gap: .875rem; }
+        .sh-tiles {
+            display: grid; gap: .625rem;
+            grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+        }
+        .sh-tile {
+            display: flex; align-items: center; gap: .75rem; width: 100%;
+            padding: .75rem .875rem; border: 0; border-radius: .75rem;
+            text-align: left; cursor: pointer;
+            background: var(--sh-fondo); box-shadow: 0 0 0 1px var(--sh-anillo);
+            transition: background-color .12s ease, box-shadow .12s ease;
+        }
+        .sh-tile:hover { background: var(--sh-hover); }
+        .sh-tile:focus-visible { outline: 2px solid var(--sh-acento); outline-offset: 2px; }
+        .sh-tile-on, .sh-tile-on:hover {
+            background: var(--sh-acento-fondo); box-shadow: 0 0 0 2px var(--sh-acento);
+        }
+        .sh-tile-icono {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 2.25rem; height: 2.25rem; flex-shrink: 0; border-radius: .625rem;
+            background: var(--sh-hover); color: var(--sh-tenue);
+            transition: background-color .12s ease, color .12s ease;
+        }
+        .sh-tile-on .sh-tile-icono { background: var(--sh-acento); color: rgb(255 255 255); }
+        .dark .sh-tile-on .sh-tile-icono { color: rgb(24 24 27); }
+        .sh-tile-svg { width: 1.25rem; height: 1.25rem; }
+        .sh-tile-texto { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+        .sh-tile-nombre { font-size: .875rem; font-weight: 600; line-height: 1.25; color: var(--sh-texto); }
+        .sh-tile-tipo { margin-top: .1rem; font-size: .75rem; color: var(--sh-tenue); }
+        .sh-tile-marca {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.25rem; height: 1.25rem; flex-shrink: 0; border-radius: 999px;
+            color: transparent; box-shadow: inset 0 0 0 1.5px var(--sh-anillo);
+        }
+        .sh-tile-on .sh-tile-marca { background: var(--sh-acento); color: rgb(255 255 255); box-shadow: none; }
+        .dark .sh-tile-on .sh-tile-marca { color: rgb(24 24 27); }
+        .sh-tile-check { width: .875rem; height: .875rem; }
+
+        .sh-cambios {
+            display: flex; flex-wrap: wrap; align-items: center; gap: .375rem;
+            padding: .625rem .75rem; border-radius: .625rem; background: var(--sh-hover);
+        }
+        .sh-cambios-titulo { margin-right: .25rem; font-size: .8125rem; font-weight: 500; color: var(--sh-tenue); }
+        .sh-cambio { padding: .15rem .55rem; border-radius: .375rem; font-size: .75rem; font-weight: 600; }
+        .sh-cambio-mas { background: var(--sh-acento-fondo); color: var(--sh-acento); }
+        .sh-cambio-menos {
+            color: var(--sh-muy-tenue); text-decoration: line-through;
+            box-shadow: inset 0 0 0 1px var(--sh-anillo);
+        }
+        .sh-cambios-nada { font-size: .8125rem; color: var(--sh-muy-tenue); }
+        .sh-cambio-queda { color: var(--sh-texto); box-shadow: inset 0 0 0 1px var(--sh-anillo); background: var(--sh-fondo); }
+
+        /* Los tres pasos del «Mover» de un infinito (`filament.forms.mover-infinito`) */
+        .sh-paso { display: flex; flex-direction: column; gap: .5rem; }
+        .sh-paso-titulo {
+            display: inline-flex; align-items: center; gap: .5rem;
+            font-size: .875rem; font-weight: 600; color: var(--sh-texto);
+        }
+        .sh-paso-numero {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.375rem; height: 1.375rem; border-radius: 999px;
+            font-size: .75rem; font-weight: 700;
+            background: var(--sh-acento-fondo); color: var(--sh-acento);
+        }
+        .sh-tiles-chicas { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
+        .sh-tiles-dos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .sh-tile-ya { font-weight: 600; color: var(--sh-acento); }
+        .sh-aviso-chico {
+            padding: .5rem .75rem; border-radius: .5rem;
+            font-size: .8125rem; color: var(--sh-acento); background: var(--sh-acento-fondo);
+        }
+        @media (max-width: 30rem) {
+            .sh-tiles-dos { grid-template-columns: 1fr; }
+        }
+
+        /*
+         * Qué hay en cada lugar de un infinito («Lugares»): la tarjeta del
+         * almacén con sus envases debajo. Marcado = lleno; incluido —viene
+         * adentro de lo marcado— = contorno; las unidades sueltas, fijas.
+         */
+        .sh-tiles-lugares { grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); align-items: start; }
+        .sh-lugar {
+            display: flex; flex-direction: column; border-radius: .75rem;
+            background: var(--sh-fondo); box-shadow: 0 0 0 1px var(--sh-anillo);
+            transition: background-color .12s ease, box-shadow .12s ease;
+        }
+        .sh-lugar-on { background: var(--sh-acento-fondo); box-shadow: 0 0 0 2px var(--sh-acento); }
+        .sh-lugar .sh-tile, .sh-lugar .sh-tile-on, .sh-lugar .sh-tile-on:hover { background: transparent; box-shadow: none; }
+        .sh-lugar .sh-tile:hover { background: var(--sh-hover); }
+        .sh-envases { display: flex; flex-wrap: wrap; gap: .375rem; padding: 0 .875rem .75rem 3.875rem; }
+        .sh-envase {
+            padding: .2rem .6rem; border: 0; border-radius: 999px; cursor: pointer;
+            font-size: .75rem; font-weight: 600; line-height: 1.25rem; white-space: nowrap;
+            color: var(--sh-tenue); background: var(--sh-fondo); box-shadow: inset 0 0 0 1px var(--sh-anillo);
+        }
+        .sh-envase:hover { color: var(--sh-texto); }
+        .sh-envase:focus-visible { outline: 2px solid var(--sh-acento); outline-offset: 1px; }
+        .sh-envase-on, .sh-envase-on:hover { color: rgb(255 255 255); background: var(--sh-acento); box-shadow: none; }
+        .dark .sh-envase-on, .dark .sh-envase-on:hover { color: rgb(24 24 27); }
+        .sh-envase-incluido, .sh-envase-incluido:hover {
+            cursor: default; color: var(--sh-acento); background: var(--sh-fondo);
+            box-shadow: inset 0 0 0 1.5px var(--sh-acento);
+        }
+        .sh-envase-fijo, .sh-envase-fijo:hover { cursor: default; color: var(--sh-tenue); background: var(--sh-hover); box-shadow: none; }
+
+        /*
+         * La columna «Dónde está» de Existencias
+         * (`filament.tables.columns.donde-esta`): un renglón por almacén,
+         * el nombre alineado a la izquierda y lo que hay a la derecha.
+         */
+        .sh-donde {
+            display: grid; grid-template-columns: max-content minmax(0, 1fr);
+            align-items: center; column-gap: 1rem; row-gap: .45rem;
+            padding: 1rem .75rem; min-width: 15rem;
+        }
+        .sh-donde-almacen {
+            display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap;
+            font-size: .75rem; font-weight: 600; letter-spacing: .02em; color: var(--sh-tenue);
+        }
+        .sh-donde-almacen::before {
+            content: ''; width: .375rem; height: .375rem; flex-shrink: 0;
+            border-radius: 999px; background: var(--sh-muy-tenue);
+        }
+        .sh-donde-elegido { color: var(--sh-acento); }
+        .sh-donde-elegido::before { background: var(--sh-acento); }
+        .sh-donde-que { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; }
+        .sh-donde-cantidad {
+            font-size: .8125rem; font-weight: 600; font-variant-numeric: tabular-nums;
+            white-space: nowrap; color: var(--sh-texto);
+        }
+        .sh-donde-tag {
+            padding: 0 .4rem; border-radius: .3rem; white-space: nowrap;
+            font-size: .6875rem; font-weight: 600; line-height: 1.25rem; letter-spacing: .02em;
+            color: var(--sh-texto); background: var(--sh-hover); box-shadow: inset 0 0 0 1px var(--sh-anillo);
+        }
+        .dark .sh-donde-tag { background: rgb(255 255 255 / .06); }
+        .sh-donde-tag-suelta { color: var(--sh-tenue); background: transparent; }
+        .dark .sh-donde-tag-suelta { background: transparent; }
+
+        /*
+         * Lo que hay en un almacén, en las tarjetas de los modales: las
+         * mismas etiquetas chicas que la tabla.
+         */
+        .sh-tile-hay { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .35rem; }
+
+        /* El «Mover» de lo que tiene existencia (`filament.forms.mover-existencia`) */
+        .sh-tiles-lotes { grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+        .sh-tile-vence { margin-top: .35rem; }
+        .sh-cantidad { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+        .sh-numero {
+            width: 9rem; padding: .5rem .75rem; border: 0; border-radius: .5rem;
+            font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums;
+            color: var(--sh-texto); background: var(--sh-fondo); box-shadow: 0 0 0 1px var(--sh-anillo);
+        }
+        .dark .sh-numero { color-scheme: dark; }
+        .sh-numero:focus { outline: 2px solid var(--sh-acento); outline-offset: 0; }
+        .sh-numero[aria-invalid="true"] { box-shadow: 0 0 0 2px var(--sh-acento); }
+        .sh-cuenta { font-size: .8125rem; font-weight: 500; color: var(--sh-texto); }
+
         [x-cloak] { display: none !important; }
 
         @media (max-width: 48rem) {
@@ -203,6 +367,8 @@
             .sh-solo-cel { display: inline; }
         }
         @media (max-width: 30rem) {
+            .sh-envases { padding-left: .875rem; }
+            .sh-numero { flex: 1; min-width: 0; }
             .sh-barra { flex-direction: column; align-items: stretch; }
             .sh-seg { display: grid; grid-template-columns: 1fr 1fr; }
             .sh-rango { justify-content: space-between; }

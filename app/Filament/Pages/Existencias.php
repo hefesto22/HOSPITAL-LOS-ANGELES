@@ -14,8 +14,8 @@ use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
-use App\Models\UbicacionDeProducto;
 use App\Models\Unidad;
+use App\Services\FormasDeCobro;
 use App\Services\TrasladadorDeExistencias;
 use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
@@ -23,19 +23,13 @@ use App\Support\NumeroDeFormulario;
 use BackedEnum;
 use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
-use Filament\Forms\Components\CheckboxList;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\ViewField;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Schemas\Components\Component;
-use Filament\Schemas\Components\Grid;
-use Filament\Schemas\Components\Text;
-use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\Utilities\Set;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Column;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
@@ -86,9 +80,14 @@ use Livewire\Attributes\Locked;
  * ─────────────────────────────────────────────────────────────────────
  *
  * No se cuenta: no tiene lote, ni vencimiento, ni cantidad. Tiene LUGARES
- * (`UbicadorDeProducto`), y eso es lo que muestra su renglón. Su «Mover»
- * anota que ahora también hay en otro almacén —o que se llevó todo—, y
- * «Lugares» corrige la lista entera.
+ * (`UbicadorDeProducto`) y, en cada uno, QUÉ hay —cajas, blísteres, solo
+ * unidades—: eso es lo que muestra su renglón. Su «Mover» dice de dónde
+ * salió, a dónde llegó y qué se llevó —un envase, unidades, o todo—; y
+ * «Lugares» corrige la lista entera. Los dos, con los almacenes como
+ * tarjetas.
+ *
+ * Lo que tiene existencia se mueve diciendo en qué —caja, blíster o
+ * unidades— y cuántos (13-oct-2026).
  *
  * 🔴 Si le quedó existencia de antes de esta regla, NO se muestra: un
  * infinito no tiene lotes que vencer. `sihla:ordenar-stock-infinito` la
@@ -120,6 +119,14 @@ class Existencias extends Page implements HasTable
     ];
 
     private const DIAS_POR_VENCER = 90;
+
+    /**
+     * Las formas del «Mover» de lo que tiene existencia: unidades sueltas,
+     * o un envase sin abrir —`envase:` y el id de la presentación—.
+     */
+    private const FORMA_SUELTA = 'suelta';
+
+    private const FORMA_ENVASE = 'envase:';
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
 
@@ -173,6 +180,30 @@ class Existencias extends Page implements HasTable
      * @var array<int, Existencia|null>
      */
     private array $existenciasCargadas = [];
+
+    /**
+     * Dónde está cada infinito y qué hay en cada lugar (nulo, «de todo»):
+     * los modales lo preguntan varias veces por pintada y se lee una.
+     *
+     * @var array<int, array<int, list<int>|null>>
+     */
+    private array $lugaresPorItem = [];
+
+    /**
+     * Los envases que se venden cerrados de cada producto, del más grande
+     * al más chico.
+     *
+     * @var array<int, Collection<int, ItemPresentacion>>
+     */
+    private array $envasesPorItem = [];
+
+    /**
+     * Los lotes que se pueden mover de cada producto, con sus formas: los
+     * piden el modal y su relleno en la misma pintada.
+     *
+     * @var array<int, list<array{id: int, almacen: int, sede: int, titulo: string, detalle: string, vence: string|null, color: string, formas: list<array{clave: string, nombre: string, detalle: string, contenido: string, max: string, entero: bool}>}>>
+     */
+    private array $lotesPorItem = [];
 
     public static function getNavigationLabel(): string
     {
@@ -368,9 +399,9 @@ class Existencias extends Page implements HasTable
             ->columns($this->columnas())
             ->recordActions([
                 $this->lotesAction(),
+                $this->lugaresAction(),
                 $this->moverAction(),
                 $this->moverInfinitoAction(),
-                $this->lugaresAction(),
             ])
             ->emptyStateIcon('heroicon-o-squares-2x2')
             ->emptyStateHeading(fn (): string => match ($this->vista) {
@@ -570,7 +601,7 @@ class Existencias extends Page implements HasTable
     // ── Las columnas ──────────────────────────────────────────────────
 
     /**
-     * @return list<TextColumn>
+     * @return list<Column>
      */
     private function columnas(): array
     {
@@ -587,14 +618,23 @@ class Existencias extends Page implements HasTable
                 ->description(fn (Item $record): string => (string) $record->codigo),
 
             /*
-             * Un chip por almacén: «FARMACIA · 458 TAB». Lo infinito, sin
-             * cantidad. En el orden en que se despacha.
+             * ─────────────────────────────────────────────────────────
+             * UN RENGLÓN POR ALMACÉN, NO UN CHIP LARGO (13-oct-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * Con las presentaciones adentro, «FARMACIA · CAJA X 100,
+             * BLISTER X 10, TAB» tres veces seguidas desbordaba la tabla
+             * hacia la derecha (Mauricio: «se ve feo»). Ahora es una lista
+             * corta: el almacén a la izquierda y, a la derecha, cuánto hay
+             * —lo real— o qué hay —lo infinito, con etiquetas chicas:
+             * CAJA, BLISTER, TAB—. El almacén elegido arriba, resaltado.
+             * En el orden en que se despacha
+             * (`filament.tables.columns.donde-esta`).
              */
-            TextColumn::make('donde')
+            ViewColumn::make('donde')
                 ->label('Dónde está')
-                ->state(fn (Item $record): array => $this->chipsDe($record))
-                ->badge()
-                ->color(fn (Item $record, string $state): string => $this->colorDelChip($record, $state))
+                ->state(fn (Item $record): array => $this->dondeEstaDe($record))
+                ->view('filament.tables.columns.donde-esta')
                 ->grow(false),
 
             /*
@@ -648,15 +688,20 @@ class Existencias extends Page implements HasTable
         $lista = $registros instanceof Collection ? $registros->all() : $registros->items();
 
         $ids = [];
+        $infinitos = [];
 
         foreach ($lista as $registro) {
             if ($registro instanceof Item) {
                 $ids[] = (int) $registro->id;
+
+                if ($registro->tieneStockInfinito()) {
+                    $infinitos[(int) $registro->id] = $registro;
+                }
             }
         }
 
         $reales = [];
-        $infinitos = [];
+        $lugaresInfinitos = [];
 
         if ($ids !== []) {
             $saldos = Existencia::query()
@@ -679,23 +724,34 @@ class Existencias extends Page implements HasTable
                     'vence'    => is_string($fila->vence) ? mb_substr($fila->vence, 0, 10) : null,
                 ];
             }
+        }
 
-            $abiertas = UbicacionDeProducto::query()
-                ->abiertas()
-                ->whereIn('item_id', $ids)
-                ->get(['item_id', 'almacen_id']);
+        /*
+         * Lo infinito: sus lugares y qué hay en cada uno, en dos consultas
+         * más para toda la página. Quedan en la memoria de la columna y de
+         * los modales: abrir uno no vuelve a preguntar.
+         */
+        if ($infinitos !== []) {
+            $ubicador = app(UbicadorDeProducto::class);
+            $deCadaUno = $ubicador->lugaresDeVarios(array_keys($infinitos));
+            $envases = $ubicador->envasesDeVarios(array_keys($infinitos));
 
-            foreach ($abiertas as $lugar) {
-                $infinitos[$lugar->item_id][] = [
-                    'almacen'  => $lugar->almacen_id,
-                    'cantidad' => null,
-                    'lotes'    => 0,
-                    'vence'    => null,
-                ];
+            foreach (array_keys($infinitos) as $itemId) {
+                $this->lugaresPorItem[$itemId] = $deCadaUno[$itemId] ?? [];
+                $this->envasesPorItem[$itemId] = $envases[$itemId] ?? new Collection;
+
+                foreach (array_keys($this->lugaresPorItem[$itemId]) as $almacenId) {
+                    $lugaresInfinitos[$itemId][] = [
+                        'almacen'  => $almacenId,
+                        'cantidad' => null,
+                        'lotes'    => 0,
+                        'vence'    => null,
+                    ];
+                }
             }
         }
 
-        return $this->lugares = ['reales' => $reales, 'infinitos' => $infinitos];
+        return $this->lugares = ['reales' => $reales, 'infinitos' => $lugaresInfinitos];
     }
 
     /**
@@ -738,41 +794,78 @@ class Existencias extends Page implements HasTable
     }
 
     /**
-     * @return list<string>
-     */
-    private function chipsDe(Item $item): array
-    {
-        return array_keys($this->chipsConColor($item));
-    }
-
-    private function colorDelChip(Item $item, string $chip): string
-    {
-        return $this->chipsConColor($item)[$chip] ?? 'gray';
-    }
-
-    /**
-     * «FARMACIA · 458 TAB» => color. El almacén elegido arriba,
-     * resaltado; los demás, grises.
+     * La columna «Dónde está»: un renglón por almacén con su nombre y,
+     * según el producto, cuánto hay —«458 TAB»— o qué hay —las
+     * presentaciones del infinito, cortas: CAJA, BLISTER, TAB—.
      *
-     * @return array<string, string>
+     * @return list<array{nombre: string, elegido: bool, cantidad: string|null, envases: list<array{corto: string, largo: string}>, sueltas: string|null}>
      */
-    private function chipsConColor(Item $item): array
+    private function dondeEstaDe(Item $item): array
     {
-        $chips = [];
         $elegido = $this->almacenElegido();
+        $infinito = $item->tieneStockInfinito();
+        $envases = $infinito ? $this->envasesDelProducto($item) : new Collection;
+        $cortos = self::cortosDe($envases);
+        $lugares = $infinito ? $this->lugaresDelInfinito($item) : [];
+        $ubicador = app(UbicadorDeProducto::class);
+        $filas = [];
 
         foreach ($this->lugaresDe($item) as $lugar) {
             $almacen = $this->almacenesPorId()->get($lugar['almacen']);
-            $nombre = $almacen instanceof Almacen ? $almacen->nombre : 'OTRA SEDE';
+            $presentaciones = [];
 
-            $chip = $lugar['cantidad'] instanceof Decimal
-                ? $nombre.' · '.self::conUnidad($lugar['cantidad'], $item)
-                : $nombre;
+            if ($infinito) {
+                foreach ($ubicador->disponibles($lugares[$lugar['almacen']] ?? null, $envases) as $id) {
+                    $envase = $envases->firstWhere('id', $id);
 
-            $chips[$chip] = $lugar['almacen'] === $elegido ? 'primary' : 'gray';
+                    if ($envase instanceof ItemPresentacion) {
+                        $presentaciones[] = [
+                            'corto' => $cortos[$id] ?? UbicadorDeProducto::comoSeLlama($envase),
+                            'largo' => UbicadorDeProducto::comoSeLlama($envase),
+                        ];
+                    }
+                }
+            }
+
+            $filas[] = [
+                'nombre'   => $almacen instanceof Almacen ? $almacen->nombre : 'OTRA SEDE',
+                'elegido'  => $lugar['almacen'] === $elegido,
+                'cantidad' => $lugar['cantidad'] instanceof Decimal ? self::conUnidad($lugar['cantidad'], $item) : null,
+                'envases'  => $presentaciones,
+                'sueltas'  => $infinito ? self::codigoDeLaUnidad($item) : null,
+            ];
         }
 
-        return $chips;
+        return $filas;
+    }
+
+    /**
+     * El nombre corto de cada envase: su unidad —CAJA, BLISTER—. Si dos
+     * envases del producto tienen la misma unidad —la caja de 30 y la de
+     * 100—, el nombre entero, para que no se confundan.
+     *
+     * @param Collection<int, ItemPresentacion> $envases
+     *
+     * @return array<int, string>
+     */
+    private static function cortosDe(Collection $envases): array
+    {
+        $codigos = [];
+
+        foreach ($envases as $envase) {
+            $unidad = $envase->unidad;
+            $codigos[(int) $envase->id] = $unidad instanceof Unidad ? $unidad->codigo : $envase->envase();
+        }
+
+        $veces = array_count_values($codigos);
+
+        foreach ($envases as $envase) {
+            if (($veces[$codigos[(int) $envase->id]] ?? 0) > 1) {
+                $codigos[(int) $envase->id] = UbicadorDeProducto::comoSeLlama($envase);
+            }
+        }
+
+        return $codigos;
     }
 
     private function venceDe(Item $item): ?string
@@ -891,16 +984,30 @@ class Existencias extends Page implements HasTable
     // ── Mover lo que tiene existencia ─────────────────────────────────
 
     /**
-     * El botón que contesta «de dónde sale y a dónde va».
+     * El botón que contesta «de dónde sale, a dónde va, en qué y cuánto».
      *
-     * El lote se elige ADENTRO del modal: la lista dice almacén, lote,
-     * envase, vencimiento y cuánto hay, y quien está frente al estante
-     * elige cuál baja —primero lo que vence, normalmente—. Solo se
-     * ofrecen los lotes de los estantes que esa persona opera: farmacia
-     * ve lo de bodega en «Lotes», pero no puede sacarle nada.
+     * ─────────────────────────────────────────────────────────────────
+     * EN QUÉ SE LLEVA: CAJA, BLÍSTER O UNIDADES (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
      *
-     * El permiso es el de ajustar: un traslado toca el kardex igual,
-     * aunque no cambie el total del hospital.
+     * Mauricio: «cuando sea real, debe ingresar qué cantidad se está
+     * moviendo, y en qué presentación: caja o blíster». Al carrito no se
+     * bajan «20 tabletas»: se bajan dos blísteres de la caja abierta. Así
+     * que, después del lote y del destino, se elige en qué se lleva —los
+     * envases que hay ENTEROS en ese lote, o unidades sueltas— y cuántos.
+     * El sistema convierte a la unidad del kardex y lo dice antes de
+     * apretar (`filament.forms.mover-existencia`).
+     *
+     * Los envases que se ofrecen son los que salen sin abrir de ese lote,
+     * con la misma cuenta que al cobrar: de un lote de cajas con 95
+     * tabletas salen 9 blísteres y ninguna caja
+     * (`FormasDeCobro::sinAbrirEnElLote()`). Lo que se movió queda escrito
+     * en las dos líneas del kardex: «2 BLISTER X 10».
+     *
+     * Solo se ofrecen los lotes de los estantes que esa persona opera:
+     * farmacia ve lo de bodega en «Lotes», pero no puede sacarle nada. El
+     * permiso es el de ajustar: un traslado toca el kardex igual, aunque no
+     * cambie el total del hospital.
      */
     private function moverAction(): Action
     {
@@ -910,175 +1017,70 @@ class Existencias extends Page implements HasTable
             ->button()
             ->outlined()
             ->color('primary')
-            ->modalHeading('Mover a otro almacén')
-            ->modalDescription(fn (Item $record): string => $record->nombre)
-            ->modalWidth('2xl')
+            ->modalIcon(Heroicon::OutlinedArrowsRightLeft)
+            ->modalHeading(fn (Item $record): string => 'Mover '.$record->nombre)
+            ->modalDescription('Pasa de un almacén a otro: sigue siendo del hospital, no es una baja.')
+            ->modalWidth('3xl')
             ->modalSubmitActionLabel('Mover')
             ->visible(fn (Item $record): bool => ! $record->tieneStockInfinito()
                 && Gate::allows('create', Ajuste::class)
                 && $this->tieneAlgoQuePuedaMover($record))
-            ->fillForm(fn (Item $record): array => [
-                'existencia_id' => $this->loteSugerido($record),
+            ->fillForm(function (Item $record): array {
+                $lote = $this->loteSugerido($record);
+
+                return [
+                    'traslado' => [
+                        'existencia' => $lote,
+                        'destino'    => null,
+                        'forma'      => $this->formaSugerida($record, $lote),
+                        'cantidad'   => null,
+                    ],
+                ];
+            })
+            ->schema(fn (Item $record): array => [
+                ViewField::make('traslado')
+                    ->hiddenLabel()
+                    ->view('filament.forms.mover-existencia')
+                    ->viewData([
+                        'lotes'    => $this->lotesParaMover($record),
+                        'destinos' => $this->tarjetasDeAlmacenes(),
+                        'yaHay'    => $this->cuantoHayEnCadaAlmacen($record),
+                    ]),
+
+                CampoMayusculas::area('motivo')
+                    ->label('Nota (opcional)')
+                    ->rows(2)
+                    ->maxLength(200)
+                    ->placeholder('Reposición del carro, préstamo a quirófano…')
+                    ->helperText('Queda escrita en las dos líneas del kardex, junto con lo que se movió.'),
             ])
-            ->schema(fn (Item $record): array => $this->camposParaMover($record))
             ->action(function (array $data, Item $record, Action $action): void {
-                $existencia = $this->existenciaElegida($data['existencia_id'] ?? null);
+                $traslado = is_array($data['traslado'] ?? null) ? $data['traslado'] : [];
+                $nota = is_string($data['motivo'] ?? null) ? $data['motivo'] : null;
 
-                /*
-                 * 🔴 Se vuelve a mirar acá: el lote llega del navegador.
-                 * Tiene que ser de ESTE producto y de un estante que esta
-                 * persona opere.
-                 */
-                if (! $existencia instanceof Existencia
-                    || $existencia->item_id !== $record->id
-                    || ! $existencia->almacen instanceof Almacen
-                    || ! AlmacenesDelUsuario::puedeOperarEn($existencia->almacen)) {
-                    Notification::make()
-                        ->title('No se pudo mover')
-                        ->body('Elija uno de los lotes de la lista.')
-                        ->danger()
-                        ->send();
-
-                    $action->halt();
-
-                    return;
-                }
-
-                if (! $this->mover($existencia, $data)) {
+                if (! $this->trasladar($record, $traslado, $nota)) {
                     $action->halt();
                 }
             });
     }
 
     /**
-     * @return list<Component>
-     */
-    private function camposParaMover(Item $producto): array
-    {
-        return [
-            Select::make('existencia_id')
-                ->label('Qué lote, y de dónde sale')
-                ->required()
-                ->native(false)
-                ->live()
-                ->options(fn (): array => $this->lotesParaMover($producto))
-                ->afterStateUpdated(function (Set $set): void {
-                    $set('destino_id', null);
-                    $set('cantidad', null);
-                }),
-
-            /*
-             * «Entra a» y «cuánto», uno al lado del otro. En el celular,
-             * uno debajo del otro.
-             */
-            Grid::make(['default' => 1, 'sm' => 2])
-                ->schema([
-                    /*
-                     * ⚠️ SIN `searchable()`: con `options()` y búsqueda
-                     * encendida, Filament busca en el servidor con
-                     * `getSearchResultsUsing` —que acá no existe— y
-                     * «BODEGA» devolvía «sin coincidencias» estando en la
-                     * lista. Son cinco estantes: se eligen mirando.
-                     */
-                    Select::make('destino_id')
-                        ->label('Entra a')
-                        ->required()
-                        ->native(false)
-                        ->options(function (Get $get): array {
-                            $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                            return $existencia instanceof Existencia ? self::destinosPara($existencia) : [];
-                        })
-                        ->helperText('¿No está el carrito? Se crea en Inventario → Almacenes.'),
-
-                    /*
-                     * ─────────────────────────────────────────────────
-                     * 🔴 SE MUEVEN ENVASES, NO UNIDADES DE DISPENSACIÓN
-                     * ─────────────────────────────────────────────────
-                     *
-                     * Alguien escribió «5» queriendo bajar 5 FRASCOS y
-                     * bajó 5 ML. Un traslado es un hecho físico: se pide
-                     * en el envase del lote y el sistema convierte. El
-                     * tope va como cadena (§8.6.2), y el candado de verdad
-                     * es el UPDATE condicional del movimiento.
-                     */
-                    TextInput::make('cantidad')
-                        ->label(function (Get $get): string {
-                            $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                            return $existencia instanceof Existencia
-                                ? self::comoSePideLaCantidad($existencia)
-                                : 'Cuánto se mueve';
-                        })
-                        ->required()
-                        ->numeric()
-                        ->live(onBlur: true)
-                        ->minValue('0.0001')
-                        ->step('0.0001')
-                        ->disabled(fn (Get $get): bool => ! $this->existenciaElegida($get('existencia_id')) instanceof Existencia)
-                        ->maxValue(function (Get $get): ?string {
-                            $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                            return $existencia instanceof Existencia ? self::topeParaMover($existencia) : null;
-                        })
-                        /*
-                         * «Mover todo» pone el tope exacto, que el servicio
-                         * entiende como «todo»: teclear 0.0833 FRASCO a
-                         * mano deja restos que nadie puede mover ni contar.
-                         */
-                        ->hintAction(
-                            Action::make('mover_todo')
-                                ->label('Mover todo')
-                                ->icon(Heroicon::OutlinedArrowsRightLeft)
-                                ->action(function (Get $get, Set $set): void {
-                                    $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                                    if ($existencia instanceof Existencia) {
-                                        $set('cantidad', self::topeParaMover($existencia));
-                                    }
-                                }),
-                        )
-                        ->helperText(function (Get $get): ?string {
-                            $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                            return $existencia instanceof Existencia
-                                ? self::cuantoQuedaEnEsteLote($existencia, $get('cantidad'))
-                                : null;
-                        }),
-                ]),
-
-            /*
-             * «Además hay 3 en BODEGA…»: lo que evita el viaje de más.
-             */
-            Text::make(function (Get $get): string {
-                $existencia = $this->existenciaElegida($get('existencia_id'));
-
-                return $existencia instanceof Existencia ? self::dondeMasHay($existencia) : '';
-            })
-                ->color('gray')
-                ->icon(Heroicon::OutlinedMapPin)
-                ->visible(fn (Get $get): bool => $this->existenciaElegida($get('existencia_id')) instanceof Existencia),
-
-            CampoMayusculas::area('motivo')
-                ->label('Nota (opcional)')
-                ->rows(2)
-                ->maxLength(200)
-                ->placeholder('Reposición del carro, préstamo a quirófano…')
-                ->helperText('Queda escrita en las dos líneas del kardex.'),
-        ];
-    }
-
-    /**
      * Los lotes que esta persona puede mover, en el orden de los
-     * almacenes de arriba y, dentro de cada uno, lo que vence primero.
+     * almacenes de arriba y, dentro de cada uno, lo que vence primero;
+     * cada uno con las formas en que se puede llevar.
      *
-     * @return array<int, string>
+     * @return list<array{id: int, almacen: int, sede: int, titulo: string, detalle: string, vence: string|null, color: string, formas: list<array{clave: string, nombre: string, detalle: string, contenido: string, max: string, entero: bool}>}>
      */
     private function lotesParaMover(Item $producto): array
     {
-        $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
+        if (isset($this->lotesPorItem[(int) $producto->id])) {
+            return $this->lotesPorItem[(int) $producto->id];
+        }
 
-        return Existencia::query()
+        $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
+        $envases = $this->envasesDelProducto($producto);
+
+        $filas = Existencia::query()
             ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
             ->where('item_id', $producto->id)
             ->conSaldo()
@@ -1089,9 +1091,80 @@ class Existencias extends Page implements HasTable
                 '%05d %s',
                 $orden[$fila->almacen_id] ?? 99999,
                 $fila->lote?->fecha_vencimiento?->format('Y-m-d') ?? '9999-12-31',
-            ))
-            ->mapWithKeys(fn (Existencia $fila): array => [$fila->id => self::etiquetaDelLote($fila)])
-            ->all();
+            ));
+
+        $lotes = [];
+
+        foreach ($filas as $fila) {
+            $this->existenciasCargadas[(int) $fila->id] = $fila;
+
+            $vence = $fila->lote?->fecha_vencimiento;
+
+            $lotes[] = [
+                'id'      => (int) $fila->id,
+                'almacen' => (int) $fila->almacen_id,
+                'sede'    => (int) $fila->almacen->sede_id,
+                'titulo'  => $fila->almacen->nombre.' · '.($fila->lote instanceof Lote ? $fila->lote->numero : 'sin lote'),
+                'detalle' => implode(' · ', array_filter([
+                    self::nombreDelEnvase($fila),
+                    'hay '.self::cuantoHay($fila),
+                ])),
+                'vence'  => $vence === null ? null : 'vence '.$vence->format('d/m/Y'),
+                'color'  => self::colorDelVencimiento($fila),
+                'formas' => $this->formasDelLote($fila, $envases),
+            ];
+        }
+
+        return $this->lotesPorItem[(int) $producto->id] = $lotes;
+    }
+
+    /**
+     * En qué se puede llevar lo de un lote: cada envase que sale ENTERO
+     * de él —del más grande al más chico— y, siempre, unidades sueltas.
+     *
+     * @param Collection<int, ItemPresentacion> $envases los del producto
+     *
+     * @return list<array{clave: string, nombre: string, detalle: string, contenido: string, max: string, entero: bool}>
+     */
+    private function formasDelLote(Existencia $existencia, Collection $envases): array
+    {
+        $saldo = $existencia->cantidadDecimal();
+        $formas = app(FormasDeCobro::class);
+        $lista = [];
+
+        foreach ($envases as $envase) {
+            $sinAbrir = $formas->sinAbrirEnElLote($envase, $existencia->lote?->item_presentacion_id, $saldo, $envases);
+
+            if (! $sinAbrir->mayorQue('0')) {
+                continue;
+            }
+
+            $contenido = Decimal::de($envase->unidades_por_presentacion);
+            $cuantos = $sinAbrir->entre($contenido)->redondeado(0);
+
+            $lista[] = [
+                'clave'     => self::FORMA_ENVASE.$envase->id,
+                'nombre'    => UbicadorDeProducto::comoSeLlama($envase),
+                'detalle'   => 'hay '.$cuantos.' sin abrir',
+                'contenido' => ItemPresentacion::sinCerosDeMas($contenido->redondeado(4)),
+                'max'       => $cuantos,
+                'entero'    => true,
+            ];
+        }
+
+        $unidad = $existencia->item->unidadDispensacion;
+        $hay = ItemPresentacion::sinCerosDeMas($saldo->redondeado(4));
+
+        $lista[] = [
+            'clave'     => self::FORMA_SUELTA,
+            'nombre'    => $unidad instanceof Unidad ? $unidad->codigo : 'UNIDADES',
+            'detalle'   => 'sueltas · hay '.$hay,
+            'contenido' => '1',
+            'max'       => $hay,
+            'entero'    => false,
+        ];
+
+        return $lista;
     }
 
     /**
@@ -1103,17 +1176,47 @@ class Existencias extends Page implements HasTable
         $lotes = $this->lotesParaMover($producto);
         $almacen = $this->almacenElegido();
 
-        if ($almacen !== null) {
-            foreach (array_keys($lotes) as $id) {
-                if ($this->existenciaElegida($id)?->almacen_id === $almacen) {
-                    return $id;
-                }
+        foreach ($lotes as $lote) {
+            if ($almacen !== null && $lote['almacen'] === $almacen) {
+                return $lote['id'];
             }
         }
 
-        $primero = array_key_first($lotes);
+        return $lotes[0]['id'] ?? null;
+    }
 
-        return $primero === null ? null : (int) $primero;
+    /**
+     * La forma que trae elegida: el envase más grande que hay entero en
+     * ese lote, o unidades sueltas.
+     */
+    private function formaSugerida(Item $producto, ?int $lote): ?string
+    {
+        foreach ($this->lotesParaMover($producto) as $fila) {
+            if ($fila['id'] === $lote) {
+                return $fila['formas'][0]['clave'] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * «Ya hay 30 TAB» en cada almacén, para la tarjeta del destino. Sale
+     * de lo que ya se leyó para la página.
+     *
+     * @return array<int, string>
+     */
+    private function cuantoHayEnCadaAlmacen(Item $producto): array
+    {
+        $hay = [];
+
+        foreach ($this->lugaresDe($producto) as $lugar) {
+            if ($lugar['cantidad'] instanceof Decimal) {
+                $hay[$lugar['almacen']] = 'ya hay '.self::conUnidad($lugar['cantidad'], $producto);
+            }
+        }
+
+        return $hay;
     }
 
     /**
@@ -1156,279 +1259,9 @@ class Existencias extends Page implements HasTable
     }
 
     /**
-     * «FARMACIA · LOT-2 · CAJA X 100 TABLETAS · vence 30/10/2026 — hay 458 TAB».
+     * @param array<array-key, mixed> $traslado lote, destino, forma y cantidad
      */
-    private static function etiquetaDelLote(Existencia $existencia): string
-    {
-        $vence = $existencia->lote?->fecha_vencimiento;
-
-        $partes = array_filter([
-            $existencia->almacen instanceof Almacen ? $existencia->almacen->nombre : null,
-            $existencia->lote instanceof Lote ? $existencia->lote->numero : 'sin lote',
-            self::nombreDelEnvase($existencia),
-            $vence === null ? null : 'vence '.$vence->format('d/m/Y'),
-        ]);
-
-        return implode(' · ', $partes).' — hay '.self::cuantoHay($existencia);
-    }
-
-    // ── Lo que tiene stock infinito ───────────────────────────────────
-
-    /**
-     * El «Mover» de un producto con stock infinito: no pasa una cantidad
-     * —no hay—, anota que ahora también hay en el destino. Si se llevó
-     * todo, el origen se cierra. Lo de siempre es llevar una parte (unas
-     * ampollas al carrito rojo), así que «sigue habiendo» viene marcado.
-     */
-    private function moverInfinitoAction(): Action
-    {
-        return Action::make('moverInfinito')
-            ->label('Mover')
-            ->icon(Heroicon::OutlinedArrowsRightLeft)
-            ->button()
-            ->outlined()
-            ->color('primary')
-            ->modalHeading('Mover a otro almacén')
-            ->modalDescription(fn (Item $record): string => $record->nombre
-                .' — stock infinito: no se cuenta, se anota dónde hay.')
-            ->modalWidth('2xl')
-            ->modalSubmitActionLabel('Mover')
-            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
-                && Gate::allows('create', Ajuste::class)
-                && $this->tieneAlgoQuePuedaMover($record))
-            ->fillForm(fn (Item $record): array => [
-                'origen_id'       => array_key_first($this->origenesDelInfinito($record)),
-                'queda_en_origen' => true,
-            ])
-            ->schema(fn (Item $record): array => [
-                Grid::make(['default' => 1, 'sm' => 2])
-                    ->schema([
-                        Select::make('origen_id')
-                            ->label('Sale de')
-                            ->required()
-                            ->native(false)
-                            ->live()
-                            ->options(fn (): array => $this->origenesDelInfinito($record))
-                            ->afterStateUpdated(fn (Set $set): mixed => $set('destino_id', null)),
-
-                        Select::make('destino_id')
-                            ->label('Entra a')
-                            ->required()
-                            ->native(false)
-                            ->options(fn (Get $get): array => $this->destinosDelInfinito($record, $get('origen_id')))
-                            ->helperText('¿No está el carrito? Se crea en Inventario → Almacenes.'),
-                    ]),
-
-                Toggle::make('queda_en_origen')
-                    ->label('Sigue habiendo en el almacén de donde sale')
-                    ->helperText('Déjelo marcado si se llevó una parte. Apáguelo si se llevó todo: ahí deja de aparecer.'),
-            ])
-            ->action(function (array $data, Item $record, Action $action): void {
-                if (! $this->moverInfinito($record, $data)) {
-                    $action->halt();
-                }
-            });
-    }
-
-    /**
-     * «Lugares»: la lista entera de dónde hay, para corregir de una vez
-     * —sumar un carrito, quitar un almacén mal anotado—.
-     */
-    private function lugaresAction(): Action
-    {
-        return Action::make('lugares')
-            ->label('Lugares')
-            ->icon(Heroicon::OutlinedMapPin)
-            ->color('gray')
-            ->link()
-            ->modalHeading(fn (Item $record): string => 'Dónde hay '.$record->nombre)
-            ->modalDescription(
-                'Al cargarlo a una cuenta solo se ofrecen estos almacenes. Lo que ya se cargó no cambia.'
-            )
-            ->modalWidth('2xl')
-            ->modalSubmitActionLabel('Guardar')
-            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
-                && Gate::allows('create', Ajuste::class))
-            ->fillForm(fn (Item $record): array => [
-                'ubicaciones' => app(UbicadorDeProducto::class)->dondeEsta($record),
-            ])
-            ->schema([
-                CheckboxList::make('ubicaciones')
-                    ->hiddenLabel()
-                    ->required()
-                    ->validationMessages(['required' => 'Marque al menos un almacén: si no, nadie sabría de dónde sale.'])
-                    ->options(fn (): array => $this->almacenesEnOrden()
-                        ->filter(fn (Almacen $almacen): bool => $almacen->estaVigente())
-                        ->mapWithKeys(fn (Almacen $almacen): array => [$almacen->id => $almacen->nombre])
-                        ->all())
-                    ->columns(['default' => 1, 'sm' => 2]),
-            ])
-            ->action(function (array $data, Item $record, Action $action): void {
-                if (! $this->guardarLugares($record, $data)) {
-                    $action->halt();
-                }
-            });
-    }
-
-    /**
-     * Los almacenes donde está, que esta persona opera.
-     *
-     * @return array<int, string>
-     */
-    private function origenesDelInfinito(Item $producto): array
-    {
-        $donde = app(UbicadorDeProducto::class)->dondeEsta($producto);
-
-        return $this->almacenesEnOrden()
-            ->filter(fn (Almacen $almacen): bool => in_array((int) $almacen->id, $donde, true)
-                && AlmacenesDelUsuario::puedeOperarEn($almacen))
-            ->mapWithKeys(fn (Almacen $almacen): array => [$almacen->id => $almacen->nombre])
-            ->all();
-    }
-
-    /**
-     * Los almacenes de la misma sede a los que se puede llevar, diciendo
-     * en cuáles ya está.
-     *
-     * @return array<int, string>
-     */
-    private function destinosDelInfinito(Item $producto, mixed $origenId): array
-    {
-        $origen = is_numeric($origenId) ? $this->almacenesPorId()->get((int) $origenId) : null;
-
-        if (! $origen instanceof Almacen) {
-            return [];
-        }
-
-        $yaEsta = app(UbicadorDeProducto::class)->dondeEsta($producto);
-
-        return $this->almacenesEnOrden()
-            ->filter(fn (Almacen $almacen): bool => (int) $almacen->id !== (int) $origen->id
-                && (int) $almacen->sede_id === (int) $origen->sede_id
-                && $almacen->estaVigente())
-            ->mapWithKeys(fn (Almacen $almacen): array => [
-                $almacen->id => $almacen->nombre.(in_array((int) $almacen->id, $yaEsta, true) ? ' · ya está' : ''),
-            ])
-            ->all();
-    }
-
-    /**
-     * @param array<string, mixed> $data
-     */
-    private function moverInfinito(Item $producto, array $data): bool
-    {
-        /*
-         * 🔴 Se vuelve a preguntar acá: `visible()` decide qué se dibuja,
-         * no qué se puede llamar.
-         */
-        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
-
-        $origenes = $this->origenesDelInfinito($producto);
-        $origenId = is_numeric($data['origen_id'] ?? null) ? (int) $data['origen_id'] : null;
-
-        $origen = $origenId !== null && array_key_exists($origenId, $origenes)
-            ? $this->almacenesPorId()->get($origenId)
-            : null;
-
-        $destino = is_numeric($data['destino_id'] ?? null)
-            ? Almacen::query()->find((int) $data['destino_id'])
-            : null;
-
-        if (! $origen instanceof Almacen || ! $destino instanceof Almacen) {
-            Notification::make()
-                ->title('No se pudo mover')
-                ->body('Elija de qué almacén sale y a cuál entra.')
-                ->danger()
-                ->send();
-
-            return false;
-        }
-
-        $quedaEnOrigen = (bool) ($data['queda_en_origen'] ?? true);
-
-        try {
-            app(UbicadorDeProducto::class)->mover($producto, $origen, $destino, $quedaEnOrigen);
-        } catch (SihlaException $e) {
-            Notification::make()
-                ->title('No se pudo mover')
-                ->body($e->getMessage())
-                ->danger()
-                ->persistent()
-                ->send();
-
-            return false;
-        }
-
-        $this->olvidarLoLeido();
-
-        Notification::make()
-            ->title('Movido')
-            ->body($quedaEnOrigen
-                ? "{$producto->nombre} ahora también está en {$destino->nombre}."
-                : "{$producto->nombre} pasó de {$origen->nombre} a {$destino->nombre}.")
-            ->success()
-            ->send();
-
-        return true;
-    }
-
-    /**
-     * @param array<string, mixed> $data
-     */
-    private function guardarLugares(Item $producto, array $data): bool
-    {
-        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
-
-        $lugares = UbicadorDeProducto::idsDelFormulario($data['ubicaciones'] ?? null);
-
-        if ($lugares === []) {
-            Notification::make()
-                ->title('Marque al menos un almacén')
-                ->body('Si no, al cargarlo a una cuenta nadie sabría de dónde sale.')
-                ->danger()
-                ->send();
-
-            return false;
-        }
-
-        try {
-            app(UbicadorDeProducto::class)->dejarEn($producto, $lugares);
-        } catch (SihlaException $e) {
-            Notification::make()
-                ->title('No se guardó')
-                ->body($e->getMessage())
-                ->danger()
-                ->persistent()
-                ->send();
-
-            return false;
-        }
-
-        $this->olvidarLoLeido();
-
-        Notification::make()
-            ->title('Guardado')
-            ->success()
-            ->send();
-
-        return true;
-    }
-
-    /**
-     * Después de mover, las cuentas de arriba y los chips se vuelven a
-     * leer al pintar: se habían leído antes, para encontrar el renglón.
-     */
-    private function olvidarLoLeido(): void
-    {
-        $this->productosPorAlmacen = null;
-        $this->lugares = null;
-        $this->existenciasCargadas = [];
-    }
-
-    /**
-     * @param array<string, mixed> $data
-     */
-    private function mover(Existencia $existencia, array $data): bool
+    private function trasladar(Item $producto, array $traslado, ?string $nota): bool
     {
         /*
          * 🔴 SE VUELVE A PREGUNTAR ACÁ, aunque el botón ya esté escondido
@@ -1439,47 +1272,85 @@ class Existencias extends Page implements HasTable
          */
         abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
 
-        $item = $existencia->item;
-        $origen = $existencia->almacen;
+        $existencia = $this->existenciaElegida($traslado['existencia'] ?? null);
 
-        $destino = is_numeric($data['destino_id'] ?? null)
-            ? Almacen::query()->find((int) $data['destino_id'])
+        /*
+         * 🔴 El lote llega del navegador: tiene que ser de ESTE producto y
+         * de un estante que esta persona opere.
+         */
+        if (! $existencia instanceof Existencia
+            || $existencia->item_id !== $producto->id
+            || ! $existencia->almacen instanceof Almacen
+            || ! AlmacenesDelUsuario::puedeOperarEn($existencia->almacen)) {
+            return self::noSeMovio('Elija uno de los lotes de la lista.');
+        }
+
+        $destino = is_numeric($traslado['destino'] ?? null)
+            ? $this->almacenesPorId()->get((int) $traslado['destino'])
             : null;
 
-        if (! $item instanceof Item || ! $origen instanceof Almacen || ! $destino instanceof Almacen) {
-            Notification::make()
-                ->title('No se pudo mover')
-                ->body('Falta el producto, el estante de origen o el de destino.')
-                ->danger()
-                ->send();
-
-            return false;
+        if (! $destino instanceof Almacen) {
+            return self::noSeMovio('Elija a qué almacén entra.');
         }
 
-        $tecleado = NumeroDeFormulario::aDecimal($data['cantidad'] ?? null);
+        /*
+         * La forma se busca entre las que se calculan ACÁ, no entre las
+         * que mandó el navegador: el contenido y el tope salen del lote,
+         * con su saldo de ahora.
+         */
+        $forma = null;
 
-        if (! $tecleado instanceof Decimal) {
-            Notification::make()
-                ->title('La cantidad no se entiende')
-                ->body('Escriba cuántos '.(self::unidadDelEnvase($existencia) ?? 'unidades').' se mueven.')
-                ->danger()
-                ->send();
-
-            return false;
+        foreach ($this->formasDelLote($existencia, $this->envasesDelProducto($producto)) as $candidata) {
+            if ($candidata['clave'] === ($traslado['forma'] ?? null)) {
+                $forma = $candidata;
+            }
         }
 
-        $cantidad = self::aUnidadesDeDispensacion($existencia, $tecleado);
+        if ($forma === null) {
+            return self::noSeMovio('Elija en qué se lleva: el envase o unidades sueltas.');
+        }
+
+        $cantidad = NumeroDeFormulario::aDecimal($traslado['cantidad'] ?? null);
+
+        if (! $cantidad instanceof Decimal || ! $cantidad->mayorQue('0')) {
+            return self::noSeMovio('Escriba cuántos '.$forma['nombre'].' se mueven. Ejemplo: 2');
+        }
+
+        $tope = Decimal::de($forma['max']);
+
+        if ($cantidad->mayorQue($tope)) {
+            return self::noSeMovio('En este lote hay '.$forma['max'].' '.$forma['nombre'].($forma['entero'] ? ' sin abrir.' : '.'));
+        }
+
+        if ($forma['entero'] && ! $cantidad->igualA($cantidad->redondeado(0))) {
+            return self::noSeMovio(
+                'Un '.$forma['nombre'].' sin abrir se mueve entero. Para mover una parte, elija unidades sueltas.'
+            );
+        }
+
+        /*
+         * 🔴 Todo lo suelto mueve el saldo EXACTO: el tope que se mostró
+         * significa «todo», sin restos de redondeo colgando en el estante.
+         */
+        $unidades = match (true) {
+            $forma['entero']         => $cantidad->por($forma['contenido']),
+            $cantidad->igualA($tope) => $existencia->cantidadDecimal(),
+            default                  => $cantidad,
+        };
+
+        $loQueSeMovio = ItemPresentacion::sinCerosDeMas($cantidad->redondeado(4)).' '.$forma['nombre'];
+        $limpia = trim($nota ?? '');
 
         $lote = $existencia->lote_id === null ? null : Lote::query()->find($existencia->lote_id);
 
         try {
             app(TrasladadorDeExistencias::class)->trasladar(
-                item: $item,
+                item: $producto,
                 lote: $lote instanceof Lote ? $lote : null,
-                origen: $origen,
+                origen: $existencia->almacen,
                 destino: $destino,
-                cantidad: $cantidad,
-                motivo: is_string($data['motivo'] ?? null) ? $data['motivo'] : null,
+                cantidad: $unidades,
+                motivo: $limpia === '' ? $loQueSeMovio : $loQueSeMovio.' · '.$limpia,
             );
         } catch (SihlaException $e) {
             Notification::make()
@@ -1498,13 +1369,544 @@ class Existencias extends Page implements HasTable
          */
         $this->olvidarLoLeido();
 
+        $enKardex = $forma['entero'] ? ' ('.self::conUnidad($unidades, $producto).')' : '';
+
         Notification::make()
             ->title('Movido')
-            ->body(
-                self::comoSeCuenta($existencia, $tecleado)
-                .' de '.$item->nombre
-                .' pasaron de '.$origen->nombre.' a '.$destino->nombre.'.'
+            ->body($loQueSeMovio.$enKardex.' de '.$producto->nombre.' pasaron de '
+                .$existencia->almacen->nombre.' a '.$destino->nombre.'.')
+            ->success()
+            ->send();
+
+        return true;
+    }
+
+    private static function noSeMovio(string $porQue): bool
+    {
+        Notification::make()
+            ->title('No se pudo mover')
+            ->body($porQue)
+            ->danger()
+            ->send();
+
+        return false;
+    }
+
+    // ── Lo que tiene stock infinito ───────────────────────────────────
+
+    /**
+     * El «Mover» de un producto con stock infinito: de qué almacén sale, a
+     * cuál entra y qué se llevó —un envase, unidades sueltas, o todo—.
+     *
+     * No pasa una cantidad —no hay—: anota que ahora también hay en el
+     * destino, con lo que se llevó, y, si se llevó todo, que en el origen
+     * ya no.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * QUÉ SE LLEVÓ (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «aunque sean infinitos, hay que tenerlo en cuenta: puede
+     * que solo haya blíster, o cajas, o unidades». Se ofrecen los envases
+     * que HAY en el origen —con caja, también el blíster que trae— y las
+     * unidades sueltas. Llevar al carrito un blíster deja anotado que en
+     * el carrito hay blísteres, no cajas.
+     *
+     * Con tarjetas, como «Lugares», en tres pasos que se leen de arriba
+     * abajo, y al pie cómo queda (`filament.forms.mover-infinito`).
+     */
+    private function moverInfinitoAction(): Action
+    {
+        return Action::make('moverInfinito')
+            ->label('Mover')
+            ->icon(Heroicon::OutlinedArrowsRightLeft)
+            ->button()
+            ->outlined()
+            ->color('primary')
+            ->modalIcon(Heroicon::OutlinedArrowsRightLeft)
+            ->modalHeading(fn (Item $record): string => 'Mover '.$record->nombre)
+            ->modalDescription('Stock infinito: no se cuenta, se anota de dónde salió, a dónde llegó y qué se llevó.')
+            ->modalWidth('3xl')
+            ->modalSubmitActionLabel('Mover')
+            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
+                && Gate::allows('create', Ajuste::class)
+                && $this->tieneAlgoQuePuedaMover($record))
+            ->fillForm(fn (Item $record): array => [
+                'movimiento' => [
+                    'origen'  => $this->origenSugerido($record),
+                    'destino' => null,
+                    /*
+                     * Sin envases no hay nada que preguntar: lo que se
+                     * lleva son unidades sueltas.
+                     */
+                    'envase' => $this->envasesDelProducto($record)->isEmpty() ? 0 : null,
+                    'todo'   => false,
+                ],
+            ])
+            ->schema(fn (Item $record): array => [
+                ViewField::make('movimiento')
+                    ->hiddenLabel()
+                    ->view('filament.forms.mover-infinito')
+                    ->viewData([
+                        'origenes'    => $this->origenesDelInfinito($record),
+                        'destinos'    => $this->tarjetasDeAlmacenes(),
+                        'donde'       => $this->dondeEstaElInfinito($record),
+                        'envases'     => $this->tarjetasDeEnvases($record),
+                        'disponibles' => $this->disponiblesDelInfinito($record),
+                        'unidad'      => self::codigoDeLaUnidad($record),
+                    ]),
+            ])
+            ->action(function (array $data, Item $record, Action $action): void {
+                $movimiento = is_array($data['movimiento'] ?? null) ? $data['movimiento'] : [];
+
+                if (! $this->moverInfinito($record, $movimiento)) {
+                    $action->halt();
+                }
+            });
+    }
+
+    /**
+     * «Lugares»: la lista entera de dónde hay y qué hay en cada lugar, para
+     * corregir de una vez —sumar un carrito, quitar un almacén mal
+     * anotado, decir que en el carrito solo hay blísteres—. Los almacenes
+     * son tarjetas que se tocan para marcar o desmarcar; marcada, cada una
+     * muestra sus envases. Abajo se ve qué cambia antes de guardar
+     * (`filament.forms.lugares-del-producto`).
+     */
+    private function lugaresAction(): Action
+    {
+        return Action::make('lugares')
+            ->label('Lugares')
+            ->icon(Heroicon::OutlinedMapPin)
+            ->color('gray')
+            ->link()
+            ->modalIcon(Heroicon::OutlinedMapPin)
+            ->modalHeading(fn (Item $record): string => '¿Dónde hay '.$record->nombre.'?')
+            ->modalDescription(
+                'Stock infinito: no se cuenta, se anota dónde hay y qué hay. Al cargarlo a una cuenta solo se '
+                .'ofrecen los almacenes donde hay de lo que se está cargando.'
             )
+            ->modalWidth('3xl')
+            ->modalSubmitActionLabel('Guardar')
+            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
+                && Gate::allows('create', Ajuste::class))
+            ->fillForm(fn (Item $record): array => [
+                'lugares' => $this->lugaresParaElFormulario($record),
+            ])
+            ->schema(fn (Item $record): array => [
+                ViewField::make('lugares')
+                    ->hiddenLabel()
+                    ->required()
+                    ->validationMessages(['required' => 'Marque al menos un almacén: si no, nadie sabría de dónde sale.'])
+                    ->view('filament.forms.lugares-del-producto')
+                    ->viewData([
+                        'almacenes' => $this->tarjetasDeAlmacenes(),
+                        'envases'   => $this->tarjetasDeEnvases($record),
+                        'unidad'    => self::codigoDeLaUnidad($record),
+                        'antes'     => $this->lugaresParaElFormulario($record),
+                    ]),
+            ])
+            ->action(function (array $data, Item $record, Action $action): void {
+                if (! $this->guardarLugares($record, $data)) {
+                    $action->halt();
+                }
+            });
+    }
+
+    /**
+     * Los almacenes donde está, que esta persona opera: de esos puede
+     * salir.
+     *
+     * @return list<array{id: int, nombre: string, tipo: string, icono: string, sede: int}>
+     */
+    private function origenesDelInfinito(Item $producto): array
+    {
+        $donde = $this->dondeEstaElInfinito($producto);
+
+        return array_values(array_filter(
+            $this->tarjetasDeAlmacenes(),
+            function (array $tarjeta) use ($donde): bool {
+                $almacen = $this->almacenesPorId()->get($tarjeta['id']);
+
+                return in_array($tarjeta['id'], $donde, true)
+                    && $almacen instanceof Almacen
+                    && AlmacenesDelUsuario::puedeOperarEn($almacen);
+            },
+        ));
+    }
+
+    /**
+     * El almacén de arriba si está ahí, o el primero de donde puede salir.
+     */
+    private function origenSugerido(Item $producto): ?int
+    {
+        $ids = array_column($this->origenesDelInfinito($producto), 'id');
+        $elegido = $this->almacenElegido();
+
+        if ($elegido !== null && in_array($elegido, $ids, true)) {
+            return $elegido;
+        }
+
+        return $ids[0] ?? null;
+    }
+
+    /**
+     * Los almacenes vigentes de la sede, en el orden de arriba, como los
+     * pintan los modales.
+     *
+     * @return list<array{id: int, nombre: string, tipo: string, icono: string, sede: int}>
+     */
+    private function tarjetasDeAlmacenes(): array
+    {
+        return array_values($this->almacenesEnOrden()
+            ->filter(fn (Almacen $almacen): bool => $almacen->estaVigente())
+            ->map(fn (Almacen $almacen): array => [
+                'id'     => (int) $almacen->id,
+                'nombre' => $almacen->nombre,
+                'tipo'   => $almacen->tipo->etiqueta(),
+                'icono'  => self::iconoDelTipo($almacen->tipo),
+                'sede'   => (int) $almacen->sede_id,
+            ])
+            ->all());
+    }
+
+    private static function iconoDelTipo(TipoAlmacen $tipo): string
+    {
+        return match ($tipo) {
+            TipoAlmacen::FarmaciaVenta, TipoAlmacen::AlmacenUnico => 'heroicon-o-building-storefront',
+            TipoAlmacen::FarmaciaInterna                          => 'heroicon-o-beaker',
+            TipoAlmacen::StockDeServicio                          => 'heroicon-o-lifebuoy',
+            TipoAlmacen::BodegaCentral                            => 'heroicon-o-archive-box',
+        };
+    }
+
+    /**
+     * Qué hay del infinito en cada almacén donde está: nulo es «de todo»;
+     * una lista, los envases marcados (`UbicadorDeProducto`).
+     *
+     * @return array<int, list<int>|null>
+     */
+    private function lugaresDelInfinito(Item $producto): array
+    {
+        return $this->lugaresPorItem[(int) $producto->id]
+            ??= app(UbicadorDeProducto::class)->lugaresDe($producto);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function dondeEstaElInfinito(Item $producto): array
+    {
+        return array_keys($this->lugaresDelInfinito($producto));
+    }
+
+    /**
+     * Los envases que se venden cerrados, del más grande al más chico.
+     *
+     * @return Collection<int, ItemPresentacion>
+     */
+    private function envasesDelProducto(Item $producto): Collection
+    {
+        return $this->envasesPorItem[(int) $producto->id]
+            ??= app(UbicadorDeProducto::class)->envasesDe($producto);
+    }
+
+    /**
+     * Los envases como los pintan los modales, cada uno con los que trae
+     * adentro: la CAJA X 100 trae el BLISTER X 10.
+     *
+     * @return list<array{id: int, nombre: string, corto: string, trae: list<int>}>
+     */
+    private function tarjetasDeEnvases(Item $producto): array
+    {
+        $envases = $this->envasesDelProducto($producto);
+        $cortos = self::cortosDe($envases);
+        $formas = app(FormasDeCobro::class);
+        $tarjetas = [];
+
+        foreach ($envases as $envase) {
+            $trae = [];
+
+            foreach ($envases as $chico) {
+                if ($chico->id !== $envase->id && in_array($envase->id, $formas->envasesQueLoTraen($chico, $envases), true)) {
+                    $trae[] = (int) $chico->id;
+                }
+            }
+
+            $tarjetas[] = [
+                'id'     => (int) $envase->id,
+                'nombre' => UbicadorDeProducto::comoSeLlama($envase),
+                'corto'  => $cortos[(int) $envase->id] ?? UbicadorDeProducto::comoSeLlama($envase),
+                'trae'   => $trae,
+            ];
+        }
+
+        return $tarjetas;
+    }
+
+    /**
+     * Los envases que hay en cada almacén donde está, contando lo que
+     * traen los marcados.
+     *
+     * @return array<int, list<int>>
+     */
+    private function disponiblesDelInfinito(Item $producto): array
+    {
+        $ubicador = app(UbicadorDeProducto::class);
+        $envases = $this->envasesDelProducto($producto);
+        $disponibles = [];
+
+        foreach ($this->lugaresDelInfinito($producto) as $almacen => $marcados) {
+            $disponibles[$almacen] = $ubicador->disponibles($marcados, $envases);
+        }
+
+        return $disponibles;
+    }
+
+    /**
+     * Lo que «Lugares» trae marcado: cada almacén con sus envases. «De
+     * todo» se muestra con los más grandes marcados —la caja, que trae el
+     * blíster—.
+     *
+     * @return list<array{almacen: int, envases: list<int>}>
+     */
+    private function lugaresParaElFormulario(Item $producto): array
+    {
+        $ubicador = app(UbicadorDeProducto::class);
+        $envases = $this->envasesDelProducto($producto);
+        $lugares = $this->lugaresDelInfinito($producto);
+        $lista = [];
+
+        foreach ($this->almacenesEnOrden() as $almacen) {
+            if (! array_key_exists((int) $almacen->id, $lugares)) {
+                continue;
+            }
+
+            $marcados = $lugares[(int) $almacen->id];
+
+            $lista[] = [
+                'almacen' => (int) $almacen->id,
+                'envases' => $marcados ?? $ubicador->losMasGrandes(null, $envases),
+            ];
+        }
+
+        return $lista;
+    }
+
+    /**
+     * Qué hay en un lugar, TODO dicho: «CAJA, BLISTER, TAB».
+     * Con cajas hay blísteres y tabletas, y se escribe —Mauricio: «si hay
+     * cajas significa que hay blísteres y tabletas, ¿por qué no lo
+     * dice?»—. Sin ningún envase, «SOLO TAB». Nulo si el producto no tiene
+     * envases: ahí no hay nada que decir.
+     *
+     * @param list<int>|null $marcados
+     */
+    private function queHay(Item $producto, ?array $marcados): ?string
+    {
+        $envases = $this->envasesDelProducto($producto);
+
+        if ($envases->isEmpty()) {
+            return null;
+        }
+
+        $cortos = self::cortosDe($envases);
+        $nombres = [];
+
+        foreach (app(UbicadorDeProducto::class)->disponibles($marcados, $envases) as $id) {
+            if (isset($cortos[$id])) {
+                $nombres[] = $cortos[$id];
+            }
+        }
+
+        $unidad = self::codigoDeLaUnidad($producto);
+
+        return $nombres === [] ? 'SOLO '.$unidad : implode(', ', [...$nombres, $unidad]);
+    }
+
+    /**
+     * «TAB», «ML»: la unidad del kardex.
+     */
+    private static function codigoDeLaUnidad(Item $producto): string
+    {
+        $unidad = $producto->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $unidad->codigo : 'UNIDADES';
+    }
+
+    /**
+     * @param array<array-key, mixed> $movimiento origen, destino, qué se llevó y si se llevó todo
+     */
+    private function moverInfinito(Item $producto, array $movimiento): bool
+    {
+        /*
+         * 🔴 Se vuelve a preguntar acá: `visible()` decide qué se dibuja,
+         * no qué se puede llamar. Y el origen tiene que ser uno de donde
+         * esta persona puede sacar.
+         */
+        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
+
+        $origenes = array_column($this->origenesDelInfinito($producto), 'id');
+        $origenId = is_numeric($movimiento['origen'] ?? null) ? (int) $movimiento['origen'] : null;
+        $destinoId = is_numeric($movimiento['destino'] ?? null) ? (int) $movimiento['destino'] : null;
+        $envaseId = is_numeric($movimiento['envase'] ?? null) ? (int) $movimiento['envase'] : null;
+        $todo = filter_var($movimiento['todo'] ?? false, FILTER_VALIDATE_BOOL);
+
+        $origen = $origenId !== null && in_array($origenId, $origenes, true)
+            ? $this->almacenesPorId()->get($origenId)
+            : null;
+
+        $destino = $destinoId === null ? null : $this->almacenesPorId()->get($destinoId);
+
+        if (! $origen instanceof Almacen || ! $destino instanceof Almacen) {
+            return self::faltaElegir('Elija de qué almacén sale y a cuál entra.');
+        }
+
+        if (! $todo && $envaseId === null) {
+            return self::faltaElegir('Elija qué se llevó: un envase, unidades sueltas, o todo.');
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * A DONDE YA HAY DE TODO, NO SE MUEVE (13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: «si es infinito y ya hay de eso en ese lugar, no hay
+         * lógica en moverlo». Si el destino ya tiene todo lo que hay en el
+         * origen, mover no le cambia nada —tampoco «Todo»: eso sería
+         * quitarlo del origen, y para eso está «Lugares»—. El modal ni lo
+         * ofrece; esto es para la llamada armada a mano.
+         */
+        $disponibles = $this->disponiblesDelInfinito($producto);
+
+        if (array_key_exists((int) $destino->id, $disponibles)
+            && array_diff($disponibles[(int) $origen->id] ?? [], $disponibles[(int) $destino->id]) === []) {
+            Notification::make()
+                ->title('No hay nada que mover')
+                ->body("En {$destino->nombre} ya hay todo lo que hay en {$origen->nombre}. Para quitarlo de {$origen->nombre}, use «Lugares».")
+                ->warning()
+                ->send();
+
+            return false;
+        }
+
+        /*
+         * 0 son unidades sueltas. Un envase tiene que ser de los de este
+         * producto; si hay de él en el origen lo mira el servicio.
+         */
+        $envase = null;
+
+        if (! $todo && $envaseId !== 0) {
+            $envase = $this->envasesDelProducto($producto)->firstWhere('id', $envaseId);
+
+            if (! $envase instanceof ItemPresentacion) {
+                return self::faltaElegir('Elija uno de los envases de la lista.');
+            }
+        }
+
+        try {
+            $cambio = app(UbicadorDeProducto::class)->mover($producto, $origen, $destino, quedaEnOrigen: ! $todo, envase: $envase);
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->title('No se pudo mover')
+                ->body($e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        /*
+         * Una parte a donde ya había de eso no cambia nada: se avisa en vez
+         * de fingir que se movió.
+         */
+        if (! $cambio) {
+            Notification::make()
+                ->title('No cambia nada')
+                ->body("En {$destino->nombre} ya había de eso. Si se llevó todo lo de {$origen->nombre}, elija «Todo».")
+                ->warning()
+                ->send();
+
+            return false;
+        }
+
+        $this->olvidarLoLeido();
+
+        $queSeLlevo = $envase instanceof ItemPresentacion
+            ? UbicadorDeProducto::comoSeLlama($envase)
+            : self::codigoDeLaUnidad($producto).' sueltas';
+
+        Notification::make()
+            ->title('Movido')
+            ->body($todo
+                ? "{$producto->nombre} pasó de {$origen->nombre} a {$destino->nombre}."
+                : "En {$destino->nombre} ahora también hay {$producto->nombre} ({$queSeLlevo}).")
+            ->success()
+            ->send();
+
+        return true;
+    }
+
+    private static function faltaElegir(string $que): bool
+    {
+        Notification::make()
+            ->title('Falta elegir')
+            ->body($que)
+            ->warning()
+            ->send();
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function guardarLugares(Item $producto, array $data): bool
+    {
+        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
+
+        $lugares = UbicadorDeProducto::lugaresDelFormulario($data['lugares'] ?? null);
+
+        if ($lugares === []) {
+            Notification::make()
+                ->title('Marque al menos un almacén')
+                ->body('Si no, al cargarlo a una cuenta nadie sabría de dónde sale.')
+                ->danger()
+                ->send();
+
+            return false;
+        }
+
+        try {
+            app(UbicadorDeProducto::class)->dejarConEnvases($producto, $lugares);
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->title('No se guardó')
+                ->body($e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        $this->olvidarLoLeido();
+
+        $donde = [];
+
+        foreach ($this->lugaresDelInfinito($producto) as $almacenId => $marcados) {
+            $almacen = $this->almacenesPorId()->get($almacenId);
+            $que = $this->queHay($producto, $marcados);
+
+            if ($almacen instanceof Almacen) {
+                $donde[] = $almacen->nombre.($que === null ? '' : ' ('.$que.')');
+            }
+        }
+
+        Notification::make()
+            ->title('Guardado')
+            ->body("{$producto->nombre} está en: ".implode(', ', $donde).'.')
             ->success()
             ->send();
 
@@ -1512,103 +1914,17 @@ class Existencias extends Page implements HasTable
     }
 
     /**
-     * Los estantes a los que se puede bajar esto.
-     *
-     * Se excluye el propio origen —un traslado a sí mismo no mueve nada—
-     * y los cerrados. Se quedan los de otra sede fuera por la misma razón
-     * que los rechaza el servicio: el costo es de cada sede.
-     *
-     * @return array<int, string>
+     * Después de mover, las cuentas de arriba y los chips se vuelven a
+     * leer al pintar: se habían leído antes, para encontrar el renglón.
      */
-    private static function destinosPara(Existencia $existencia): array
+    private function olvidarLoLeido(): void
     {
-        $origen = $existencia->almacen;
-
-        if (! $origen instanceof Almacen) {
-            return [];
-        }
-
-        /*
-         * ⚠️ Se relee la sede si no vino. Es el cinturón por si alguna
-         * consulta futura vuelve a cargar el almacén con columnas
-         * enumeradas: sin esto, un `sede_id` nulo filtra a CERO y la
-         * pantalla dice «no hay a dónde mover» en vez de fallar.
-         */
-        $sedeId = $origen->sede_id ?? Almacen::query()
-            ->whereKey($origen->id)
-            ->value('sede_id');
-
-        if ($sedeId === null) {
-            return [];
-        }
-
-        return Almacen::query()
-            ->vigentes()
-            ->where('sede_id', $sedeId)
-            ->whereKeyNot($origen->id)
-            ->orderBy('nombre')
-            ->get()
-            ->mapWithKeys(fn (Almacen $a): array => [$a->id => $a->etiqueta()])
-            ->all();
-    }
-
-    /**
-     * «Y además hay 3 en BODEGA y 1 en CARRITO ROJO 2».
-     *
-     * Es lo que evita el viaje de más: quien va a bajar una ampolla al
-     * carrito ve, sin salir del modal, que el carrito de al lado ya tiene
-     * una — o que el otro lote vence antes y conviene mover ese.
-     */
-    private static function dondeMasHay(Existencia $existencia): string
-    {
-        /**
-         * ⚠️ NO se suma por almacén.
-         *
-         * El mismo jarabe vive en tres envases distintos —60, 80 y 120
-         * ML— y todos miden en mililitros. Sumarlos porque están en el
-         * mismo estante daría «2600 ML en ALMACEN-1», un número que no
-         * corresponde a ningún frasco que alguien pueda agarrar. Cada
-         * renglón se lista como es: cuánto, dónde y en qué envase.
-         *
-         * @var Collection<int, Existencia> $otras
-         */
-        $otras = Existencia::query()
-            /*
-             * 🔴 SIN ENUMERAR COLUMNAS, al revés que la consulta de la
-             * tabla.
-             *
-             * Acá se cargaba `item:id,unidad_dispensacion_id` porque era
-             * lo único que se usaba… hasta que el renglón pasó a mostrar
-             * también el envase, que necesita `item.nombre` para no
-             * repetirlo. El resultado no fue una etiqueta incompleta: fue
-             * un TypeError con la pantalla entera en blanco.
-             *
-             * Son seis filas como mucho. El ahorro de enumerar columnas
-             * acá no paga el riesgo de que la próxima persona que sume un
-             * dato al renglón tumbe el modal sin enterarse.
-             */
-            ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
-            ->where('item_id', $existencia->item_id)
-            ->whereKeyNot($existencia->id)
-            ->conSaldo()
-            ->orderByDesc('cantidad')
-            ->limit(6)
-            ->get();
-
-        if ($otras->isEmpty()) {
-            return 'Es lo único que hay de este producto en todo el hospital.';
-        }
-
-        $donde = $otras
-            ->map(static function (Existencia $fila): string {
-                $envase = self::nombreDelEnvase($fila);
-
-                return self::cuantoHay($fila).' en '.$fila->almacen->nombre
-                    .($envase === null ? '' : ' ('.$envase.')');
-            })
-            ->implode(' · ');
-
-        return 'Además: '.$donde.'.';
+        $this->productosPorAlmacen = null;
+        $this->lugares = null;
+        $this->existenciasCargadas = [];
+        $this->lugaresPorItem = [];
+        $this->envasesPorItem = [];
+        $this->lotesPorItem = [];
     }
 
     // ── Cómo se lee cada renglón ──────────────────────────────────────
@@ -1652,50 +1968,7 @@ class Existencias extends Page implements HasTable
             .' '.(self::unidadDelEnvase($existencia) ?? 'envases');
     }
 
-    // ── Cuánto se mueve, y en qué se cuenta ───────────────────────────
-
-    /**
-     * Cuántas unidades de dispensación son los envases que se tecleó.
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * 🔴 PEDIR EL MÁXIMO MUEVE EL SALDO EXACTO
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * Un lote con 595 ML de frascos de 60 son 9.9167 frascos. Si alguien
-     * escribe ese número para vaciar el estante y se multiplicara sin
-     * más, quedarían 0.002 ML colgando por el redondeo — un saldo que
-     * nadie puede mover ni contar, y que aparece como diferencia en el
-     * conteo físico.
-     *
-     * Por eso, cuando lo pedido llega o pasa el tope, se manda la
-     * cantidad EXACTA que hay. «Todo» significa todo.
-     */
-    private static function aUnidadesDeDispensacion(Existencia $existencia, Decimal $envases): Decimal
-    {
-        $contenido = self::contenidoDelEnvase($existencia);
-
-        if ($contenido === null) {
-            return $envases;
-        }
-
-        /*
-         * ⚠️ Se compara contra el TOPE QUE SE MOSTRÓ, no contra la
-         * división cruda. El tope va redondeado a cuatro decimales, así
-         * que un lote de 5 ML en frascos de 60 se ofrece como «0.0833
-         * FRASCO»: escribir ese número tiene que vaciar el renglón, y
-         * comparando contra 0.083333… no lo vaciaría —quedarían 0.002 ML
-         * colgando, un saldo que nadie puede mover ni contar y que
-         * reaparece como diferencia en el conteo físico.
-         *
-         * Dicho de otro modo: el número que la pantalla ofrece como
-         * máximo SIEMPRE significa «todo».
-         */
-        $tope = Decimal::de(self::topeParaMover($existencia));
-
-        return $envases->menorQue($tope)
-            ? $envases->por($contenido)
-            : $existencia->cantidadDecimal();
-    }
+    // ── En qué envase está cada renglón ───────────────────────────────
 
     /**
      * El contenido de un envase, o nulo cuando el lote entró a granel.
@@ -1720,81 +1993,6 @@ class Existencias extends Page implements HasTable
         }
 
         return (string) $contenido;
-    }
-
-    /**
-     * «Cuántos FRASCO se mueven» — o la unidad del kardex si el lote no
-     * tiene envase declarado.
-     */
-    private static function comoSePideLaCantidad(Existencia $existencia): string
-    {
-        $envase = self::unidadDelEnvase($existencia);
-
-        if ($envase !== null && self::contenidoDelEnvase($existencia) !== null) {
-            return 'Cuántos '.$envase.' se mueven';
-        }
-
-        $unidad = $existencia->item->unidadDispensacion;
-
-        return 'Cuántos '.($unidad instanceof Unidad ? $unidad->codigo : 'unidades').' se mueven';
-    }
-
-    /**
-     * El tope del campo, en la misma unidad en que se pide.
-     */
-    private static function topeParaMover(Existencia $existencia): string
-    {
-        $contenido = self::contenidoDelEnvase($existencia);
-
-        return $contenido === null
-            ? $existencia->cantidadDecimal()->redondeado(4)
-            : $existencia->cantidadDecimal()->entre($contenido)->redondeado(4);
-    }
-
-    /**
-     * El texto de ayuda del campo, con la conversión a la vista.
-     *
-     * 🔴 Mostrar «5 FRASCO = 300.00 ML» ANTES de apretar es lo que evita
-     * el error que ya pasó una vez: teclear 5 pensando en frascos y mover
-     * 5 mililitros. Después ya está asentado en el kardex y se corrige
-     * con otro traslado, no borrando.
-     */
-    private static function cuantoQuedaEnEsteLote(Existencia $existencia, mixed $tecleado = null): string
-    {
-        $hay = 'Hay '.self::cuantoHay($existencia).' en este lote';
-        $envases = self::enCuantosEnvases($existencia);
-        $hay .= $envases === null ? '. ' : ' ('.$envases.'). ';
-
-        $pedido = NumeroDeFormulario::aDecimal($tecleado);
-
-        if (! $pedido instanceof Decimal || $pedido->esCero()) {
-            return $hay.'Lo que se mueve sigue siendo del hospital: no es una baja.';
-        }
-
-        $enUnidades = self::aUnidadesDeDispensacion($existencia, $pedido);
-        $unidad = $existencia->item->unidadDispensacion;
-
-        return $hay.'Se mueven '.self::comoSeCuenta($existencia, $pedido)
-            .' = '.$enUnidades->redondeado(2)
-            .($unidad instanceof Unidad ? ' '.$unidad->codigo : '')
-            .' en el kardex.';
-    }
-
-    /**
-     * «5 FRASCO», «2 CAJA», «300 ML» — lo que se movió, dicho como lo
-     * cuenta quien lo levantó del estante.
-     */
-    private static function comoSeCuenta(Existencia $existencia, Decimal $tecleado): string
-    {
-        $envase = self::unidadDelEnvase($existencia);
-
-        if ($envase !== null && self::contenidoDelEnvase($existencia) !== null) {
-            return ItemPresentacion::sinCerosDeMas($tecleado->redondeado(2)).' '.$envase;
-        }
-
-        $unidad = $existencia->item->unidadDispensacion;
-
-        return $tecleado->redondeado(2).($unidad instanceof Unidad ? ' '.$unidad->codigo : '');
     }
 
     /**

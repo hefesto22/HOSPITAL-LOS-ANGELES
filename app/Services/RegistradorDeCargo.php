@@ -125,16 +125,32 @@ final class RegistradorDeCargo
         }
 
         /*
-         * Stock infinito: sale de un almacén donde ESTÁ (13-oct-2026). La
-         * pantalla solo ofrece esos; esto es para el que llega por otro
+         * Stock infinito: sale de un almacén donde ESTÁ, y el envase sin
+         * abrir, de uno donde HAY de ese envase —la caja, de donde hay
+         * cajas; el blíster, de donde hay blísteres o cajas— (13-oct-2026).
+         * La pantalla solo ofrece esos; esto es para el que llega por otro
          * lado. La línea rehecha queda afuera: sale de donde salió el
          * original, aunque después lo hayan movido.
          */
         if ($linea->almacen instanceof Almacen
             && $linea->item->tieneStockInfinito()
-            && ! $linea->mismoPrecioQue instanceof Cargo
-            && ! $this->ubicaciones->sePuedeSacarDe($linea->item, $linea->almacen)) {
-            throw CargoException::noEstaEnEseAlmacen($linea->item->nombre, $linea->almacen->nombre);
+            && ! $linea->mismoPrecioQue instanceof Cargo) {
+            if (! $this->ubicaciones->sePuedeSacarDe($linea->item, $linea->almacen)) {
+                throw CargoException::noEstaEnEseAlmacen($linea->item->nombre, $linea->almacen->nombre);
+            }
+
+            $envase = $this->envaseDelCargo($linea->item, $linea) instanceof Decimal
+                ? $this->presentacionDelCargo($linea->item, $linea)
+                : null;
+
+            if ($envase instanceof ItemPresentacion
+                && ! $this->ubicaciones->sePuedeSacarDe($linea->item, $linea->almacen, $envase)) {
+                throw CargoException::noHayEseEnvaseEnEseAlmacen(
+                    $linea->item->nombre,
+                    UbicadorDeProducto::comoSeLlama($envase),
+                    $linea->almacen->nombre,
+                );
+            }
         }
 
         /** @var Collection<int, Cargo> $cargos */

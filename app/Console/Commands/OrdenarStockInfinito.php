@@ -65,7 +65,7 @@ class OrdenarStockInfinito extends Command
         if ($sinLugar > 0) {
             $this->warn(
                 "{$sinLugar} quedaron sin almacén porque no hay ninguna farmacia vigente. "
-                .'Anótelos en Existencias → Lugares.'
+                .'Anótelos en Existencias con «Mover».'
             );
         }
 

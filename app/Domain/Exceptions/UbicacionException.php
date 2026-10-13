@@ -30,6 +30,14 @@ final class UbicacionException extends SihlaException
         return new self("Sale de {$almacen} y entra a {$almacen}: elija otro almacén de destino.");
     }
 
+    public static function noHayEseEnvase(string $item, string $envase, string $almacen): self
+    {
+        return new self(
+            "En {$almacen} no hay {$envase} de {$item}: no se puede llevar de ahí lo que no hay. "
+            .'Elija lo que sí hay, o corrija lo que hay en «Lugares».'
+        );
+    }
+
     public static function otraSede(string $almacen): self
     {
         return new self(
