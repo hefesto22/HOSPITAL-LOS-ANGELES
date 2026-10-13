@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Pacientes\Tables;
 
 use App\Domain\Enums\RangoEdad;
+use App\Filament\Resources\Pacientes\PacienteResource;
+use App\Filament\Resources\Pacientes\Pages\ListPacientes;
 use App\Models\Persona;
+use App\Models\PersonaIdentificador;
 use App\Support\NormalizadorDeTexto;
+use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
-use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Enums\FiltersLayout;
@@ -58,10 +60,16 @@ use Illuminate\Database\Eloquent\Builder;
  */
 final class PacientesTable
 {
-    private const BANDEJAS = [
-        'sin_identificar' => 'Pendientes de identificar (NN)',
-        'en_conflicto'    => 'Con documento en conflicto',
-        'sin_expediente'  => 'Sin expediente en ninguna sede',
+    /**
+     * Las bandejas de trabajo. Desde el 12-oct-2026 son PESTAÑAS de
+     * «ListPacientes» y no un desplegable debajo del buscador: son colas
+     * que se ven enteras, y el número de la pestaña dice cuánto falta sin
+     * tener que abrirlas.
+     */
+    public const BANDEJAS = [
+        'sin_identificar' => 'Sin identificar (NN)',
+        'en_conflicto'    => 'Documento en conflicto',
+        'sin_expediente'  => 'Sin expediente',
     ];
 
     public static function configure(Table $table): Table
@@ -83,15 +91,37 @@ final class PacientesTable
              * $query, $record, $state, $data, $livewire, $get, $set.
              */
             ->modifyQueryUsing(function (Builder $query, HasTable $livewire): void {
-                self::aplicarCriterio($query, $livewire->getTableFilterState('paciente') ?? []);
+                // Solo el número: es lo único que la columna muestra.
+                $query->with('expedientes:id,persona_id,numero');
+
+                self::aplicarCriterio(
+                    $query,
+                    self::termino($livewire->getTableFilterState('paciente') ?? []),
+                    self::bandejaDe($livewire),
+                );
             })
+            /*
+             * ─────────────────────────────────────────────────────────
+             * CUATRO COLUMNAS QUE SE LEEN DE UN VISTAZO (12-oct-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * Antes eran seis, y tres decían casi siempre «—»: el rango
+             * de edad, «sin identificar» y «fallecido» como íconos. Ahora
+             * la edad y su rango van debajo de la fecha, y lo que pide
+             * atención —NN, fallecido, documento en conflicto— va en una
+             * sola columna que está vacía cuando todo está en orden.
+             *
+             * El número de expediente en vez de cuántos hay: es lo que
+             * admisión le dicta a enfermería y lo que se busca en archivo.
+             */
             ->columns([
                 TextColumn::make('primer_apellido')
                     ->label('Paciente')
                     ->state(fn (Persona $record): string => $record->nombreParaListado())
-                    ->description(fn (Persona $record): ?string => $record->identificadorVisible())
-                    ->weight('medium')
-                    ->wrap(),
+                    ->description(fn (Persona $record): string => $record->identificadorVisible() ?? 'Sin documento')
+                    ->weight('semibold')
+                    ->wrap()
+                    ->grow(),
 
                 TextColumn::make('fecha_nacimiento')
                     ->label('Nacimiento')
@@ -99,46 +129,27 @@ final class PacientesTable
                     ->placeholder('Sin fecha')
                     ->description(fn (Persona $record): string => self::edad($record)),
 
-                TextColumn::make('rango')
-                    ->label('Rango')
+                TextColumn::make('expedientes.numero')
+                    ->label('Expediente')
+                    ->listWithLineBreaks()
+                    ->limitList(2)
+                    ->expandableLimitedList()
+                    ->placeholder('Sin expediente')
+                    ->fontFamily('mono')
+                    ->size('sm'),
+
+                TextColumn::make('alertas')
+                    ->label('Atención')
                     ->badge()
-                    ->state(fn (Persona $record): ?RangoEdad => $record->rangoDeEdadEn(now()))
-                    /*
-                     * Los cierres aceptan null a propósito: un NN sin fecha
-                     * de nacimiento no tiene rango, y Filament igual evalúa
-                     * el color de la celda vacía.
-                     */
-                    ->placeholder('Sin fecha de nacimiento')
-                    ->formatStateUsing(fn (?RangoEdad $state): string => $state?->etiqueta() ?? '—')
-                    ->color(fn (?RangoEdad $state): string => $state?->color() ?? 'gray'),
-
-                TextColumn::make('expedientes_count')
-                    ->label('Expedientes')
-                    ->badge()
-                    ->color('gray')
-                    ->alignCenter()
-                    ->tooltip('Uno por sede donde se le ha atendido.'),
-
-                IconColumn::make('es_nn')
-                    ->label('Sin identificar')
-                    ->alignCenter()
-                    ->boolean()
-                    ->trueIcon('heroicon-o-question-mark-circle')
-                    ->falseIcon('heroicon-o-minus-small')
-                    ->trueColor('warning')
-                    ->falseColor('gray')
-                    ->tooltip('Pendiente de identificar antes del alta.'),
-
-                IconColumn::make('fecha_defuncion')
-                    ->label('Fallecido')
-                    ->alignCenter()
-                    ->boolean()
-                    ->trueIcon('heroicon-o-exclamation-circle')
-                    ->falseIcon('heroicon-o-minus-small')
-                    ->trueColor('danger')
-                    ->falseColor('gray')
-                    ->getStateUsing(fn (Persona $record): bool => $record->estaFallecida()),
+                    ->state(fn (Persona $record): array => self::alertasDe($record))
+                    ->color(fn (string $state): string => match ($state) {
+                        'Fallecido'              => 'danger',
+                        'Documento en conflicto' => 'danger',
+                        default                  => 'warning',
+                    })
+                    ->placeholder('—'),
             ])
+            ->recordUrl(fn (Persona $record): string => PacienteResource::getUrl('view', ['record' => $record]))
             ->paginated([25, 50])
             ->filters([
                 /*
@@ -148,38 +159,41 @@ final class PacientesTable
                 Filter::make('paciente')
                     ->schema([
                         TextInput::make('termino')
-                            ->label('Buscar paciente')
-                            ->placeholder('Nombre y apellido, o número de documento')
+                            ->hiddenLabel()
+                            ->placeholder('Buscá por nombre y apellido, o por número de documento')
+                            ->prefixIcon('heroicon-o-magnifying-glass')
                             ->autofocus()
                             ->live(debounce: 400)
                             ->columnSpanFull(),
-
-                        Select::make('bandeja')
-                            ->label('O ver una bandeja de trabajo')
-                            ->placeholder('Ninguna — buscar por nombre o documento')
-                            ->native(false)
-                            ->live()
-                            ->options(self::BANDEJAS)
-                            ->columnSpanFull(),
                     ])
-                    ->indicateUsing(function (array $data): ?string {
-                        $partes = array_filter([
-                            self::termino($data) === '' ? null : 'Buscando: '.self::termino($data),
-                            self::BANDEJAS[self::bandeja($data)] ?? null,
-                        ]);
-
-                        return $partes === [] ? null : implode(' · ', $partes);
-                    }),
+                    ->indicateUsing(fn (array $data): ?string => self::termino($data) === ''
+                        ? null
+                        : 'Buscando: '.self::termino($data)),
             ], layout: FiltersLayout::AboveContent)
             ->deferFilters(false)
             ->filtersFormColumns(1)
-            ->emptyStateIcon('heroicon-o-magnifying-glass')
-            ->emptyStateHeading('Buscá al paciente antes de registrarlo')
-            ->emptyStateDescription(
-                'Escribí el nombre o el número de documento, o abrí una bandeja de trabajo. La '
-                .'búsqueda tolera tildes y errores de digitación. Si después de buscar no aparece, '
-                .'ahí sí registralo como nuevo.'
-            )
+            ->emptyStateIcon(fn (HasTable $livewire): string => self::seBusco($livewire)
+                ? 'heroicon-o-user-plus'
+                : 'heroicon-o-magnifying-glass')
+            ->emptyStateHeading(fn (HasTable $livewire): string => self::seBusco($livewire)
+                ? 'No hay nadie con «'.self::terminoDe($livewire).'»'
+                : 'Buscá al paciente antes de registrarlo')
+            ->emptyStateDescription(fn (HasTable $livewire): string => self::seBusco($livewire)
+                ? 'Probá con otro apellido o con el número de documento. Si de verdad no está, registralo: '
+                    .'el formulario ya viene con lo que escribiste.'
+                : 'Por nombre o por documento. Tolera tildes y errores de digitación.')
+            /*
+             * Lo que ya se tecleó en el buscador viaja al formulario: buscar
+             * «juan perez lopez», no encontrarlo y tener que volver a
+             * escribirlo era el paso más lento del registro.
+             */
+            ->emptyStateActions([
+                Action::make('registrarLoBuscado')
+                    ->label(fn (HasTable $livewire): string => 'Registrar a «'.mb_strtoupper(self::terminoDe($livewire)).'»')
+                    ->icon('heroicon-o-user-plus')
+                    ->url(fn (HasTable $livewire): string => PacienteResource::getUrl('create', ['buscado' => self::terminoDe($livewire)]))
+                    ->visible(fn (HasTable $livewire): bool => self::seBusco($livewire) && self::bandejaDe($livewire) === null),
+            ])
             ->recordActions([
                 ViewAction::make()->label('Abrir'),
                 EditAction::make()->label('Editar'),
@@ -192,13 +206,9 @@ final class PacientesTable
      * normal, no un cierre que Filament resuelva por nombre.
      *
      * @param Builder<Persona> $consulta
-     * @param array<string, mixed> $estado
      */
-    private static function aplicarCriterio(Builder $consulta, array $estado): void
+    private static function aplicarCriterio(Builder $consulta, string $termino, ?string $bandeja): void
     {
-        $termino = self::termino($estado);
-        $bandeja = self::bandeja($estado);
-
         /*
          * Sin término Y sin bandeja, cero filas. Ver el encabezado: esto
          * ES el comportamiento, no una falta de datos.
@@ -209,6 +219,23 @@ final class PacientesTable
             return;
         }
 
+        self::aplicarBandeja($consulta, $bandeja);
+
+        if ($termino === '') {
+            return;
+        }
+
+        self::aplicarBusqueda($consulta, $termino);
+    }
+
+    /**
+     * La cola de una bandeja. Pública porque la usa también el número de
+     * cada pestaña en «ListPacientes»: misma condición en los dos lados.
+     *
+     * @param Builder<Persona> $consulta
+     */
+    public static function aplicarBandeja(Builder $consulta, ?string $bandeja): void
+    {
         match ($bandeja) {
             'sin_identificar' => $consulta->where('es_nn', true),
             'en_conflicto'    => $consulta->whereRaw(
@@ -224,11 +251,13 @@ final class PacientesTable
             ),
             default => null,
         };
+    }
 
-        if ($termino === '') {
-            return;
-        }
-
+    /**
+     * @param Builder<Persona> $consulta
+     */
+    private static function aplicarBusqueda(Builder $consulta, string $termino): void
+    {
         $clave = NormalizadorDeTexto::clave($termino);
         $digitos = preg_replace('/\D+/', '', $termino) ?? '';
 
@@ -265,13 +294,47 @@ final class PacientesTable
     }
 
     /**
-     * @param array<string, mixed> $estado
+     * La bandeja de la pestaña abierta, o null en «Buscar».
      */
-    private static function bandeja(array $estado): ?string
+    private static function bandejaDe(HasTable $livewire): ?string
     {
-        $bandeja = $estado['bandeja'] ?? null;
+        $pestana = $livewire instanceof ListPacientes ? $livewire->activeTab : null;
 
-        return is_string($bandeja) && isset(self::BANDEJAS[$bandeja]) ? $bandeja : null;
+        return is_string($pestana) && isset(self::BANDEJAS[$pestana]) ? $pestana : null;
+    }
+
+    private static function terminoDe(HasTable $livewire): string
+    {
+        return self::termino($livewire->getTableFilterState('paciente') ?? []);
+    }
+
+    private static function seBusco(HasTable $livewire): bool
+    {
+        return self::terminoDe($livewire) !== '';
+    }
+
+    /**
+     * Lo que pide atención, y nada cuando todo está en orden.
+     *
+     * @return list<string>
+     */
+    private static function alertasDe(Persona $persona): array
+    {
+        $alertas = [];
+
+        if ($persona->es_nn) {
+            $alertas[] = 'Sin identificar';
+        }
+
+        if ($persona->estaFallecida()) {
+            $alertas[] = 'Fallecido';
+        }
+
+        if ($persona->identificadores->contains(fn (PersonaIdentificador $i): bool => $i->en_conflicto)) {
+            $alertas[] = 'Documento en conflicto';
+        }
+
+        return $alertas;
     }
 
     private static function edad(Persona $persona): string
@@ -283,7 +346,8 @@ final class PacientesTable
         }
 
         $sufijo = $persona->fechaNacimientoEsExacta() ? '' : ' (estimada)';
+        $rango = $persona->rangoDeEdadEn(now());
 
-        return "{$anios} años{$sufijo}";
+        return "{$anios} años{$sufijo}".($rango instanceof RangoEdad ? ' · '.$rango->etiqueta() : '');
     }
 }

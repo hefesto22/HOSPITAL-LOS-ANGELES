@@ -39,7 +39,10 @@
                         @endif
 
                         <span class="sihla-medico-cifras">
-                            <span class="sihla-medico-total">{{ $medico['total'] }}</span>
+                            <span
+                                @class(['sihla-medico-total', 'sihla-medico-total-negativo' => $medico['negativo']])
+                                @if ($medico['negativo']) title="Negativo: en este período se anularon honorarios cobrados antes." @endif
+                            >{{ $medico['total'] }}</span>
                             <span class="sihla-medico-renglones">
                                 {{ $medico['renglones'] }}
                                 {{ \Illuminate\Support\Str::plural('honorario', $medico['renglones']) }}
@@ -140,6 +143,8 @@
             color: rgb(24 24 27);
         }
         .dark .sihla-medico-total { color: rgb(244 244 245); }
+        .sihla-medico-total.sihla-medico-total-negativo { color: rgb(220 38 38); }
+        .dark .sihla-medico-total.sihla-medico-total-negativo { color: rgb(248 113 113); }
 
         .sihla-medico-renglones {
             font-size: .75rem; font-weight: 500;

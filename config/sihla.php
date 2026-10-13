@@ -605,6 +605,22 @@ return [
         'anios_retencion_pasivo' => 15,
 
         /*
+         * ¿Se muestran las fusiones de duplicados?
+         *
+         * Mauricio, 12-oct-2026: no hacen falta. Es un hospital privado:
+         * casi todo paciente llega con DNI o con alguien que lo conoce, y
+         * el registro ahora avisa del DNI repetido al teclearlo, antes de
+         * crear nada. Se apagan la bandeja del menú y el botón «Es un
+         * duplicado» de la ficha.
+         *
+         * Solo se ESCONDE: el modelo, el servicio y las fusiones ya
+         * hechas siguen en la base —`merged_into` lo usan todas las
+         * búsquedas— y el día que una clínica que reciba muchos NN lo
+         * necesite, es poner esto en `true`.
+         */
+        'fusiones_de_duplicados' => false,
+
+        /*
          * El acceso de emergencia (break-the-glass) EXPIRA. No otorga
          * permiso permanente: sirve para ese episodio y se revisa.
          */

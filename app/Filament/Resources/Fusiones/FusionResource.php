@@ -40,6 +40,27 @@ class FusionResource extends Resource
         return 'Fusiones de duplicados';
     }
 
+    /**
+     * Apagada por defecto (`sihla.expediente.fusiones_de_duplicados`):
+     * decisión de Mauricio del 12-oct-2026. Sin esto no aparece en el
+     * menú ni se puede abrir por la URL — y tampoco corre el conteo de
+     * su insignia en cada clic.
+     */
+    public static function canAccess(): bool
+    {
+        return self::estaEncendida() && parent::canAccess();
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return self::estaEncendida() && parent::shouldRegisterNavigation();
+    }
+
+    public static function estaEncendida(): bool
+    {
+        return (bool) config('sihla.expediente.fusiones_de_duplicados', false);
+    }
+
     public static function getBreadcrumb(): string
     {
         return 'Fusiones';

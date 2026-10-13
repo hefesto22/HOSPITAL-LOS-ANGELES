@@ -6,275 +6,232 @@ namespace App\Filament\Resources\Cuentas\Tables;
 
 use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\TipoEncuentro;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Resources\Cuentas\Pages\ListCuentas;
 use App\Models\Cuenta;
+use App\Models\Persona;
+use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Support\Enums\FontFamily;
-use Filament\Tables\Columns\ColumnGroup;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Enums\FiltersLayout;
-use Filament\Tables\Filters\Filter;
+use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
-use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Las cuentas, con las vivas arriba.
+ * Las cuentas, para consultar: de quién es, en qué etapa va y cuánto falta.
  *
  * ─────────────────────────────────────────────────────────────────────
- * QUÉ TIENE QUE CONTESTAR ESTA PANTALLA DE UN VISTAZO
+ * REDISEÑO (12-oct-2026) — «que sea más fácil y entendible»
  * ─────────────────────────────────────────────────────────────────────
  *
- * De quién es la cuenta, cuánto suma, cuánto dejó la familia y cuánto
- * falta. Nueve columnas sueltas de números no contestan eso: por eso la
- * plata va en DOS GRUPOS con encabezado propio.
+ * Antes eran once columnas con un panel de filtros encima: la tabla no
+ * cabía, el nombre del paciente se cortaba en «RAMON ENRIQUE…» y la
+ * columna «Quién paga» se caía por el borde derecho. Ahora:
  *
- *   · «Cómo va» — Total, Abonado, Falta. Se lee de izquierda a derecha
- *     como una resta.
- *   · «Quién paga» — Paciente y Seguro. Es el reparto del total, no
- *     plata distinta.
- *
- * Antes las tres últimas columnas se llamaban «Total», «Paciente» y
- * «Aseguradora», con una columna «Paciente» de NOMBRES tres lugares a la
- * izquierda. Dos cosas distintas con el mismo encabezado en la misma
- * fila; no se entendía qué era cada número, y con razón.
- *
- * ⚠️ Igual que en el catálogo: TODA columna lleva `grow(false)` salvo el
- * nombre del paciente. Filament reparte el ancho sobrante en partes
- * iguales entre las que crecen, y con nueve columnas creciendo el número
- * de cuenta se partía en tres renglones mientras «Aseguradora» se caía
- * por el borde derecho.
+ *   · Las ETAPAS van en pestañas arriba (ver `ListCuentas`): en curso,
+ *     por cobrar, facturadas, anuladas y todas. Reemplazan al interruptor
+ *     «Solo las abiertas» y a los desplegables de estado y de saldo.
+ *   · Siete columnas: paciente, cuenta, pagador, estado, total, abonado
+ *     y falta. El reparto con el seguro va debajo del total, y solo
+ *     cuando hay seguro — en la mitad de las filas era un «—».
+ *   · El estado se dice como lo dice el mostrador: «Facturada» y no
+ *     «Cerrada», «En egreso» y no «Congelada (cutoff de egreso)».
+ *   · Se busca por nombre del paciente, no solo por número de cuenta.
+ *   · En el celular quedan paciente, total y falta; lo demás aparece a
+ *     medida que la pantalla da ancho.
  *
  * ⚠️ El COSTO y el MARGEN no salen acá. §9.L13: son un permiso, no una
  * columna, y se chequean en el Resource, en la tabla, en el export y en
- * el PDF — los cuatro. Mientras `Ver:Costo` no exista como permiso
- * sembrado, la respuesta correcta es no mostrarlos en ningún lado.
+ * el PDF — los cuatro.
  */
 final class CuentasTable
 {
     public static function configure(Table $table): Table
     {
         return $table
-            ->defaultSort('abierta_en', 'desc')
+            /*
+             * Por fecha de apertura aunque no haya columna con ese nombre:
+             * la fecha va debajo del número de cuenta.
+             */
+            ->defaultSort(fn (Builder $query): Builder => $query
+                ->orderByDesc($query->qualifyColumn('abierta_en'))
+                ->orderByDesc($query->qualifyColumn('id')))
             ->paginated([25, 50, 100])
             ->deferLoading()
             ->striped()
             /*
              * ⚠️ El parámetro se llama `$query`. Con cualquier otro
              * nombre Filament entrega un Builder vacío del contenedor y
-             * el `withSum` se pierde EN SILENCIO: la columna «Abonado»
-             * saldría en blanco y «Falta» diría que se debe todo, con la
-             * familia enfrente. Hay una prueba de arquitectura que lo
-             * vigila.
+             * el `withSum` se pierde EN SILENCIO: «Abonado» saldría en
+             * blanco y «Falta» diría que se debe todo, con la familia
+             * enfrente. Hay una prueba de arquitectura que lo vigila.
              */
             ->modifyQueryUsing(function (Builder $query): void {
                 self::conLoAbonado($query);
             })
+            ->searchPlaceholder('Paciente o número de cuenta')
             ->columns([
                 /*
-                 * Los dos identificadores juntos: el de la cuenta arriba
-                 * y el del encuentro abajo. Son la misma pregunta —«¿cuál
-                 * es este papel?»— y el del encuentro le estaba comiendo
-                 * tres renglones a la celda del paciente.
-                 */
-                TextColumn::make('numero')
-                    ->label('Cuenta')
-                    ->fontFamily(FontFamily::Mono)
-                    ->weight('medium')
-                    ->searchable()
-                    ->sortable()
-                    ->copyable()
-                    ->copyMessage('Número de cuenta copiado')
-                    ->grow(false)
-                    ->description(fn (Cuenta $record): string => $record->encuentro->numero),
-
-                /*
-                 * La única que crece, y debajo el porqué de la visita
-                 * —hospitalización, consulta externa, emergencia—, que es
-                 * lo que distingue dos cuentas del mismo paciente.
+                 * La única que crece. El ícono y la línea de abajo dicen
+                 * a qué vino —hospitalización, emergencia, consulta—,
+                 * que es lo que distingue dos cuentas del mismo paciente.
                  */
                 TextColumn::make('encuentro.persona')
                     ->label('Paciente')
                     ->state(fn (Cuenta $record): string => $record->encuentro->persona->nombreCompleto())
                     ->description(fn (Cuenta $record): string => $record->encuentro->tipo->etiqueta())
-                    ->weight('medium')
+                    ->icon(fn (Cuenta $record): string => $record->encuentro->tipo->icono())
+                    ->iconColor(fn (Cuenta $record): string => $record->encuentro->tipo->color())
+                    ->weight('semibold')
                     ->wrap()
-                    ->lineClamp(2)
-                    ->grow(),
-
-                TextColumn::make('abierta_en')
-                    ->label('Abierta')
-                    ->date('d/m/Y')
-                    ->sortable()
-                    ->grow(false)
-                    ->description(fn (Cuenta $record): string => $record->abierta_en->format('H:i')),
+                    ->grow()
+                    ->searchable(query: fn (Builder $query, string $search): Builder => $query
+                        ->where($query->qualifyColumn('numero'), 'ilike', '%'.$search.'%')
+                        ->orWhereHas('encuentro', fn (Builder $encuentro): Builder => $encuentro
+                            ->where($encuentro->qualifyColumn('numero'), 'ilike', '%'.$search.'%')
+                            ->orWhereIn(
+                                $encuentro->qualifyColumn('persona_id'),
+                                Persona::query()->buscarPorNombre($search)->select('id'),
+                            ))),
 
                 /*
-                 * Recortado con globo: «PAN-AMERICAN LIFE INSURANCE
-                 * GROUP» entero hace la columna más ancha que el nombre
-                 * del paciente, y lo que se necesita leer de un vistazo
-                 * es de qué color es la insignia —particular, seguro,
-                 * empresa— no el nombre legal completo.
+                 * El número para copiar y, debajo, cuándo se abrió.
+                 * Ordena por la fecha: el número de cuenta es correlativo
+                 * por sede, la fecha no miente.
+                 */
+                TextColumn::make('numero')
+                    ->label('Cuenta')
+                    ->fontFamily(FontFamily::Mono)
+                    ->color('gray')
+                    ->copyable()
+                    ->copyMessage('Número de cuenta copiado')
+                    ->description(fn (Cuenta $record): string => $record->abierta_en->format('d/m/Y · H:i'))
+                    ->sortable(query: fn (Builder $query, string $direction): Builder => $query
+                        ->orderBy($query->qualifyColumn('abierta_en'), $direction === 'desc' ? 'desc' : 'asc'))
+                    ->grow(false)
+                    ->visibleFrom('md'),
+
+                /*
+                 * Recortado con globo: lo que se lee de un vistazo es el
+                 * color —contado, seguro, institución—, no el nombre
+                 * legal completo de la aseguradora.
+                 *
+                 * Sin `sortable()`: ordenar por una relación hace un JOIN
+                 * con `convenios`, y ahí `estado` y `nombre` dejan de ser
+                 * nombres únicos.
                  */
                 TextColumn::make('convenio.nombre')
                     ->label('Pagador')
                     ->badge()
-                    ->limit(22)
+                    ->limit(24)
                     ->color(fn (Cuenta $record): string => $record->convenio->tipo->color())
                     ->tooltip(fn (Cuenta $record): string => $record->convenio->nombre)
-                    ->sortable()
-                    ->grow(false),
+                    ->grow(false)
+                    ->visibleFrom('lg'),
 
                 TextColumn::make('estado')
                     ->label('Estado')
                     ->badge()
-                    ->formatStateUsing(fn (EstadoCuenta $state): string => $state->etiqueta())
+                    ->formatStateUsing(fn (EstadoCuenta $state): string => self::estadoEnPalabras($state))
+                    ->icon(fn (EstadoCuenta $state): string => self::iconoDelEstado($state))
                     ->color(fn (EstadoCuenta $state): string => $state->color())
-                    ->grow(false),
+                    ->tooltip(fn (EstadoCuenta $state): string => self::queQuiereDecir($state))
+                    ->grow(false)
+                    ->visibleFrom('sm'),
 
-                TextColumn::make('lineas')
-                    ->label('Ítems')
+                /*
+                 * Con seguro, debajo va la parte del seguro: el total es
+                 * lo que se le dice al cliente (ADR-0008) y el reparto lo
+                 * arreglan después. Sin seguro no hay línea de abajo.
+                 */
+                TextColumn::make('total')
+                    ->label('Total')
                     ->alignEnd()
                     ->sortable()
+                    ->weight('bold')
+                    ->state(fn (Cuenta $record): string => $record->saldo()->formateado())
+                    ->description(fn (Cuenta $record): ?string => self::loDelSeguro($record))
+                    ->grow(false),
+
+                /*
+                 * Sale del `withSum` de arriba y no de `Cuenta::abonado()`:
+                 * el método consulta por cuenta, y en una lista de
+                 * cincuenta filas eso son cincuenta consultas (§13.2).
+                 */
+                TextColumn::make('abonos_aplicados')
+                    ->label('Abonado')
+                    ->alignEnd()
+                    ->color('success')
+                    ->placeholder('—')
+                    ->tooltip('Lo que ya se dejó en caja. Los recibos anulados no cuentan.')
+                    ->state(fn (Cuenta $record): ?string => self::abonadoFormateado($record))
                     ->grow(false)
-                    ->tooltip('Cuántos renglones tiene cargados.')
-                    ->toggleable(),
+                    ->visibleFrom('md'),
 
                 /*
-                 * La resta, en orden de lectura: cuánto suma, cuánto
-                 * dejaron, cuánto falta.
+                 * En insignia: es el número por el que se abre esta
+                 * pantalla. Ámbar = se debe, verde = saldada, celeste =
+                 * pagaron de más (plata a devolver en el egreso).
                  */
-                ColumnGroup::make('Cómo va', [
-                    TextColumn::make('total')
-                        ->label('Total')
-                        ->alignEnd()
-                        ->sortable()
-                        ->weight('bold')
-                        ->grow(false)
-                        ->state(fn (Cuenta $record): string => $record->saldo()->formateado()),
-
-                    /*
-                     * Sale del `withSum` de arriba y no de
-                     * `Cuenta::abonado()`: el método consulta por cuenta,
-                     * y en una lista de cincuenta filas eso son cincuenta
-                     * consultas que nadie ve.
-                     */
-                    TextColumn::make('abonos_aplicados')
-                        ->label('Abonado')
-                        ->alignEnd()
-                        ->color('success')
-                        ->placeholder('—')
-                        ->grow(false)
-                        ->tooltip('Suma de los abonos aplicados. Los anulados no cuentan.')
-                        ->state(fn (Cuenta $record): ?string => self::abonadoFormateado($record)),
-
-                    /*
-                     * En insignia y no en texto plano: es el número por
-                     * el que se abre esta pantalla. Verde = saldada, y
-                     * celeste = pagaron de más, que es plata a devolver
-                     * en el egreso, no un error.
-                     */
-                    TextColumn::make('falta')
-                        ->label('Falta')
-                        ->badge()
-                        ->alignEnd()
-                        ->grow(false)
-                        ->tooltip('Total menos lo abonado. Es lo que se cobra en ventanilla.')
-                        ->state(fn (Cuenta $record): string => self::comoQuedaLaCuenta($record))
-                        ->color(fn (Cuenta $record): string => self::colorDeLoQueFalta($record)),
-                ])->alignEnd(),
+                TextColumn::make('falta')
+                    ->label('Falta')
+                    ->badge()
+                    ->alignEnd()
+                    ->placeholder('—')
+                    ->tooltip('Total menos lo abonado.')
+                    ->state(fn (Cuenta $record): ?string => self::comoQuedaLaCuenta($record))
+                    ->color(fn (Cuenta $record): string => self::colorDeLoQueFalta($record))
+                    ->grow(false),
 
                 /*
-                 * El reparto del mismo total, no plata aparte. Sin
-                 * aseguradora la segunda columna sale con raya y no con
-                 * «L. 0.00», que es ruido en la mitad de las filas.
+                 * Para auditoría, escondidas: se prenden desde el botón
+                 * de columnas.
                  */
-                ColumnGroup::make('Quién paga', [
-                    TextColumn::make('total_paciente')
-                        ->label('Paciente')
-                        ->alignEnd()
-                        ->grow(false)
-                        ->toggleable()
-                        ->state(fn (Cuenta $record): string => $record->saldoDelPaciente()->formateado()),
+                TextColumn::make('encuentro.numero')
+                    ->label('Encuentro')
+                    ->fontFamily(FontFamily::Mono)
+                    ->color('gray')
+                    ->grow(false)
+                    ->toggleable(isToggledHiddenByDefault: true),
 
-                    TextColumn::make('total_aseguradora')
-                        ->label('Seguro')
-                        ->alignEnd()
-                        ->placeholder('—')
-                        ->grow(false)
-                        ->toggleable()
-                        ->state(fn (Cuenta $record): ?string => $record->saldoDeLaAseguradora()->esCero()
-                            ? null
-                            : $record->saldoDeLaAseguradora()->formateado()),
-                ])->alignEnd(),
+                TextColumn::make('lineas')
+                    ->label('Renglones')
+                    ->alignEnd()
+                    ->grow(false)
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
+            /*
+             * Filtros chicos, en el botón de al lado del buscador y
+             * aplicados al elegir: las etapas ya están en las pestañas.
+             */
             ->filters([
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * EL INTERRUPTOR VA PRIMERO Y A LA VISTA
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * «¿Qué hay abierto ahora mismo?» es la pregunta con la
-                 * que se entra a esta pantalla la mitad de las veces, y
-                 * estaba escondida adentro de un desplegable de estados
-                 * junto a «anulada» y «congelada». Un interruptor
-                 * arriba, prendido de un clic.
-                 *
-                 * Arranca APAGADO: esta pantalla es el histórico
-                 * completo —lo dice su propio subtítulo— y la de atender
-                 * es «Cuentas abiertas», que ya solo muestra las vivas.
-                 *
-                 * ⚠️ Incluye las CONGELADAS. Una cuenta congelada sigue
-                 * viva —admite cargos tardíos y todavía se factura—; en
-                 * el mostrador «abierta» quiere decir «todavía no se
-                 * cerró», no el valor exacto de la columna.
-                 *
-                 * ⚠️ El parámetro se llama `$query`. Con otro nombre
-                 * Filament entrega un Builder vacío del contenedor y el
-                 * filtro deja de filtrar EN SILENCIO. Hay una prueba de
-                 * arquitectura que lo vigila.
-                 */
-                Filter::make('solo_abiertas')
-                    ->label('Solo las abiertas')
-                    ->toggle()
-                    ->query(function (Builder $query): void {
-                        self::soloAbiertas($query);
-                    }),
-
-                SelectFilter::make('estado')
-                    ->label('Estado')
-                    ->options(fn (): array => collect(EstadoCuenta::cases())
-                        ->mapWithKeys(fn (EstadoCuenta $e): array => [$e->value => $e->etiqueta()])
-                        ->all()),
-
                 SelectFilter::make('convenio_id')
                     ->label('Pagador')
                     ->relationship('convenio', 'nombre')
                     ->searchable()
                     ->preload(),
 
-                /*
-                 * «¿A quién hay que cobrarle?» — la pregunta con la que
-                 * se abre esta pantalla la mitad de las veces.
-                 *
-                 * ⚠️ `$query` otra vez, por lo mismo de arriba.
-                 */
-                TernaryFilter::make('con_saldo')
-                    ->label('Saldo')
-                    ->placeholder('Todas')
-                    ->trueLabel('Solo las que deben')
-                    ->falseLabel('Solo las saldadas')
-                    ->queries(
-                        true: function (Builder $query): void {
-                            self::soloConSaldo($query);
-                        },
-                        false: function (Builder $query): void {
-                            self::soloSaldadas($query);
-                        },
-                    ),
-            ], layout: FiltersLayout::AboveContent)
+                SelectFilter::make('tipo')
+                    ->label('A qué vino')
+                    ->options(fn (): array => collect(TipoEncuentro::cases())
+                        ->mapWithKeys(fn (TipoEncuentro $tipo): array => [$tipo->value => $tipo->etiqueta()])
+                        ->all())
+                    /*
+                     * ⚠️ `$query` otra vez, por lo mismo de arriba.
+                     */
+                    ->query(function (Builder $query, array $data): void {
+                        self::soloDelTipo($query, $data['value'] ?? null);
+                    }),
+            ])
+            ->deferFilters(false)
+            ->filtersTriggerAction(fn (Action $action): Action => $action->button()->label('Filtros'))
+            ->emptyStateIcon('heroicon-o-banknotes')
+            ->emptyStateHeading(fn (HasTable $livewire): string => self::vacioDe($livewire))
+            ->emptyStateDescription('Si buscaste algo, probá con el apellido o con el número de cuenta.')
             ->recordActions([
                 ViewAction::make()->label('Ver'),
             ])
@@ -284,6 +241,56 @@ final class CuentasTable
              */
             ->toolbarActions([]);
     }
+
+    // ── Las etapas (las usan las pestañas de `ListCuentas`) ───────────
+
+    /**
+     * Lo que todavía no se facturó: abiertas y en egreso.
+     *
+     * ⚠️ Incluye las CONGELADAS: siguen vivas —admiten cargos tardíos y
+     * todavía se facturan—. En el mostrador «en curso» quiere decir
+     * «todavía no se cerró».
+     *
+     * @param Builder<Cuenta> $consulta
+     *
+     * @return Builder<Cuenta>
+     */
+    public static function soloEnCurso(Builder $consulta): Builder
+    {
+        return $consulta->whereIn($consulta->qualifyColumn('estado'), EstadoCuenta::valoresVivos());
+    }
+
+    /**
+     * Las que deben plata: el total es más que lo abonado. Abiertas o ya
+     * facturadas —lo del seguro queda debiéndose después de facturar—;
+     * las anuladas no cuentan.
+     *
+     * @param Builder<Cuenta> $consulta
+     *
+     * @return Builder<Cuenta>
+     */
+    public static function soloPorCobrar(Builder $consulta): Builder
+    {
+        return $consulta
+            ->where($consulta->qualifyColumn('estado'), '<>', EstadoCuenta::Anulada->value)
+            ->whereRaw(
+                'cuentas.total > coalesce((select sum(a.total) from abonos a '
+                .'where a.cuenta_id = cuentas.id and a.estado = ?), 0)',
+                [EstadoAbono::Aplicado->value],
+            );
+    }
+
+    /**
+     * @param Builder<Cuenta> $consulta
+     *
+     * @return Builder<Cuenta>
+     */
+    public static function soloEnEstado(Builder $consulta, EstadoCuenta $estado): Builder
+    {
+        return $consulta->where($consulta->qualifyColumn('estado'), $estado->value);
+    }
+
+    // ── Consultas de la tabla ─────────────────────────────────────────
 
     /**
      * La suma de los abonos vivos, en la misma consulta de la lista.
@@ -304,49 +311,69 @@ final class CuentasTable
     }
 
     /**
-     * Lo que todavía no se cerró: abiertas y congeladas.
-     *
      * @param Builder<Cuenta> $consulta
      */
-    private static function soloAbiertas(Builder $consulta): void
+    private static function soloDelTipo(Builder $consulta, mixed $tipo): void
     {
-        $consulta->whereIn('estado', [
-            EstadoCuenta::Abierta->value,
-            EstadoCuenta::Congelada->value,
-        ]);
+        if (! is_string($tipo) || TipoEncuentro::tryFrom($tipo) === null) {
+            return;
+        }
+
+        $consulta->whereHas('encuentro', static function (Builder $encuentro) use ($tipo): void {
+            $encuentro->where($encuentro->qualifyColumn('tipo'), $tipo);
+        });
     }
 
-    /**
-     * @param Builder<Cuenta> $consulta
-     */
-    private static function soloConSaldo(Builder $consulta): void
-    {
-        $consulta->whereRaw(
-            'cuentas.total > coalesce((select sum(a.total) from abonos a '
-            .'where a.cuenta_id = cuentas.id and a.estado = ?), 0)',
-            [EstadoAbono::Aplicado->value],
-        );
-    }
+    // ── Cómo se dice cada cosa ────────────────────────────────────────
 
     /**
-     * @param Builder<Cuenta> $consulta
+     * El estado como lo dice el mostrador. `Cerrada` solo la pone el
+     * emisor al facturar, y anular la factura devuelve la cuenta a
+     * `Abierta`: «Facturada» es exacto.
      */
-    private static function soloSaldadas(Builder $consulta): void
+    private static function estadoEnPalabras(EstadoCuenta $estado): string
     {
-        $consulta->whereRaw(
-            'cuentas.total <= coalesce((select sum(a.total) from abonos a '
-            .'where a.cuenta_id = cuentas.id and a.estado = ?), 0)',
-            [EstadoAbono::Aplicado->value],
-        );
+        return match ($estado) {
+            EstadoCuenta::Abierta   => 'Abierta',
+            EstadoCuenta::Congelada => 'En egreso',
+            EstadoCuenta::Cerrada   => 'Facturada',
+            EstadoCuenta::Anulada   => 'Anulada',
+        };
+    }
+
+    private static function iconoDelEstado(EstadoCuenta $estado): string
+    {
+        return match ($estado) {
+            EstadoCuenta::Abierta   => 'heroicon-m-lock-open',
+            EstadoCuenta::Congelada => 'heroicon-m-pause-circle',
+            EstadoCuenta::Cerrada   => 'heroicon-m-check-circle',
+            EstadoCuenta::Anulada   => 'heroicon-m-x-circle',
+        };
+    }
+
+    private static function queQuiereDecir(EstadoCuenta $estado): string
+    {
+        return match ($estado) {
+            EstadoCuenta::Abierta   => 'Sigue recibiendo cargos.',
+            EstadoCuenta::Congelada => 'Ya tiene alta: solo entran los cargos que faltaban, antes de facturar.',
+            EstadoCuenta::Cerrada   => 'Ya se facturó. No admite cargos nuevos.',
+            EstadoCuenta::Anulada   => 'Se anuló. No se cobra.',
+        };
+    }
+
+    private static function loDelSeguro(Cuenta $cuenta): ?string
+    {
+        $seguro = $cuenta->saldoDeLaAseguradora();
+
+        return $seguro->esCero() ? null : 'Seguro paga '.$seguro->formateado();
     }
 
     /**
      * Lo abonado, leído del agregado que puso `conLoAbonado()`.
      *
      * ⚠️ Se lee con `getAttribute()` y no como propiedad: `abonado` es
-     * un MÉTODO del modelo, y el alias del agregado no tiene por qué
-     * chocar con él. Si el agregado no está —porque alguien reusó esta
-     * tabla sin el `modifyQueryUsing`— devuelve cero.
+     * un MÉTODO del modelo. Si el agregado no está —porque alguien reusó
+     * esta tabla sin el `modifyQueryUsing`— devuelve cero.
      */
     private static function abonadoDe(Cuenta $cuenta): Decimal
     {
@@ -364,12 +391,27 @@ final class CuentasTable
     }
 
     /**
-     * Lo que falta, en una frase: el número, «Saldada», o la plata que
-     * hay que devolver.
+     * Lo que falta, en una frase: el número, «Saldada», «Sin cargos» o la
+     * plata que hay que devolver. La anulada no debe nada: raya.
+     *
+     * «Sin cargos» y no «Saldada» para la cuenta recién abierta: decir
+     * que está pagada una cuenta a la que todavía no se le cargó nada
+     * confunde a quien la lee.
      */
-    private static function comoQuedaLaCuenta(Cuenta $cuenta): string
+    private static function comoQuedaLaCuenta(Cuenta $cuenta): ?string
     {
-        $falta = Decimal::de($cuenta->total)->restar(self::abonadoDe($cuenta));
+        if ($cuenta->estado === EstadoCuenta::Anulada) {
+            return null;
+        }
+
+        $total = Decimal::de($cuenta->total);
+        $abonado = self::abonadoDe($cuenta);
+
+        if ($total->esCero() && $abonado->esCero()) {
+            return 'Sin cargos';
+        }
+
+        $falta = $total->restar($abonado);
 
         if ($falta->esCero()) {
             return 'Saldada';
@@ -384,12 +426,32 @@ final class CuentasTable
 
     private static function colorDeLoQueFalta(Cuenta $cuenta): string
     {
-        $falta = Decimal::de($cuenta->total)->restar(self::abonadoDe($cuenta));
+        $total = Decimal::de($cuenta->total);
+        $abonado = self::abonadoDe($cuenta);
+
+        if ($cuenta->estado === EstadoCuenta::Anulada || ($total->esCero() && $abonado->esCero())) {
+            return 'gray';
+        }
+
+        $falta = $total->restar($abonado);
 
         if ($falta->esCero()) {
             return 'success';
         }
 
         return $falta->esNegativo() ? 'info' : 'warning';
+    }
+
+    private static function vacioDe(HasTable $livewire): string
+    {
+        $pestana = $livewire instanceof ListCuentas ? $livewire->activeTab : null;
+
+        return match ($pestana) {
+            'en_curso'   => 'No hay cuentas en curso',
+            'por_cobrar' => 'Nadie debe nada',
+            'facturadas' => 'Todavía no hay cuentas facturadas',
+            'anuladas'   => 'No hay cuentas anuladas',
+            default      => 'No hay cuentas',
+        };
     }
 }

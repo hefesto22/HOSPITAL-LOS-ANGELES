@@ -90,8 +90,7 @@ class PacienteResource extends Resource
 
         return $consulta
             ->whereNull('merged_into')
-            ->with('identificadores')
-            ->withCount('expedientes');
+            ->with('identificadores');
     }
 
     public static function form(Schema $schema): Schema

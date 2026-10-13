@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Cargo;
 use App\Models\Convenio;
@@ -141,7 +142,7 @@ class HonorariosPorMedico extends Page implements HasTable
      * Cada tarjeta es además un filtro: apretarla deja la tabla en ese
      * médico.
      *
-     * @return array<int, array{id: int, nombre: string, especialidad: string, renglones: int, total: string, activo: bool}>
+     * @return array<int, array{id: int, nombre: string, especialidad: string, renglones: int, total: string, negativo: bool, activo: bool}>
      */
     public function medicos(): array
     {
@@ -177,7 +178,8 @@ class HonorariosPorMedico extends Page implements HasTable
                         ? $medico->especialidad->nombre
                         : '',
                     'renglones' => (int) ($fila->cuantos ?? 0),
-                    'total'     => self::comoMonto($fila->importe ?? null)->formateado(),
+                    'total'     => self::conSigno($fila->importe ?? null),
+                    'negativo'  => self::comoDecimal($fila->importe ?? null)->esNegativo(),
                     'activo'    => $elegido === (int) $medico->getKey(),
                 ];
             })
@@ -205,7 +207,7 @@ class HonorariosPorMedico extends Page implements HasTable
      */
     public function totalDelPeriodo(): string
     {
-        return self::comoMonto($this->cargosDelPeriodo()->sum('total'))->formateado();
+        return self::conSigno($this->cargosDelPeriodo()->sum('total'));
     }
 
     /**
@@ -309,7 +311,7 @@ class HonorariosPorMedico extends Page implements HasTable
                     ->summarize(
                         Sum::make()
                             ->label('Total')
-                            ->formatStateUsing(fn (mixed $state): string => self::comoMonto($state)->formateado())
+                            ->formatStateUsing(fn (mixed $state): string => self::conSigno($state))
                     ),
             ])
             ->filtersLayout(FiltersLayout::AboveContent)
@@ -437,23 +439,51 @@ class HonorariosPorMedico extends Page implements HasTable
     }
 
     /**
-     * `sum()` devuelve lo que le da el driver —int, float o string— y
-     * ninguna de las tres se le puede pasar directo a `Monto`.
+     * Una suma de honorarios lista para mostrar, CON SIGNO.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 PUEDE DAR NEGATIVA, Y ESTÁ BIEN (12-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Anular en octubre un honorario cobrado en septiembre deja el
+     * original en septiembre y la reversa en octubre: `AnuladorDeCargo`
+     * le pone a la reversa la fecha del día. El neto de octubre de ese
+     * médico es negativo, y es lo correcto — en septiembre se le contó
+     * algo que después se devolvió.
+     *
+     * `Monto` no admite negativos —el signo lo pone el tipo de
+     * movimiento— y la pantalla reventaba con un 500. Se formatea el
+     * valor absoluto y el signo va adelante, igual que en la línea de
+     * la cuenta (`Cargo::totalParaMostrar()`).
      */
-    private static function comoMonto(mixed $suma): Monto
+    private static function conSigno(mixed $suma): string
     {
-        if (is_string($suma) && $suma !== '') {
-            return Monto::de($suma);
+        $valor = self::comoDecimal($suma);
+
+        if ($valor->esNegativo()) {
+            return '− '.Monto::de(Decimal::cero()->restar($valor)->redondeado(2))->formateado();
+        }
+
+        return Monto::de($valor->redondeado(2))->formateado();
+    }
+
+    /**
+     * `sum()` devuelve lo que le da el driver —int, float o string—.
+     */
+    private static function comoDecimal(mixed $suma): Decimal
+    {
+        if (is_string($suma) && is_numeric($suma)) {
+            return Decimal::de($suma);
         }
 
         if (is_int($suma)) {
-            return Monto::de((string) $suma);
+            return Decimal::de($suma);
         }
 
         if (is_float($suma)) {
-            return Monto::de(number_format($suma, 2, '.', ''));
+            return Decimal::deFloat($suma);
         }
 
-        return Monto::de('0');
+        return Decimal::cero();
     }
 }

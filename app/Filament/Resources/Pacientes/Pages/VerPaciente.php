@@ -11,6 +11,7 @@ use App\Domain\Exceptions\PosibleDuplicadoException;
 use App\Domain\Exceptions\ValueObjectInvalidoException;
 use App\Domain\ValueObjects\Coincidencia;
 use App\Domain\ValueObjects\DocumentoDeIdentidad;
+use App\Filament\Resources\Fusiones\FusionResource;
 use App\Filament\Resources\Pacientes\PacienteResource;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Persona;
@@ -220,7 +221,8 @@ class VerPaciente extends ViewRecord
             ->label('Es un duplicado')
             ->icon('heroicon-o-arrows-pointing-in')
             ->color('gray')
-            ->visible(fn (): bool => $this->getRecord() instanceof Persona
+            ->visible(fn (): bool => FusionResource::estaEncendida()
+                && $this->getRecord() instanceof Persona
                 && ! $this->getRecord()->estaFusionada())
             ->modalHeading('Proponer que este paciente es un duplicado')
             ->modalDescription(

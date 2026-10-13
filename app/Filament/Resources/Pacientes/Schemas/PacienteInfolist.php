@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Pacientes\Schemas;
 
+use App\Domain\Enums\EstadoFactura;
 use App\Domain\Enums\RangoEdad;
 use App\Models\Expediente;
+use App\Models\Factura;
 use App\Models\Persona;
 use App\Models\PersonaIdentificador;
 use App\Models\PersonaVersion;
+use App\Support\AtencionesDelPaciente;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 
 /**
@@ -151,33 +155,54 @@ final class PacienteInfolist
             ]);
     }
 
+    /**
+     * El expediente: las carpetas y las atenciones cerradas, cada una con
+     * la descripción automática de a qué vino y qué se le hizo.
+     *
+     * Rediseño del 12-oct-2026 (Mauricio: «que se vaya guardando cada que
+     * se le da el alta»). La atención entra cuando se factura su cuenta y
+     * sale si la factura se anula — ver `AtencionesDelPaciente`.
+     */
     private static function expedientes(): Tab
     {
-        return Tab::make('Expedientes')
+        return Tab::make('Expediente')
             ->icon('heroicon-o-folder-open')
+            ->badge(fn (Persona $record): ?int => self::cuantasAtenciones($record))
             ->schema([
-                TextEntry::make('expedientes')
-                    ->label('Carpetas abiertas')
-                    ->listWithLineBreaks()
-                    ->bulleted()
-                    ->placeholder('Todavía no se le ha abierto expediente en ninguna sede.')
-                    ->state(fn (Persona $record): array => $record->expedientes()
-                        ->deTodasLasSedes()
-                        ->with('sede:id,codigo,nombre')
-                        ->get()
-                        ->map(fn (Expediente $e): string => sprintf(
-                            '%s — %s (%s)',
-                            $e->numero,
-                            $e->sede->nombre ?? 'Sede desconocida',
-                            $e->estado->etiqueta(),
-                        ))
-                        ->all())
-                    ->helperText(
-                        'Se muestran los de todas las sedes: la historia clínica se arma por persona. '
-                        .'Cada sede conserva su carpeta legal porque SESAL habilita por establecimiento.'
-                    )
+                View::make('filament.pacientes.atenciones')
+                    ->viewData(fn (Persona $record): array => [
+                        'atenciones' => app(AtencionesDelPaciente::class)->de($record),
+                        'carpetas'   => $record->expedientes()
+                            ->deTodasLasSedes()
+                            ->with('sede:id,codigo,nombre')
+                            ->get()
+                            ->map(fn (Expediente $e): array => [
+                                'numero' => $e->numero,
+                                'sede'   => $e->sede->nombre ?? 'Sede desconocida',
+                                'estado' => $e->estado->etiqueta(),
+                            ])
+                            ->values()
+                            ->all(),
+                    ])
                     ->columnSpanFull(),
             ]);
+    }
+
+    /**
+     * El número de la pestaña: cuántas facturas vigentes tiene. Una sola
+     * consulta de conteo, no el armado entero.
+     */
+    private static function cuantasAtenciones(Persona $persona): ?int
+    {
+        $cuantas = Factura::query()
+            ->deTodasLasSedes()
+            ->where('persona_id', $persona->id)
+            ->where('estado', EstadoFactura::Emitida->value)
+            ->whereNotNull('encuentro_id')
+            ->distinct()
+            ->count('encuentro_id');
+
+        return $cuantas > 0 ? $cuantas : null;
     }
 
     private static function historial(): Tab

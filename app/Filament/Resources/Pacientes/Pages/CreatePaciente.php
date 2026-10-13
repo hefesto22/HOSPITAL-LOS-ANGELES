@@ -69,6 +69,61 @@ class CreatePaciente extends CreateRecord
     }
 
     /**
+     * Lo que admisión ya tecleó en el buscador viene puesto.
+     *
+     * El listado manda `?buscado=…` cuando la búsqueda no encontró a
+     * nadie («Registrar a "JUAN PÉREZ LÓPEZ"»). Si son solo números es un
+     * documento; si son palabras, se reparten en nombres y apellidos de
+     * la forma más común —dos palabras: nombre y apellido; tres: nombre y
+     * dos apellidos; cuatro o más: dos nombres y dos apellidos—. Es una
+     * propuesta: queda a la vista y se corrige si no era así.
+     *
+     * Solo en la primera carga: «Registrar y seguir con otro» vuelve a
+     * llenar el formulario dentro de una petición de Livewire, que no trae
+     * ese parámetro, y arranca limpio como corresponde.
+     */
+    protected function fillForm(): void
+    {
+        parent::fillForm();
+
+        $this->data = array_merge($this->data ?? [], self::loQueSeBusco(request()->query('buscado')));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function loQueSeBusco(mixed $buscado): array
+    {
+        if (! is_string($buscado)) {
+            return [];
+        }
+
+        $buscado = trim(preg_replace('/\s+/u', ' ', $buscado) ?? '');
+
+        if ($buscado === '' || mb_strlen($buscado) > 120) {
+            return [];
+        }
+
+        if (preg_match('/^[\d\s-]+$/', $buscado) === 1) {
+            return ['documento_valor' => preg_replace('/\D+/', '', $buscado) ?? ''];
+        }
+
+        $palabras = explode(' ', mb_strtoupper($buscado));
+
+        return match (count($palabras)) {
+            1       => ['primer_nombre' => $palabras[0]],
+            2       => ['primer_nombre' => $palabras[0], 'primer_apellido' => $palabras[1]],
+            3       => ['primer_nombre' => $palabras[0], 'primer_apellido' => $palabras[1], 'segundo_apellido' => $palabras[2]],
+            default => [
+                'primer_nombre'    => $palabras[0],
+                'segundo_nombre'   => $palabras[1],
+                'primer_apellido'  => $palabras[2],
+                'segundo_apellido' => implode(' ', array_slice($palabras, 3)),
+            ],
+        };
+    }
+
+    /**
      * @param array<string, mixed> $data
      */
     protected function handleRecordCreation(array $data): Model
