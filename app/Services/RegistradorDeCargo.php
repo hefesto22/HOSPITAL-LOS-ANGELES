@@ -117,7 +117,9 @@ final class RegistradorDeCargo
 
         $ocurridoEn = $linea->ocurridoEn ?? now();
 
-        if ($linea->item->mueveInventario() && ! $linea->almacen instanceof Almacen) {
+        if ($linea->item->mueveInventario()
+            && ! $linea->almacen instanceof Almacen
+            && ! $this->seCargaSinInventario($linea)) {
             throw CargoException::necesitaAlmacen($linea->item->nombre);
         }
 
@@ -200,6 +202,7 @@ final class RegistradorDeCargo
                     conDescuento: $indice === 0,
                     ocurridoEn: $ocurridoEn,
                     envases: $envasesPorFila[$indice] ?? null,
+                    sinExistencia: $reparto['sinExistencia'] ?? false,
                 ));
 
                 /*
@@ -239,6 +242,10 @@ final class RegistradorDeCargo
     /**
      * Asienta UNA fila: la de un lote, o la única si el ítem no mueve
      * inventario.
+     *
+     * `$sinExistencia`: la parte de un producto con stock infinito que no
+     * alcanzó en el estante. Se cobra igual, pero no mueve el kardex: no
+     * hay de dónde sacarla.
      */
     private function asentar(
         Cuenta $cuenta,
@@ -249,6 +256,7 @@ final class RegistradorDeCargo
         bool $conDescuento,
         CarbonInterface $ocurridoEn,
         ?Decimal $envases = null,
+        bool $sinExistencia = false,
     ): Cargo {
         $item = $linea->item;
         $encuentro = $cuenta->encuentro;
@@ -307,7 +315,7 @@ final class RegistradorDeCargo
         $movimiento = null;
         $costoUnitario = null;
 
-        if ($linea->almacen instanceof Almacen && $item->mueveInventario()) {
+        if (! $sinExistencia && $linea->almacen instanceof Almacen && $item->mueveInventario()) {
             $costoUnitario = $this->costos->vigenteBloqueado($item, $linea->almacen);
 
             $movimiento = $this->movimientos->registrar(
@@ -424,7 +432,7 @@ final class RegistradorDeCargo
      * una parte que redondea a cero queda sin envases: la base prohíbe el
      * cero, y la fila igual dice de qué presentación salió.
      *
-     * @param list<array{lote: Lote|null, cantidad: Decimal}> $repartos
+     * @param list<array{lote: Lote|null, cantidad: Decimal, sinExistencia?: bool}> $repartos
      *
      * @return list<Decimal|null>
      */
@@ -460,7 +468,10 @@ final class RegistradorDeCargo
      * lo que hace la devolución y lo que hará la dispensación con receta
      * en el bloque 6.
      *
-     * @return list<array{lote: Lote|null, cantidad: Decimal}>
+     * Con stock infinito, lo que no alcanzó va al final como una fila
+     * más, sin lote y marcada `sinExistencia`.
+     *
+     * @return list<array{lote: Lote|null, cantidad: Decimal, sinExistencia?: bool}>
      */
     private function repartirPorLote(LineaDeCargo $linea): array
     {
@@ -562,6 +573,25 @@ final class RegistradorDeCargo
          * escribir —el UPDATE condicional de `RegistradorDeMovimiento` la
          * detiene, así que no hay sobregiro; lo que hay es un reintento.
          */
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * STOCK INFINITO: LO QUE NO ALCANZÓ SE CARGA IGUAL (13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mientras el inventario de este producto no esté cuadrado, se
+         * cobra aunque el estante no alcance. Lo que sí había ya salió
+         * arriba, de su lote y con su kardex —así, cuando se apague el
+         * infinito, la existencia ya es la de verdad—. El resto va como
+         * una fila más, sin lote y sin movimiento.
+         *
+         * Nunca para un controlado: `tieneStockInfinito()` lo descarta.
+         */
+        if (! $pendiente->esCero() && ! $pendiente->esNegativo() && $linea->item->tieneStockInfinito()) {
+            $repartos[] = ['lote' => null, 'cantidad' => $pendiente, 'sinExistencia' => true];
+
+            return $repartos;
+        }
+
         if (! $pendiente->esCero() && ! $pendiente->esNegativo()) {
             throw CargoException::sinExistenciaSuficiente(
                 $linea->item->nombre,
@@ -572,6 +602,30 @@ final class RegistradorDeCargo
         }
 
         return $repartos === [] ? [['lote' => null, 'cantidad' => $linea->cantidad]] : $repartos;
+    }
+
+    /**
+     * ¿Se asienta sin tocar el inventario, aunque el ítem se almacene y no
+     * venga almacén?
+     *
+     *   · Producto con stock infinito y sin estante elegido: no hay en
+     *     ningún lado, y mientras se cuadra el inventario se cobra igual.
+     *   · Línea REHECHA de un cargo que no movió el kardex —un descuento
+     *     aplicado a algo que se vendió sin existencia—. Rehacerla no es
+     *     volver a venderla: si el original no sacó nada del estante, el
+     *     rehecho tampoco, aunque al producto ya le hayan apagado el
+     *     infinito. Sin esto, apagarlo trabaría el descuento de cualquier
+     *     cuenta abierta que lo tuviera.
+     */
+    private function seCargaSinInventario(LineaDeCargo $linea): bool
+    {
+        if ($linea->item->tieneStockInfinito()) {
+            return true;
+        }
+
+        $original = $linea->mismoPrecioQue;
+
+        return $original instanceof Cargo && $original->movimiento_id === null;
     }
 
     /**

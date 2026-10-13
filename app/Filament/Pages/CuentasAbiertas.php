@@ -1103,8 +1103,8 @@ class CuentasAbiertas extends Page
                             ])
                             ->dehydratedWhenHidden()
                             ->options(fn (Get $get): array => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)))
-                            ->required(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
-                            ->visible(fn (Get $get): bool => $this->itemDe($get('item_id'))?->mueveInventario() === true)
+                            ->required(fn (Get $get): bool => $this->exigeEstante($this->itemDe($get('item_id'))))
+                            ->visible(fn (Get $get): bool => $this->muestraEstante($this->itemDe($get('item_id')), $this->formaEnUso($get)))
                             ->placeholder(fn (Get $get): string => $this->estantesConLoQueHay($this->itemDe($get('item_id')), $this->formaEnUso($get)) === []
                                 ? 'No hay en ningún almacén'
                                 : 'Elegí el estante'),
@@ -1635,6 +1635,15 @@ class CuentasAbiertas extends Page
             : null;
 
         /*
+         * Stock infinito sin estante elegido (13-oct-2026): si en algún
+         * estante hay, sale de ahí primero; si no hay en ninguno, va sin
+         * almacén y el motor lo carga sin tocar el inventario.
+         */
+        if (! $almacen instanceof Almacen && $item->tieneStockInfinito()) {
+            $almacen = $this->estanteSugerido($item, $forma);
+        }
+
+        /*
          * 🔴 EL DESCUENTO DEL HOSPITAL ES SOLO PARA LO QUE SALE DE
          * FARMACIA.
          *
@@ -2003,7 +2012,16 @@ class CuentasAbiertas extends Page
 
         $almacen = $this->almacenConExistencia($renglon->item, $aEntregar);
 
-        if (! $almacen instanceof Almacen) {
+        /*
+         * Stock infinito: del estante que tenga algo, y lo que no alcance
+         * lo carga el motor sin tocar el inventario. Sin estante con nada,
+         * va sin almacén (13-oct-2026).
+         */
+        if (! $almacen instanceof Almacen && $renglon->item->tieneStockInfinito()) {
+            $almacen = $this->estanteSugerido($renglon->item);
+        }
+
+        if (! $almacen instanceof Almacen && ! $renglon->item->tieneStockInfinito()) {
             $hay = $this->cuantoHayDe($renglon->item);
 
             Notification::make()
@@ -2351,6 +2369,7 @@ class CuentasAbiertas extends Page
 
         return $item instanceof Item
             && $item->mueveInventario()
+            && ! $item->tieneStockInfinito()
             && $this->estantesConLoQueHay($item, $this->formaEnUso($get)) === []
             && Gate::allows('create', Prestamo::class);
     }
@@ -3239,6 +3258,29 @@ class CuentasAbiertas extends Page
         $primero = $this->estantesDe($item, $presentacion?->id)->first();
 
         return $primero !== null && ! $primero['hay']->esCero() ? $primero['almacen'] : null;
+    }
+
+    /**
+     * El estante es obligatorio para lo que se almacena, salvo el stock
+     * infinito: ese se carga aunque no haya en ningún lado (13-oct-2026).
+     */
+    private function exigeEstante(?Item $item): bool
+    {
+        return $item instanceof Item && $item->mueveInventario() && ! $item->tieneStockInfinito();
+    }
+
+    /**
+     * Y se muestra para lo que se almacena, salvo un stock infinito que no
+     * está en ningún estante: ahí no hay nada que elegir, y un desplegable
+     * vacío diciendo «no hay» haría creer que no se puede cargar.
+     */
+    private function muestraEstante(?Item $item, ?string $forma): bool
+    {
+        if (! $item instanceof Item || ! $item->mueveInventario()) {
+            return false;
+        }
+
+        return ! $item->tieneStockInfinito() || $this->estantesConLoQueHay($item, $forma) !== [];
     }
 
     /**
@@ -7534,6 +7576,10 @@ class CuentasAbiertas extends Page
             if ($hay->mayorQue('0')) {
                 $detalles[] = 'hay '.self::cifraCorta($hay).' '.e(self::codigoDeLaUnidad($item) ?? '');
             }
+
+            if ($item->tieneStockInfinito()) {
+                $detalles[] = '<span style="color:rgb(217 119 6)">stock infinito</span>';
+            }
         }
 
         $nombre = $this->resultadosDelBuscador() === []
@@ -7772,6 +7818,16 @@ class CuentasAbiertas extends Page
 
         if ($item->mueveInventario()) {
             if ($this->estantesConLoQueHay($item, $forma) === []) {
+                /*
+                 * Con stock infinito no es una alerta: se carga igual,
+                 * sin descontar del inventario (13-oct-2026).
+                 */
+                if ($item->tieneStockInfinito()) {
+                    $partes[] = 'stock infinito: se carga sin descontar del inventario';
+
+                    return self::recuadro(implode(' · ', $partes));
+                }
+
                 return self::recuadro($this->porQueNoHay($item, $forma), esAlerta: true);
             }
 

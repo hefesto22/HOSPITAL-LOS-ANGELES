@@ -7,6 +7,7 @@ use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoEncuentro;
 use App\Domain\Enums\TipoItem;
+use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
@@ -16,13 +17,17 @@ use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Existencia;
 use App\Models\Expediente;
+use App\Models\Factura;
 use App\Models\Item;
+use App\Models\Medico;
 use App\Models\Persona;
+use App\Models\RangoCai;
 use App\Models\Sede;
 use App\Models\Tarifario;
 use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
+use App\Services\EmisorDeFactura;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDePrestamo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -240,4 +245,53 @@ function elSaldoDe(Item $item, Almacen $almacen): string
         ->first();
 
     return $saldo instanceof Existencia ? $saldo->cantidadDecimal()->redondeado(4) : '0.0000';
+}
+
+/**
+ * Una cuenta de contado con un honorario de ese médico, sin facturar.
+ *
+ * Honorarios por médico: la usan `HonorariosPorMedicoTest` y
+ * `HonorarioAnuladoEnOtroMesTest` (13-oct-2026), igual que la de abajo.
+ *
+ * @param numeric-string $precio
+ */
+function cuentaConHonorarioDe(Medico $medico, string $precio): Cuenta
+{
+    $contado = Convenio::query()->where('codigo', Convenio::CODIGO_CONTADO)->first()
+        ?? Convenio::factory()->contado()->create();
+
+    $cuenta = unaCuentaCon($contado);
+
+    app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
+        item: unServicioDe($precio),
+        cantidad: Decimal::de('1'),
+        claveIdempotencia: (string) Str::uuid(),
+        medicoId: $medico->id,
+    ));
+
+    return $cuenta->refresh();
+}
+
+/**
+ * La cobra entera y la factura.
+ *
+ * ⚠️ Cada cuenta abre su propia sede, y el rango de la fábrica empieza
+ * siempre en el mismo número: sin un establecimiento distinto por
+ * factura, la segunda chocaría con el número único de la primera.
+ */
+function facturarLaCuentaDeHonorarios(Cuenta $cuenta): Factura
+{
+    static $establecimiento = 100;
+
+    abonarle($cuenta, Decimal::de($cuenta->total)->redondeado(2));
+
+    RangoCai::factory()->create([
+        'sede_id'         => $cuenta->sede_id,
+        'establecimiento' => (string) ++$establecimiento,
+    ]);
+
+    return app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: ClienteDeFactura::consumidorFinal(),
+    );
 }

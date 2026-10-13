@@ -42,6 +42,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $nombre_busqueda
  * @property TipoItem $tipo
  * @property bool $se_almacena
+ * @property bool $stock_infinito
  * @property bool $factura_envase_entero
  * @property int|null $categoria_id
  * @property AmbitoCatalogo|null $categoria_ambito
@@ -89,6 +90,7 @@ class Item extends Model
         'descripcion',
         'tipo',
         'se_almacena',
+        'stock_infinito',
         'factura_envase_entero',
         'categoria_id',
         'regimen_isv',
@@ -258,6 +260,17 @@ class Item extends Model
             }
 
             /*
+             * El stock infinito es solo para lo que se almacena, y nunca
+             * para un estupefaciente o psicotrópico (§9.F11): su libro
+             * exige saldo real. La base lo vuelve a exigir con dos CHECK;
+             * acá se corrige antes de llegar a ella, igual que las otras
+             * banderas que dependen del tipo.
+             */
+            if (! $item->mueveInventario() || $item->es_controlado) {
+                $item->stock_infinito = false;
+            }
+
+            /*
              * Un controlado exige receta siempre. Es requisito ante ARSA,
              * no preferencia: la base también lo obliga.
              */
@@ -330,6 +343,7 @@ class Item extends Model
         return [
             'tipo'                      => TipoItem::class,
             'se_almacena'               => 'boolean',
+            'stock_infinito'            => 'boolean',
             'factura_envase_entero'     => 'boolean',
             'categoria_ambito'          => AmbitoCatalogo::class,
             'regimen_isv'               => RegimenIsv::class,
@@ -719,6 +733,25 @@ class Item extends Model
     public function mueveInventario(): bool
     {
         return (bool) $this->se_almacena;
+    }
+
+    /**
+     * ¿Se puede cargar aunque no haya existencia? (13-oct-2026)
+     *
+     * Bandera de TRANSICIÓN mientras se cuadra el inventario: lo que hay
+     * en el estante sale primero, con su lote y su kardex, y lo que no
+     * alcance se carga igual, sin tocar inventario. Se apaga producto
+     * por producto cuando su existencia ya es la real.
+     *
+     * Se vuelve a mirar `se_almacena` y `es_controlado` aunque el modelo
+     * y la base ya lo impidan: una fila vieja leída antes de la regla no
+     * puede abrir la puerta a vender un controlado sin libro.
+     */
+    public function tieneStockInfinito(): bool
+    {
+        return (bool) $this->stock_infinito
+            && $this->mueveInventario()
+            && ! $this->es_controlado;
     }
 
     /**

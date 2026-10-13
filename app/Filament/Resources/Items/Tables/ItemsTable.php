@@ -13,8 +13,11 @@ use App\Filament\Resources\Items\Actions\CalcularPrecioAction;
 use App\Models\CategoriaItem;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Services\CambiadorDeStockInfinito;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\EditAction;
+use Filament\Notifications\Notification;
 use Filament\Support\Enums\FontFamily;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -25,6 +28,8 @@ use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Listado del catálogo.
@@ -222,6 +227,26 @@ final class ItemsTable
                     ->toggleable(),
 
                 /*
+                 * Solo en farmacia. La insignia marca lo que todavía se
+                 * vende sin existencia real —lo que hay que ir apagando a
+                 * medida que se cuadra el inventario (13-oct-2026)—; lo
+                 * demás dice «Real» en gris, sin llamar la atención.
+                 */
+                TextColumn::make('stock_infinito')
+                    ->label('Stock')
+                    ->state(fn (Item $record): ?string => $record->tieneStockInfinito() ? 'Infinito' : null)
+                    ->badge()
+                    ->color('warning')
+                    ->placeholder('Real')
+                    ->alignCenter()
+                    ->grow(false)
+                    ->tooltip(fn (Item $record): string => $record->tieneStockInfinito()
+                        ? 'Se carga aunque no haya existencia. Apagalo cuando el inventario de este producto esté cuadrado.'
+                        : 'Se vende solo lo que hay en existencia.')
+                    ->visible($esFarmacia)
+                    ->toggleable(),
+
+                /*
                  * ⚠️ Escondidas por defecto en farmacia y visibles en
                  * servicios, y no es capricho: la salud es exenta y casi
                  * todo medicamento cae en el mismo numeral del Art. 30,
@@ -318,6 +343,14 @@ final class ItemsTable
                     ->trueLabel('Solo controlados')
                     ->falseLabel('Sin controlados'),
 
+                ...($esFarmacia ? [
+                    TernaryFilter::make('stock_infinito')
+                        ->label('Stock')
+                        ->placeholder('Todos')
+                        ->trueLabel('Solo stock infinito')
+                        ->falseLabel('Solo stock real'),
+                ] : []),
+
                 /*
                  * Arranca prendido: quien busca en el catálogo casi
                  * siempre quiere lo que se ofrece HOY. Se puede apagar
@@ -344,7 +377,86 @@ final class ItemsTable
                 : 'Acá va lo que el hospital ofrece y cobra: habitación, sala de operaciones, exámenes, '
                 .'rayos X, honorarios. Lo que se guarda en el estante se carga en Farmacia.')
             ->recordActions(self::acciones($ambito))
-            ->toolbarActions([]);
+            ->toolbarActions($esFarmacia ? self::accionesDeStock() : []);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * STOCK INFINITO EN BLOQUE (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El día del arranque se prende para todo lo que todavía no tiene
+     * inventario cargado, y después se apaga de a uno o dos a medida que
+     * se cuadra. Ir ficha por ficha serían doscientas ediciones.
+     *
+     * No son acciones destructivas (§9.A17): cambian una bandera y se
+     * pueden deshacer con la otra. Igual piden confirmación, porque
+     * cambian lo que se puede vender.
+     *
+     * @return array<int, BulkAction>
+     */
+    private static function accionesDeStock(): array
+    {
+        return [
+            BulkAction::make('ponerStockInfinito')
+                ->label('Poner stock infinito')
+                ->icon('heroicon-o-arrow-path')
+                ->color('warning')
+                ->requiresConfirmation()
+                ->modalHeading('¿Poner stock infinito?')
+                ->modalDescription(
+                    'Los productos elegidos se van a poder cargar a las cuentas aunque no haya existencia. '
+                    .'Los estupefacientes y psicotrópicos se saltan: su libro exige existencia real.'
+                )
+                ->modalSubmitActionLabel('Sí, poner infinito')
+                ->deselectRecordsAfterCompletion()
+                ->action(function (Collection $records): void {
+                    self::cambiarElStock($records, true);
+                }),
+
+            BulkAction::make('quitarStockInfinito')
+                ->label('Pasar a stock real')
+                ->icon('heroicon-o-check-badge')
+                ->color('gray')
+                ->requiresConfirmation()
+                ->modalHeading('¿Pasar a stock real?')
+                ->modalDescription(
+                    'Desde ahora se va a vender solo lo que haya en existencia. Hacelo cuando el inventario '
+                    .'de estos productos ya esté cuadrado.'
+                )
+                ->modalSubmitActionLabel('Sí, pasar a real')
+                ->deselectRecordsAfterCompletion()
+                ->action(function (Collection $records): void {
+                    self::cambiarElStock($records, false);
+                }),
+        ];
+    }
+
+    /**
+     * Solo los que quien está mirando puede editar: la acción en bloque
+     * no le da permisos que la ficha no le da.
+     *
+     * @param Collection<int, Item> $records
+     */
+    private static function cambiarElStock(Collection $records, bool $infinito): void
+    {
+        $permitidos = $records->filter(fn (Item $item): bool => Gate::allows('update', $item));
+
+        $resultado = app(CambiadorDeStockInfinito::class)->cambiar($permitidos, $infinito);
+
+        $titulo = $resultado['cambiados'] === 0
+            ? 'No hubo nada que cambiar'
+            : $resultado['cambiados'].' producto(s) '.($infinito ? 'con stock infinito' : 'pasaron a stock real');
+
+        $cuerpo = $resultado['controlados'] > 0
+            ? $resultado['controlados'].' estupefaciente(s) o psicotrópico(s) se saltaron: su libro exige existencia real.'
+            : null;
+
+        Notification::make()
+            ->success()
+            ->title($titulo)
+            ->body($cuerpo)
+            ->send();
     }
 
     /**

@@ -223,6 +223,8 @@ final class ItemForm
 
             ...FormasDeVenta::componentes(),
 
+            self::campoStockInfinito(),
+
             self::campoSeAlmacena(AmbitoCatalogo::Productos),
         ];
     }
@@ -494,6 +496,32 @@ final class ItemForm
     {
         return Hidden::make('se_almacena')
             ->default($ambito->seAlmacena());
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * STOCK INFINITO MIENTRAS SE CUADRA EL INVENTARIO (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * En la primera pestaña y no en «Farmacia»: se decide al crear el
+     * producto, y ahí es donde se crea.
+     *
+     * Deshabilitado para un controlado, con el porqué a la vista: su
+     * libro exige saldo real ante ARSA (§9.F11). El modelo y la base lo
+     * vuelven a impedir.
+     */
+    private static function campoStockInfinito(): Toggle
+    {
+        return Toggle::make('stock_infinito')
+            ->label('Stock infinito mientras se cuadra el inventario')
+            ->default(false)
+            ->disabled(fn (Get $get): bool => $get('es_controlado') === true)
+            ->dehydrated()
+            ->helperText(fn (Get $get): string => $get('es_controlado') === true
+                ? 'Un estupefaciente o psicotrópico no puede: su libro exige existencia real ante ARSA.'
+                : 'Se puede cargar a las cuentas aunque no haya existencia. Si hay en el estante sale de '
+                    .'ahí primero. Apagalo cuando el inventario de este producto ya esté cuadrado.')
+            ->columnSpanFull();
     }
 
     /**
@@ -936,6 +964,7 @@ final class ItemForm
                                  */
                                 if ($state === true) {
                                     $set('requiere_receta', true);
+                                    $set('stock_infinito', false);
                                 }
                             })
                             ->helperText('Activa libro con saldo corrido y reporte mensual a ARSA.'),
