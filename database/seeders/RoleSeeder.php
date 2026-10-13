@@ -35,7 +35,7 @@ class RoleSeeder extends Seeder
     public const ROLES = [
         'direccion'        => 'Dirección / propietario: márgenes, costos, tarifarios, reportes y autorizaciones excepcionales. Cruza sedes.',
         'admision'         => 'Recepción: registra pacientes, abre encuentros, asigna cama, captura póliza y autorización. NO ve notas clínicas ni costos.',
-        'caja'             => 'Cajera / facturación: cobra, emite factura y nota de crédito, aplica anticipos, liquida cuentas. NO ve expediente clínico ni edita precios.',
+        'caja'             => 'Cajera / facturación: cobra, emite factura y nota de crédito, aplica anticipos, liquida cuentas; crea y edita servicios y productos, precios incluidos. NO ve expediente clínico.',
         'medico'           => 'Médico tratante: nota clínica, diagnóstico, órdenes, prescripción, informe. NO ve costos ni expedientes sin relación de atención.',
         'enfermeria'       => 'Enfermería: signos vitales, administración de medicamentos, notas, censo. NO prescribe ni factura.',
         'farmacia'         => 'Regente y auxiliares: dispensa, recibe, controla lotes, libro de controlados, reporte ARSA. NO prescribe.',

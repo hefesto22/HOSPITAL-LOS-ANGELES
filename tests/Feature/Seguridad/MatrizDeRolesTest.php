@@ -183,7 +183,7 @@ it('bodega nunca ve el expediente', function (): void {
         ->and($bodega->hasPermissionTo('ViewAny:Item'))->toBeTrue();
 })->note('Quien recibe una compra no tiene por qué saber quién está internado. Sí necesita el catálogo: es contra lo que entra la mercadería.');
 
-it('solo direccion escribe el catalogo', function (): void {
+it('solo direccion y caja escriben el catalogo de servicios', function (): void {
     sembrarPermisosComoShield();
 
     $this->seed(MatrizDePermisosSeeder::class);
@@ -193,11 +193,11 @@ it('solo direccion escribe el catalogo', function (): void {
         /** @var Role $rol */
         $rol = Role::findByName($nombreRol, 'web');
 
-        $nombreRol === 'direccion'
+        in_array($nombreRol, ['direccion', 'caja'], true)
             ? expect($rol->hasPermissionTo('Create:Item'))->toBeTrue()
             : expect($rol->hasPermissionTo('Create:Item'))->toBeFalse("El rol {$nombreRol} no debería crear ítems");
     }
-})->note('Al dar de alta un ítem se fija su régimen de ISV y bajo qué numeral del Art. 30 cae su descuento. Equivocarse ahí es un hallazgo del SAR, no un dato que se corrige después.');
+})->note('Al dar de alta un ítem se fija su régimen de ISV y bajo qué numeral del Art. 30 cae su descuento. Caja entra desde el 13-oct-2026 (Mauricio: «las cajeras pueden crear y editar servicios y productos»); el resto, no.');
 
 it('admision y caja leen los convenios pero no los crean', function (): void {
     sembrarPermisosComoShield();

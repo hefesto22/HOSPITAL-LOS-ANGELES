@@ -272,15 +272,25 @@ class MatrizDePermisosSeeder extends Seeder
 
         /*
          * Caja es quien liquida: ve todo lo que tiene que cobrar y puede
-         * cargar lo que falte y corregir lo que esté mal. Lo que no puede
-         * —y no aparece acá— es tocar el tarifario ni el catálogo: eso
-         * cambiaría el precio hacia atrás en vez de cobrar el de hoy.
+         * cargar lo que falte y corregir lo que esté mal.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 CREA Y EDITA SERVICIOS Y PRODUCTOS, PRECIOS INCLUIDOS
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio (13-oct-2026): «las cajeras pueden editar y crear
+         * servicios y productos», y confirmado: también los precios. Es
+         * quien está en el mostrador cuando llega algo que no está en el
+         * catálogo. Un precio nunca se pisa —se cierra el vigente y se
+         * abre otro, con motivo— así que lo que cambie una cajera queda
+         * en el historial con su nombre, y lo ya cobrado sigue con su
+         * precio (§8.5-5). Borrar no: ni ella ni nadie (`ItemPolicy`).
          */
         'caja' => [
             'Persona'       => ['ViewAny', 'View'],
-            'Item'          => ['ViewAny', 'View'],
+            'Item'          => ['ViewAny', 'View', 'Create', 'Update'],
             'CategoriaItem' => ['ViewAny', 'View'],
-            'Producto'      => ['ViewAny', 'View'],
+            'Producto'      => ['ViewAny', 'View', 'Create', 'Update'],
             'Unidad'        => ['ViewAny', 'View'],
             'Convenio'      => ['ViewAny', 'View'],
 

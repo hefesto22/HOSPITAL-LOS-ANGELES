@@ -114,13 +114,19 @@ it('el boton sigue oculto en lo que no se compra, aunque el permiso sobre', func
 |--------------------------------------------------------------------------
 */
 
-it('caja no puede fijar el precio de un item', function (): void {
-    $caja = comoElRol('caja');
+it('admision no puede fijar el precio de un item', function (): void {
+    $admision = comoElRol('admision');
     $item = unMedicamentoCualquiera();
 
-    expect($caja->can('viewAny', Item::class))->toBeTrue()
+    expect($admision->can('viewAny', Item::class))->toBeTrue()
         ->and(Gate::allows('update', $item))->toBeFalse();
 })->note('El paciente ve el precio en el mostrador; ponerlo es otra cosa. La acción «Fijar un precio» se condiciona a `update` sobre el ítem.');
+
+it('caja si puede fijar el precio de un item', function (): void {
+    comoElRol('caja');
+
+    expect(Gate::allows('update', unMedicamentoCualquiera()))->toBeTrue();
+})->note('Mauricio (13-oct-2026): las cajeras crean y editan servicios y productos, precios incluidos. El precio viejo no se pisa: queda en el historial con quién lo cambió.');
 
 it('direccion si puede fijar el precio de un item', function (): void {
     comoElRol('direccion');
