@@ -5,17 +5,20 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Items\Pages;
 
 use App\Domain\Exceptions\PrecioNoFijableException;
-use App\Domain\ValueObjects\Monto;
 use App\Filament\Resources\Items\ItemResource;
 use App\Models\CategoriaItem;
 use App\Models\Item;
 use App\Services\AsignadorDeCodigoDeItem;
-use App\Services\FijadorDePrecio;
+use App\Services\PreciosDeLaFicha;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
+use Filament\Support\Exceptions\Halt;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
- * Alta de un ítem, con su precio de lista puesto en el mismo acto.
+ * Alta de un ítem, con sus precios puestos en el mismo acto: el de lista
+ * y, si se quiere, el de cada seguro (`PreciosDeLaFicha`, 13-oct-2026).
  *
  * ─────────────────────────────────────────────────────────────────────
  * POR QUÉ EL PRECIO SE ESCRIBE ACÁ Y NO EN OTRA PANTALLA
@@ -30,11 +33,15 @@ use Filament\Resources\Pages\CreateRecord;
  * 🔴 EL PRECIO NO ES UNA COLUMNA DEL ÍTEM
  * ─────────────────────────────────────────────────────────────────────
  *
- * Va a `tarifarios`, con vigencia y con motivo, igual que cualquier otro
+ * Van a `tarifarios`, con vigencia y con motivo, igual que cualquier otro
  * precio (ADR-0003). Por eso el campo se saca de los datos ANTES de
  * crear: si llegara al `create()`, Laravel lo descartaría en silencio
  * por no estar en `$fillable` y el ítem quedaría sin precio sin que
  * nadie viera un error.
+ *
+ * Y en la MISMA transacción: si un precio no se puede fijar, el servicio
+ * tampoco se crea. Un servicio a medio crear, sin precio, es el hueco que
+ * esta pantalla existe para cerrar.
  *
  * ─────────────────────────────────────────────────────────────────────
  * LOS DESCUENTOS NO PASAN POR ACÁ
@@ -55,8 +62,6 @@ class CreateItem extends CreateRecord
 {
     protected static string $resource = ItemResource::class;
 
-    protected ?string $precioDeLista = null;
-
     protected function getRedirectUrl(): string
     {
         return $this->getResource()::getUrl('index');
@@ -69,12 +74,6 @@ class CreateItem extends CreateRecord
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $this->precioDeLista = is_scalar($data['precio_de_lista'] ?? null)
-            ? trim((string) $data['precio_de_lista'])
-            : null;
-
-        unset($data['precio_de_lista']);
-
         /*
          * ─────────────────────────────────────────────────────────────
          * 🔴 EL CÓDIGO SE ASIGNA ACÁ, NO EN EL FORMULARIO
@@ -103,49 +102,46 @@ class CreateItem extends CreateRecord
         return $data;
     }
 
-    protected function afterCreate(): void
+    /**
+     * El servicio y sus precios, juntos o ninguno.
+     *
+     * @param array<string, mixed> $data
+     *
+     * @throws Halt
+     */
+    protected function handleRecordCreation(array $data): Model
     {
-        $item = $this->getRecord();
+        $precios = is_array($data['precios'] ?? null) ? $data['precios'] : [];
 
-        if (! $item instanceof Item) {
-            return;
-        }
+        unset($data['precios'], $data['precios_motivo']);
 
-        if ($this->precioDeLista === null || $this->precioDeLista === '' || ! is_numeric($this->precioDeLista)) {
-            return;
-        }
-
-        /*
-         * La vigencia del precio arranca cuando arranca el ítem, no hoy.
-         * Un ítem que empieza a ofrecerse el mes que viene con un precio
-         * que rige desde hoy deja una ventana en la que el precio existe
-         * y el ítem no — y esa ventana la descubre el primero que
-         * reimprime una cuenta vieja.
-         */
         try {
-            app(FijadorDePrecio::class)->fijar(
-                item: $item,
-                convenio: null,
-                sede: null,
-                precio: Monto::de($this->precioDeLista),
-                motivo: 'Precio de lista fijado al dar de alta el ítem en el catálogo.',
-                desde: $item->vigencia_desde,
-            );
+            /** @var Model $creado */
+            $creado = DB::transaction(function () use ($data, $precios): Model {
+                $item = parent::handleRecordCreation($data);
+
+                if ($item instanceof Item) {
+                    app(PreciosDeLaFicha::class)->aplicar($item, $precios, null, esAlta: true);
+                }
+
+                return $item;
+            });
         } catch (PrecioNoFijableException $e) {
             Notification::make()
-                ->warning()
-                ->title('El ítem se creó, pero sin precio')
-                ->body($e->getMessage().' Cargalo desde Bases de precios.')
+                ->danger()
+                ->title('No se creó el servicio')
+                ->body($e->getMessage())
                 ->persistent()
                 ->send();
 
-            return;
+            throw new Halt;
         }
 
-        Notification::make()
-            ->success()
-            ->title('Precio de lista cargado')
-            ->body('Ya se puede cobrar. Los precios de cada seguro se cargan desde Bases de precios.')
-            ->send();
+        return $creado;
+    }
+
+    protected function getCreatedNotificationTitle(): ?string
+    {
+        return 'Servicio creado, con sus precios';
     }
 }

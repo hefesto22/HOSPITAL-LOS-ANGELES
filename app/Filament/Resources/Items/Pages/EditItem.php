@@ -4,20 +4,38 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Items\Pages;
 
+use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Filament\Resources\Items\Actions\CalcularPrecioAction;
 use App\Filament\Resources\Items\Actions\MoverDeAmbitoAction;
 use App\Filament\Resources\Items\ItemResource;
 use App\Models\Item;
+use App\Services\PreciosDeLaFicha;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
+use Filament\Support\Exceptions\Halt;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Los descuentos que se marcan en la pestaña «ISV y descuentos» son una
  * relación de Filament: se sincronizan solos al guardar. Esta clase no
  * tiene que sacarlos del formulario ni escribirlos.
+ *
+ * Los precios sí (13-oct-2026): se escriben en la misma ficha y no son
+ * columnas del ítem. Se sacan de los datos y los fija `PreciosDeLaFicha`,
+ * en la misma transacción que el resto: si uno no se puede fijar, no se
+ * guarda nada y el aviso dice por qué.
  */
 class EditItem extends EditRecord
 {
     protected static string $resource = ItemResource::class;
+
+    /**
+     * A quién se le cambió el precio al guardar, para el aviso.
+     *
+     * @var list<string>
+     */
+    protected array $preciosCambiados = [];
 
     /**
      * Sin acción de borrar: el ítem se retira poniéndole fecha de fin de
@@ -66,5 +84,51 @@ class EditItem extends EditRecord
     protected function getRedirectUrl(): string
     {
         return $this->getResource()::getUrl('index');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @throws Halt
+     */
+    protected function handleRecordUpdate(Model $record, array $data): Model
+    {
+        $precios = is_array($data['precios'] ?? null) ? $data['precios'] : [];
+        $porQue = is_string($data['precios_motivo'] ?? null) ? $data['precios_motivo'] : null;
+
+        unset($data['precios'], $data['precios_motivo']);
+
+        try {
+            /** @var Model $guardado */
+            $guardado = DB::transaction(function () use ($record, $data, $precios, $porQue): Model {
+                $item = parent::handleRecordUpdate($record, $data);
+
+                if ($item instanceof Item) {
+                    $this->preciosCambiados = app(PreciosDeLaFicha::class)->aplicar($item, $precios, $porQue, esAlta: false);
+                }
+
+                return $item;
+            });
+        } catch (PrecioNoFijableException $e) {
+            Notification::make()
+                ->danger()
+                ->title('No se guardó')
+                ->body($e->getMessage())
+                ->persistent()
+                ->send();
+
+            throw new Halt;
+        }
+
+        return $guardado;
+    }
+
+    protected function getSavedNotificationTitle(): ?string
+    {
+        return match (count($this->preciosCambiados)) {
+            0       => 'Guardado',
+            1       => 'Guardado · precio nuevo para '.$this->preciosCambiados[0],
+            default => 'Guardado · precios nuevos para '.implode(', ', $this->preciosCambiados),
+        };
     }
 }

@@ -47,6 +47,31 @@ final class PrecioNoFijableException extends SihlaException
         );
     }
 
+    public static function faltaElDeLista(string $item): self
+    {
+        return new self(
+            "Falta el precio de lista de «{$item}». Es el que paga el paciente particular y cualquier "
+            .'seguro sin precio propio: sin él, el servicio no se le puede cobrar a nadie.'
+        );
+    }
+
+    public static function noSeEntiende(string $paraQuien, string $escrito): self
+    {
+        return new self(
+            "El precio de {$paraQuien} no se entiende: «{$escrito}». Escriba solo el número, con "
+            .'punto o coma para los decimales. Ejemplo: 300.50'
+        );
+    }
+
+    public static function yaSeUsoHoy(string $item, string $paraQuien, string $antes): self
+    {
+        return new self(
+            "El precio de «{$item}» para {$paraQuien} ya se cambió hoy a {$antes} y ya se cobró con él. "
+            .'El cambio nuevo tiene que regir desde mañana: fíjelo en la lista de precios de abajo, con '
+            .'fecha de mañana.'
+        );
+    }
+
     public static function sinMinimo(): self
     {
         return new self(

@@ -8,19 +8,22 @@ use App\Domain\Enums\AmbitoCatalogo;
 use App\Domain\Enums\MagnitudDeMedida;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
+use App\Domain\ValueObjects\Decimal;
 use App\Filament\Resources\PrincipiosActivos\Schemas\PrincipioActivoForm;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
 use App\Models\CategoriaItem;
+use App\Models\Convenio;
 use App\Models\Descuento;
 use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
+use App\Models\Tarifario;
 use App\Models\Unidad;
 use App\Services\AsignadorDeCodigoDeItem;
+use App\Services\PreciosDeLaFicha;
 use App\Services\UbicadorDeProducto;
-use App\Support\CodigoDeBarras;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
@@ -32,6 +35,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\ToggleButtons;
+use Filament\Forms\Components\ViewField;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Component;
@@ -101,21 +105,12 @@ final class ItemForm
                     self::dineroYLey($ambito),
 
                     /*
-                     * En farmacia la pestaña «Unidades» no existe. Tenía
-                     * un solo campo obligatorio —«se dispensa en»— que
-                     * además repite lo que ya dice el nombre del producto
-                     * («…500 MG TABLETA»), y obligaba a entrar a una
-                     * pestaña aparte para contestar algo evidente.
-                     *
-                     * El campo se mudó a Identificación, al lado del tipo,
-                     * y el fraccionamiento a la pestaña Farmacia, junto a
-                     * lo demás que solo le pasa a un medicamento.
-                     *
-                     * En el catálogo de servicios se queda: ahí la unidad
-                     * es de COBRO —UNIDAD, DÍA, HORA— y es lo que hace
-                     * legible la línea de la cuenta.
+                     * Ninguno de los dos lados tiene ya pestaña
+                     * «Unidades»: en farmacia «se dispensa en» vive en
+                     * Identificación, al lado del tipo, y desde el
+                     * 13-oct-2026 en servicios también —«se cobra en»—:
+                     * un campo solo no merece una pestaña aparte.
                      */
-                    $ambito === AmbitoCatalogo::Productos ? null : self::unidades(),
                     $ambito === AmbitoCatalogo::Productos ? self::farmacia() : null,
 
                     /*
@@ -148,23 +143,17 @@ final class ItemForm
      *
      *   · Farmacia, en tres renglones de una grilla de seis
      *     (`identificacionDeProducto()`).
-     *   · Servicios, en la grilla de dos de siempre: son cuatro campos y
-     *     el precio.
+     *   · Servicios, en la misma grilla de seis: un renglón de datos, el
+     *     nombre y los precios (`identificacionDeServicio()`).
      */
     private static function identificacion(AmbitoCatalogo $ambito): Tab
     {
-        $pestana = Tab::make('Identificación')
-            ->icon('heroicon-o-rectangle-stack');
-
-        if ($ambito === AmbitoCatalogo::Productos) {
-            return $pestana
-                ->schema(self::identificacionDeProducto())
-                ->columns(6);
-        }
-
-        return $pestana
-            ->schema(self::identificacionDeServicio())
-            ->columns(2);
+        return Tab::make('Identificación')
+            ->icon('heroicon-o-rectangle-stack')
+            ->schema($ambito === AmbitoCatalogo::Productos
+                ? self::identificacionDeProducto()
+                : self::identificacionDeServicio())
+            ->columns(6);
     }
 
     /**
@@ -235,107 +224,181 @@ final class ItemForm
     }
 
     /**
-     * La pestaña del catálogo de servicios: la grilla de siempre.
+     * La pestaña del catálogo de servicios (13-oct-2026).
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * RÁPIDO DE REGISTRAR, Y CON LOS PRECIOS A LA VISTA
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «no debe tener el código de barras, no es necesario si es
+     * un servicio; debe ser rápido de registrar y se deben poder editar
+     * los precios desde acá».
+     *
+     *   Tipo        | Categoría        | Se cobra en | Código
+     *   Nombre
+     *   Precios: lista · PALIG · HOSPITAL MILITAR · …   (un campo cada uno)
+     *   Por qué cambian (solo al editar) · Nota
+     *
+     * Sin la etiqueta de barras: un servicio no está en ningún estante, se
+     * busca por nombre o por código. Sin la pestaña «Unidades»: «se cobra
+     * en» es un campo, y vive en el primer renglón. Las explicaciones van
+     * en el ⓘ de cada rótulo, como en farmacia: debajo de los campos no
+     * va ningún párrafo.
+     *
+     * Los precios se escriben en la misma ficha, al crear y al editar
+     * (`PreciosDeLaFicha`): el servicio nace con el precio de cada seguro
+     * y no queda un hueco «sin precio para este pagador» que se descubre
+     * con el paciente enfrente.
      *
      * @return list<Component>
      */
     private static function identificacionDeServicio(): array
     {
         return [
-            self::campoCodigo(AmbitoCatalogo::Servicios),
+            self::campoTipo(AmbitoCatalogo::Servicios)
+                ->columnSpan(['default' => 1, 'lg' => 2]),
+            self::campoCategoria(AmbitoCatalogo::Servicios)
+                ->columnSpan(fn (Get $get, string $operation): array => [
+                    'default' => 1,
+                    'lg'      => self::usaUnidadDeCobro($get) ? 2 : ($operation === 'edit' ? 3 : 4),
+                ]),
+            self::campoUnidadDeCobro()
+                ->columnSpan(fn (string $operation): array => [
+                    'default' => 1,
+                    'lg'      => $operation === 'edit' ? 1 : 2,
+                ]),
+            self::campoCodigo(AmbitoCatalogo::Servicios)
+                ->columnSpan(1),
 
-            /*
-             * ─────────────────────────────────────────────────────────
-             * LA ETIQUETA CON EL CÓDIGO INTERNO, SOLO EN SERVICIOS
-             * ─────────────────────────────────────────────────────────
-             *
-             * Un hemograma no viene en ninguna caja: su código interno es
-             * lo único que hay para identificarlo, y esta etiqueta es la
-             * que se imprime para escanearlo.
-             *
-             * En farmacia no se dibuja. Lo que se escanea ahí es el
-             * código de barras de la caja del fabricante, que se pide en
-             * la ficha; para lo que llega sin código legible, la etiqueta
-             * del hospital se imprime desde la acción de ese mismo campo.
-             *
-             * ⚠️ Las dos condiciones van en UN solo closure. Un
-             * `->visibleOn('edit')` seguido de un `->visible(...)` no se
-             * suman: el segundo pisa al primero sin decir nada, y la
-             * etiqueta volvería a aparecer en el alta mostrando un código
-             * que todavía puede cambiar.
-             */
-            Placeholder::make('etiqueta_de_barras')
-                ->label('Código de barras del hospital')
-                ->visible(fn (string $operation, Get $get): bool => $operation === 'edit'
-                    && ! self::esFisico($get))
-                ->columnSpanFull()
-                ->content(fn (?Item $record): HtmlString => self::etiqueta($record)),
-
-            self::campoTipo(AmbitoCatalogo::Servicios),
-            self::campoCategoria(AmbitoCatalogo::Servicios),
-            self::campoSeAlmacena(AmbitoCatalogo::Servicios),
             self::campoNombre(AmbitoCatalogo::Servicios),
+
+            self::campoPrecios(),
+            self::campoPorQueCambianLosPrecios(),
+
             self::campoDescripcion(AmbitoCatalogo::Servicios),
 
-            /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 EL PRECIO SE PIDE ACÁ SOLO PARA LO QUE NO SE ALMACENA
-             * ─────────────────────────────────────────────────────────
-             *
-             * La regla que abrió este campo sigue en pie y es esta: un
-             * ítem sin precio existe, se puede buscar y se puede elegir
-             * en una cuenta — y recién ahí, con el paciente enfrente,
-             * aparece «este ítem no tiene precio para este pagador». El
-             * hueco no lo abre el que se olvida: lo abre un formulario
-             * que deja terminar sin preguntarlo.
-             *
-             * Por eso en el catálogo de SERVICIOS el campo sigue siendo
-             * obligatorio: una cesárea no se «recibe» nunca, y si nadie
-             * le pone precio acá no se lo pone nadie.
-             *
-             * ─────────────────────────────────────────────────────────
-             * 🔴 EN FARMACIA NO, Y NO ES POR COMODIDAD
-             * ─────────────────────────────────────────────────────────
-             *
-             * Un producto no tiene UN precio: tiene uno por presentación.
-             * El frasco de 60 ml y el de 120 no valen lo mismo ni por ml
-             * ni por frasco, y el precio de cada uno se calcula al RECIBIR
-             * la compra, del costo por el margen objetivo.
-             *
-             * Lo que escribía este campo era una fila de precio SIN
-             * presentación — la de respaldo, la que se borró en la
-             * migración `quitar_los_precios_de_respaldo_de_mas`. Y esa
-             * fila no es inofensiva: el resolvedor cae en ella en
-             * silencio cuando no encuentra la del envase, y cobra el
-             * número equivocado sin avisar. L 45.83 en vez de L 91.67 el
-             * ml, y nadie se entera.
-             *
-             * El hueco que queda —un producto cargado y todavía sin
-             * precio— lo cubre el contador de «sin precio» de Bases de
-             * precios, que es donde se ve de un vistazo y donde se
-             * arregla. No es un descuido: es el mismo control, movido al
-             * lugar donde el precio de verdad se decide.
-             *
-             * ⚠️ Las dos condiciones van en UN solo closure, por lo mismo
-             * que la etiqueta de barras de arriba: un `->hiddenOn('edit')`
-             * seguido de un `->visible(...)` no se suman, el segundo pisa
-             * al primero sin decir nada.
-             */
-            TextInput::make('precio_de_lista')
-                ->label('Precio de lista')
-                ->numeric()
-                ->minValue(0)
-                ->step('0.0001')
-                ->prefix('L')
-                ->visible(fn (string $operation, Get $get): bool => $operation === 'create'
-                    && ! self::esFisico($get))
-                ->columnSpanFull()
-                ->required()
-                ->helperText(
-                    'Es el precio del hospital, el que se le cobra al paciente particular. '
-                    .'Los seguros se cargan después desde Bases de precios.'
-                ),
+            self::campoSeAlmacena(AmbitoCatalogo::Servicios),
         ];
+    }
+
+    /**
+     * «Se cobra en»: UNIDAD, DÍA, HORA. Un honorario o un paquete no se
+     * miden —es uno, o son dos— y el campo ni aparece.
+     */
+    private static function campoUnidadDeCobro(): Select
+    {
+        return Select::make('unidad_dispensacion_id')
+            ->label('Se cobra en')
+            ->options(fn (): array => self::opcionesDeUnidadDeCobro())
+            ->searchable()
+            ->native(false)
+            ->live()
+            ->visible(fn (Get $get): bool => self::usaUnidadDeCobro($get))
+            ->hintIcon(
+                'heroicon-o-information-circle',
+                'En qué se cuenta lo que se cobra: una consulta es UNIDAD, una estancia es DÍA, un '
+                .'quirófano es HORA. Es lo que se imprime al lado de la cantidad.',
+            );
+    }
+
+    private static function usaUnidadDeCobro(Get $get): bool
+    {
+        return self::tipoElegido($get)?->usaUnidadDeCobro() ?? true;
+    }
+
+    /**
+     * Los precios del servicio, uno por pagador, en la misma ficha
+     * (`filament.forms.precios-de-la-ficha`). El estado es «pagador =>
+     * lo escrito»; lo guardan `CreateItem` y `EditItem` con
+     * `PreciosDeLaFicha`, en la misma transacción que el servicio.
+     */
+    private static function campoPrecios(): ViewField
+    {
+        return ViewField::make('precios')
+            ->hiddenLabel()
+            ->columnSpanFull()
+            ->view('filament.forms.precios-de-la-ficha')
+            ->afterStateHydrated(function (ViewField $component, ?Item $record): void {
+                $component->state(app(PreciosDeLaFicha::class)->estadoInicial($record));
+            })
+            ->viewData(fn (Get $get, ?Item $record, string $operation): array => self::datosDeLosPrecios($get, $record, $operation));
+    }
+
+    /**
+     * Lo que pinta la lista de precios: cada pagador con su precio de hoy,
+     * y en qué se cobra —«por DÍA, antes del ISV»—, que cambia mientras
+     * se llena la ficha.
+     *
+     * @return array{filas: list<array{clave: string, nombre: string, detalle: string, actual: string|null, pendiente: bool, lista: bool}>, porQue: string, variantes: int}
+     */
+    private static function datosDeLosPrecios(Get $get, ?Item $record, string $operation): array
+    {
+        $precios = app(PreciosDeLaFicha::class);
+        $vigentes = $precios->vigentes($record);
+        $lista = $vigentes[PreciosDeLaFicha::LISTA] ?? null;
+        $filas = [];
+
+        foreach ($precios->pagadores() as $pagador) {
+            $fila = $vigentes[$pagador['clave']] ?? null;
+            $convenio = $pagador['convenio'];
+            $esLista = ! $convenio instanceof Convenio;
+            $pendiente = $fila instanceof Tarifario && PreciosDeLaFicha::esPendiente($fila);
+
+            $detalle = match (true) {
+                $pendiente                                                             => 'Pendiente: el L 10 no es un precio, escriba el de verdad',
+                $fila instanceof Tarifario                                             => 'Desde el '.$fila->vigencia_desde->format('d/m/Y'),
+                $esLista                                                               => 'Lo paga el particular y todo seguro sin precio propio',
+                $lista instanceof Tarifario && ! PreciosDeLaFicha::esPendiente($lista) => 'Sin precio propio: paga el de lista, '.$lista->monto()->formateado(),
+                default                                                                => 'Sin precio propio: paga el de lista',
+            };
+
+            $filas[] = [
+                'clave'   => $pagador['clave'],
+                'nombre'  => $convenio instanceof Convenio ? $convenio->nombre : 'Precio de lista',
+                'detalle' => $detalle,
+                'actual'  => $fila instanceof Tarifario && ! $pendiente
+                    ? ItemPresentacion::sinCerosDeMas(Decimal::de($fila->precio)->redondeado(4))
+                    : null,
+                'pendiente' => $pendiente,
+                'lista'     => $esLista,
+            ];
+        }
+
+        $unidad = is_numeric($get('unidad_dispensacion_id'))
+            ? Unidad::query()->find((int) $get('unidad_dispensacion_id'))
+            : null;
+
+        $regimen = $get('regimen_isv');
+        $regimen = $regimen instanceof RegimenIsv ? $regimen : RegimenIsv::tryFrom(is_string($regimen) ? $regimen : '');
+
+        $porQue = trim(implode(', ', array_filter([
+            $unidad instanceof Unidad && self::usaUnidadDeCobro($get) ? 'Por '.$unidad->codigo : null,
+            $regimen?->esGravado() ? 'antes del ISV' : 'exento de ISV',
+            $operation === 'edit' ? 'el cambio rige desde hoy' : null,
+        ])));
+
+        return [
+            'filas'     => $filas,
+            'porQue'    => $porQue,
+            'variantes' => $record instanceof Item && $record->exists
+                ? ItemPresentacion::query()->where('item_id', $record->id)->count()
+                : 0,
+        ];
+    }
+
+    /**
+     * El porqué de los precios que cambian. Opcional: si queda vacío, el
+     * motivo dice que se cambió desde la ficha —y quién lo hizo queda en
+     * la fila—. Solo al editar: al crear no hay nada que explicar.
+     */
+    private static function campoPorQueCambianLosPrecios(): TextInput
+    {
+        return CampoMayusculas::make('precios_motivo')
+            ->label('Por qué cambian los precios (opcional)')
+            ->maxLength(150)
+            ->placeholder('Tarifa nueva firmada con el seguro, ajuste de dirección…')
+            ->visibleOn('edit')
+            ->columnSpanFull();
     }
 
     /**
@@ -379,9 +442,7 @@ final class ItemForm
         $explicacion = 'Lo pone el sistema con el prefijo de la categoría. No se cambia: es el que '
             .'sale impreso en cuentas y etiquetas.';
 
-        return $ambito === AmbitoCatalogo::Productos
-            ? $campo->hintIcon('heroicon-o-information-circle', $explicacion)
-            : $campo->helperText($explicacion);
+        return $campo->hintIcon('heroicon-o-information-circle', $explicacion);
     }
 
     /**
@@ -432,7 +493,10 @@ final class ItemForm
             ->native(false)
             ->live()
             ->afterStateUpdated($alElegir)
-            ->helperText('Propone cómo paga ISV, qué unidad usa y si su precio se deriva del costo.');
+            ->hintIcon(
+                'heroicon-o-information-circle',
+                'Propone cómo paga ISV, en qué se cobra y si su precio se deriva del costo.',
+            );
     }
 
     /**
@@ -473,11 +537,12 @@ final class ItemForm
                 self::proponerCodigo($state, $operation, $get, $set);
             });
 
-        return $ambito === AmbitoCatalogo::Productos
-            ? $campo->hintIcon('heroicon-o-information-circle', 'Se propone sola al elegir el tipo.')
-            : $campo->helperText(
-                'La hoja del tarifario: hospitalización, equipo médico, rayos X, laboratorio, consulta externa.'
-            );
+        return $campo->hintIcon(
+            'heroicon-o-information-circle',
+            $ambito === AmbitoCatalogo::Productos
+                ? 'Se propone sola al elegir el tipo.'
+                : 'La hoja del tarifario: hospitalización, equipo médico, rayos X, laboratorio, consulta externa.',
+        );
     }
 
     /**
@@ -640,7 +705,9 @@ final class ItemForm
                     'Principio activo, concentración y forma. El tamaño del envase no va acá: la caja '
                     .'de 100 y el frasco de 120 ml se cargan en Presentaciones.',
                 )
-            : $campo->helperText('Como debe salir impreso en la cuenta del paciente.');
+            : $campo
+                ->placeholder('ALIMENTACION POR DIA')
+                ->hintIcon('heroicon-o-information-circle', 'Como debe salir impreso en la cuenta del paciente.');
     }
 
     /**
@@ -719,25 +786,21 @@ final class ItemForm
     /**
      * La nota libre del ítem. Opcional en los dos lados.
      *
-     * En farmacia se llama «Nota», arranca de un renglón y crece al
-     * escribir: es lo que menos se llena, y no tiene que pesar como los
-     * campos obligatorios ni empujar la ficha hacia abajo.
+     * Se llama «Nota», arranca de un renglón y crece al escribir: es lo
+     * que menos se llena, y no tiene que pesar como los campos
+     * obligatorios ni empujar la ficha hacia abajo. En servicios, desde
+     * el 13-oct-2026, igual que en farmacia.
      */
     private static function campoDescripcion(AmbitoCatalogo $ambito): Textarea
     {
-        $campo = CampoMayusculas::area('descripcion')
-            ->columnSpanFull();
-
-        return $ambito === AmbitoCatalogo::Productos
-            ? $campo
-                ->label('Nota (opcional)')
-                ->rows(1)
-                ->autosize()
-                ->placeholder('En qué se diferencia de otro parecido')
-            : $campo
-                ->label('Descripción')
-                ->rows(2)
-                ->helperText('Opcional. Para aclarar qué incluye y qué no — se lee cuando alguien duda al cargar.');
+        return CampoMayusculas::area('descripcion')
+            ->columnSpanFull()
+            ->label('Nota (opcional)')
+            ->rows(1)
+            ->autosize()
+            ->placeholder($ambito === AmbitoCatalogo::Productos
+                ? 'En qué se diferencia de otro parecido'
+                : 'Qué incluye y qué no: se lee cuando alguien duda al cargar');
     }
 
     private static function dineroYLey(AmbitoCatalogo $ambito): Tab
@@ -974,48 +1037,6 @@ final class ItemForm
             .'Se crean en <strong>Catálogos y precios → Descuentos</strong>, con nombre y '
             .'porcentaje. Mientras tanto, a este ítem solo se le aplica lo del Artículo 30.</span>'
         );
-    }
-
-    private static function unidades(): Tab
-    {
-        return Tab::make('Unidades')
-            ->icon('heroicon-o-beaker')
-            /*
-             * Un honorario no se mide: es uno, o son dos. La pestaña
-             * entera desaparece en vez de mostrar un campo opcional que
-             * nadie puede contestar.
-             *
-             * Lo que se almacena la ve siempre, sea del tipo que sea: la
-             * unidad del kardex es obligatoria y sin ella no se puede
-             * costear ni descontar.
-             */
-            ->visible(fn (Get $get): bool => self::esFisico($get)
-                || (self::tipoElegido($get)?->usaUnidadDeCobro() ?? true))
-            ->schema([
-                Section::make(fn (Get $get): string => self::esFisico($get)
-                    ? 'Unidad del kardex'
-                    : 'Unidad de cobro')
-                    ->description(fn (Get $get): string => self::esFisico($get)
-                        ? 'La existencia se lleva SIEMPRE en la unidad mínima en la que se dispensa. '
-                        .'Llevarla en unidad de compra obliga a fracciones en cada salida y hace '
-                        .'imposible cuadrar. Cuántas caben en una caja lo dice cada presentación.'
-                        : 'En qué se cuenta lo que se cobra: una consulta es UNIDAD, una estancia es '
-                        .'DÍA, un quirófano es HORA. No lleva kardex, pero la unidad es lo que hace '
-                        .'legible la línea de la cuenta.')
-                    ->schema([
-                        Select::make('unidad_dispensacion_id')
-                            ->label(fn (Get $get): string => self::esFisico($get) ? 'Se dispensa en' : 'Se cobra en')
-                            ->options(fn (Get $get): array => self::esFisico($get)
-                                ? self::opcionesDeUnidad()
-                                : self::opcionesDeUnidadDeCobro())
-                            ->searchable()
-                            ->native(false)
-                            ->required(fn (Get $get): bool => self::esFisico($get))
-                            ->helperText(fn (Get $get): string => self::esFisico($get)
-                                ? 'Obligatorio: sin esto no se puede costear ni descontar del kardex.'
-                                : 'Opcional, pero es lo que se imprime al lado de la cantidad.'),
-                    ]),
-            ]);
     }
 
     private static function farmacia(): Tab
@@ -1260,59 +1281,6 @@ final class ItemForm
                     ])
                     ->columns(3),
             ]);
-    }
-
-    /**
-     * El código dibujado, con los dos enlaces para mandarlo a imprimir.
-     *
-     * Devuelve `HtmlString` porque el SVG se inserta tal cual. No hay
-     * dato del usuario sin escapar acá adentro: el código pasa por
-     * `CodigoDeBarras::codificable()`, que solo deja ASCII imprimible, y
-     * el nombre va por `e()`.
-     */
-    private static function etiqueta(?Item $record): HtmlString
-    {
-        if (! $record instanceof Item) {
-            return new HtmlString('');
-        }
-
-        $svg = CodigoDeBarras::svg($record->codigo, modulo: 2, alto: 50);
-
-        if ($svg === '') {
-            return new HtmlString(
-                '<p class="text-sm text-gray-500">Este código no se puede imprimir en barras: '
-                .'tiene caracteres fuera del ASCII imprimible.</p>'
-            );
-        }
-
-        $una = route('etiquetas.item', ['item' => $record->getKey(), 'formato' => 'media']);
-        $hoja = route('etiquetas.item', [
-            'item'    => $record->getKey(),
-            'formato' => 'hoja',
-            'copias'  => 30,
-        ]);
-
-        /*
-         * ⚠️ Estilos EN LÍNEA y no clases de Tailwind. Este HTML se
-         * inyecta como `HtmlString` y nunca pasa por el compilador de
-         * CSS, así que las clases no existen en la hoja final: el
-         * `flex gap-4` no separaba nada y los dos enlaces salían pegados
-         * —«Imprimir unaImprimir hoja de 30»—.
-         */
-        $enlace = 'style="text-decoration:underline;font-size:.875rem;font-weight:500" '
-            .'target="_blank" rel="noopener"';
-
-        return new HtmlString(
-            '<div style="display:flex;flex-direction:column;gap:.75rem;align-items:flex-start">'
-            .'<div style="display:inline-block;background:#fff;color:#000;padding:.75rem;border-radius:.5rem">'
-            .$svg
-            .'</div>'
-            .'<div style="display:flex;gap:1.5rem">'
-            .'<a href="'.e($una).'" '.$enlace.'>Etiqueta grande (media A4)</a>'
-            .'<a href="'.e($hoja).'" '.$enlace.'>Hoja de 30 chicas</a>'
-            .'</div>'
-            .'</div>'
-        );
     }
 
     /**
