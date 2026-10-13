@@ -23,7 +23,7 @@ final class CajaException extends SihlaException
     public static function sinTurnoAbierto(): self
     {
         return new self(
-            'No tenés un turno de caja abierto. Abrí tu turno en «Caja» —con el fondo con el que arrancás— '
+            'No hay un turno de caja abierto. Abrí el turno en «Caja» —con el fondo con el que arranca la gaveta— '
             .'y volvé a recibir el abono. Sin turno, el efectivo no cuadra con nadie al cerrar.'
         );
     }
@@ -41,10 +41,12 @@ final class CajaException extends SihlaException
      * 🔴 LA GAVETA ES UNA SOLA
      * ─────────────────────────────────────────────────────────────────
      *
-     * Si el turno A se fue sin cerrar, el turno B no puede empezar a
-     * recibir plata en la misma gaveta: al final de la noche habría un
-     * solo montón de billetes con dos personas responsables, que es
-     * exactamente lo que el arqueo existe para impedir.
+     * Si el turno A sigue abierto, no se abre el B en la misma gaveta: al
+     * final de la noche habría un solo montón de billetes con dos
+     * arqueos, que es exactamente lo que el arqueo existe para impedir.
+     *
+     * El mensaje cambia según quién pregunta: a quien puede cerrar el A
+     * se le dice que lo cierre; a los demás, quién lo tiene que cerrar.
      *
      * ⚠️ Bloquea ABRIR TURNO, no el acceso al sistema. Quien llega
      * igual puede consultar una cuenta o reimprimir una factura; lo que
@@ -52,11 +54,25 @@ final class CajaException extends SihlaException
      * el sistema entero termina en que use la clave de otro, y ahí se
      * pierde el rastro que todo esto sostiene.
      */
-    public static function otraPersonaTieneLaGaveta(string $persona, string $numero, string $desde): self
+    public static function laGavetaYaEstaAbierta(string $turno, string $quien, string $desde, bool $loPodesCerrar): self
     {
+        return new self($loPodesCerrar
+            ? "El {$turno} sigue abierto (lo abrió {$quien} a las {$desde}). Cerralo con su arqueo y después se abre el que sigue."
+            : "{$quien} abrió el {$turno} a las {$desde} y la gaveta es una sola. Lo cierra quien es de ese turno o la administración; después se abre el que sigue.");
+    }
+
+    /**
+     * Quien quiere cobrar en la gaveta, o cerrarla, y no es de ese turno.
+     */
+    public static function noEsTuTurno(string $turno, ?string $elTuyo): self
+    {
+        $suyo = $elTuyo === null || trim($elTuyo) === ''
+            ? 'No tenés un turno asignado en tu usuario'
+            : 'Tu turno es el '.mb_strtoupper(trim($elTuyo), 'UTF-8');
+
         return new self(
-            "{$persona} tiene el turno {$numero} abierto desde las {$desde}. La gaveta es una sola: "
-            .'tiene que cerrar su arqueo antes de que abras el tuyo.'
+            "La gaveta está en el {$turno}. {$suyo}: cobra y cierra quien es de ese turno o la administración. "
+            .'Si hoy lo cubrís vos, pedí que te asignen ese turno en tu usuario.'
         );
     }
 

@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\TurnosDeCaja;
 
+use App\Filament\Pages\Caja;
 use App\Filament\Resources\TurnosDeCaja\Pages\ListTurnosDeCaja;
 use App\Filament\Resources\TurnosDeCaja\Tables\TurnosDeCajaTable;
 use App\Models\TurnoDeCaja;
 use BackedEnum;
 use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -27,7 +29,7 @@ class TurnoDeCajaResource extends Resource
 {
     protected static ?string $model = TurnoDeCaja::class;
 
-    protected static string|BackedEnum|null $navigationIcon = null;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClock;
 
     protected static ?string $slug = 'turnos-de-caja';
 
@@ -58,6 +60,20 @@ class TurnoDeCajaResource extends Resource
     public static function getNavigationGroup(): ?string
     {
         return 'Atención';
+    }
+
+    /**
+     * Cuelga de «Caja» en el menú y se esconde con ella: aparece cuando se
+     * está en Caja, en Abonos recibidos o en Turnos de caja, y fuera de ahí
+     * el menú queda corto.
+     *
+     * Si un rol llegara a ver esto sin poder entrar a Caja, Filament botaría
+     * el renglón entero (un hijo sin papá no se pinta); por eso, sin Caja,
+     * queda suelto en el grupo.
+     */
+    public static function getNavigationParentItem(): ?string
+    {
+        return Caja::canAccess() ? Caja::getNavigationLabel() : null;
     }
 
     /**

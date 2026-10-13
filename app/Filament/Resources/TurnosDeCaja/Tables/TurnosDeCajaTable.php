@@ -37,12 +37,19 @@ class TurnosDeCajaTable
                     ->weight('medium')
                     ->searchable(['numero', 'nombre']),
 
+                /*
+                 * Quién abrió y quién contó pueden ser personas distintas
+                 * (13-oct-2026): la administración abre y la cajera del
+                 * turno cierra. El que contó es el que responde por el
+                 * arqueo, así que va debajo cuando no es el mismo.
+                 */
                 TextColumn::make('usuario.name')
-                    ->label('Cajero')
+                    ->label('Abrió')
+                    ->description(fn (TurnoDeCaja $record): ?string => self::quienCerro($record))
                     ->searchable(),
 
                 TextColumn::make('abierto_en')
-                    ->label('Abrió')
+                    ->label('Cuándo')
                     ->dateTime('d/m/Y H:i')
                     ->sortable()
                     ->description(fn (TurnoDeCaja $record): string => self::cierre($record)),
@@ -94,6 +101,19 @@ class TurnosDeCajaTable
                     ->formatStateUsing(fn (EstadoTurnoDeCaja $state): string => $state->etiqueta())
                     ->color(fn (EstadoTurnoDeCaja $state): string => $state->color()),
             ]);
+    }
+
+    /**
+     * «Cerró Rosa» cuando la que contó no es quien abrió; nada si es la
+     * misma persona o si sigue abierto.
+     */
+    private static function quienCerro(TurnoDeCaja $turno): ?string
+    {
+        if ($turno->cerrado_por === null || $turno->cerrado_por === $turno->usuario_id) {
+            return null;
+        }
+
+        return 'Cerró '.($turno->cerradoPor->name ?? 'otra persona');
     }
 
     /**

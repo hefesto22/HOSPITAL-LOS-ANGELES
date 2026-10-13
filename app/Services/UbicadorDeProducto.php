@@ -658,6 +658,53 @@ final class UbicadorDeProducto
     }
 
     /**
+     * Un envase del producto se reemplazó por otro —el BLISTER X 10 pasó
+     * a ser de 12 (13-oct-2026)— y los lugares que lo tenían marcado pasan
+     * a tener el nuevo. Con `$nuevo` nulo, el envase se quitó y el lugar
+     * se queda con lo demás que tenía.
+     *
+     * Cada lugar que cambia se cierra y se abre otro, igual que cuando
+     * cambia lo que hay a mano: «¿qué había en el carrito el sábado?»
+     * sigue teniendo respuesta. Los que dicen «de todo» no cambian: ya
+     * traen todo lo que la ficha tenga.
+     *
+     * @return int cuántos lugares cambiaron
+     */
+    public function cambiarEnvase(Item $item, int $viejo, ?int $nuevo, string $motivo): int
+    {
+        $abiertas = UbicacionDeProducto::query()
+            ->deTodasLasSedes()
+            ->abiertas()
+            ->where('item_id', $item->id)
+            ->where('de_todo', false)
+            ->whereExists(fn ($sub) => $sub
+                ->selectRaw('1')
+                ->from('ubicacion_envases')
+                ->whereColumn('ubicacion_envases.ubicacion_id', 'ubicaciones_de_producto.id')
+                ->where('ubicacion_envases.item_presentacion_id', $viejo))
+            ->get();
+
+        foreach ($abiertas as $ubicacion) {
+            $marcados = [];
+
+            foreach (self::loQueHay($ubicacion) ?? [] as $id) {
+                $queda = $id === $viejo ? $nuevo : $id;
+
+                if ($queda !== null) {
+                    $marcados[] = $queda;
+                }
+            }
+
+            $quedan = $this->normalizar($item, array_values(array_unique($marcados)));
+
+            self::cerrar($ubicacion, $motivo);
+            self::reabrir($ubicacion, $quedan);
+        }
+
+        return $abiertas->count();
+    }
+
+    /**
      * Deja el lugar con `$marcados`: si ya decía eso no lo toca; si decía
      * otra cosa, lo cierra y abre otro.
      *
@@ -699,6 +746,27 @@ final class UbicadorDeProducto
             'sede_id'    => $almacen->sede_id,
             'item_id'    => $item->id,
             'almacen_id' => $almacen->id,
+            'desde'      => now(),
+            'de_todo'    => $marcados === null,
+        ]);
+
+        if ($marcados !== null && $marcados !== []) {
+            $nueva->envases()->attach($marcados);
+        }
+    }
+
+    /**
+     * El mismo lugar, otra fila: la sede y el almacén de la que se cerró,
+     * sin tener que cargar el almacén (puede ser de otra sede).
+     *
+     * @param list<int>|null $marcados
+     */
+    private static function reabrir(UbicacionDeProducto $cerrada, ?array $marcados): void
+    {
+        $nueva = UbicacionDeProducto::query()->create([
+            'sede_id'    => $cerrada->sede_id,
+            'item_id'    => $cerrada->item_id,
+            'almacen_id' => $cerrada->almacen_id,
             'desde'      => now(),
             'de_todo'    => $marcados === null,
         ]);

@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Domain\Enums\AplicacionDeDescuento;
 use App\Domain\Exceptions\DescuentoNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Jobs\AjustarPreciosAlDescuentoPorEdad;
 use App\Models\Descuento;
 use App\Support\TextoCanonico;
 use Carbon\CarbonInterface;
@@ -94,7 +95,7 @@ final class FijadorDeDescuento
 
         $dia = $desde->copy()->startOfDay();
 
-        return DB::transaction(function () use (
+        $fijado = DB::transaction(function () use (
             $nombre,
             $aplicaA,
             $porcentaje,
@@ -161,6 +162,18 @@ final class FijadorDeDescuento
                 'vigencia_hasta' => null,
             ]);
         });
+
+        /*
+         * Un descuento por edad que se aplica solo también entra al
+         * divisor de la lista de farmacia (`ResolutorDeDescuentoLegal::
+         * maximoParaItem`): si cambia, los precios se acomodan, igual que
+         * con la ley. Uno manual no: ese sale del margen a sabiendas.
+         */
+        if ($aplicaA->esAutomatico() && ! $dia->greaterThan(now()->startOfDay())) {
+            AjustarPreciosAlDescuentoPorEdad::dispatch()->afterCommit();
+        }
+
+        return $fijado;
     }
 
     private function limpio(?string $texto): ?string

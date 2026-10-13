@@ -31,6 +31,7 @@ use stdClass;
  * @property int $id
  * @property string $name
  * @property string $email
+ * @property string|null $turno
  */
 class User extends Authenticatable implements FilamentUser
 {

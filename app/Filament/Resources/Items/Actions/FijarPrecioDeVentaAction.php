@@ -9,13 +9,17 @@ use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Domain\ValueObjects\PrecioDeForma;
 use App\Domain\ValueObjects\PreciosPorForma;
+use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Sede;
+use App\Models\Tarifario;
 use App\Models\Unidad;
 use App\Services\CalculadoraDePreciosPorForma;
 use App\Services\FijadorDePreciosPorForma;
+use App\Services\ResumenDePrecios;
+use App\Support\ContextoSede;
 use App\Support\NumeroDeFormulario;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -29,9 +33,9 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\HtmlString;
 
 /**
  * «Fijar el precio de venta» de un producto: UN número y la tabla entera.
@@ -56,14 +60,29 @@ use Illuminate\Support\HtmlString;
  *
  * El cálculo vive en `CalculadoraDePreciosPorForma` y lo que se guarda en
  * `FijadorDePreciosPorForma` (§9.A11). Esta clase solo pregunta y muestra.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * CAMBIAR EL PRECIO ES ESTA MISMA VENTANA (13-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Mauricio: «no se puede editar», «debería decir en cuánto se venderá
+ * cada cosa, una tabla resumen». Con un precio vigente el botón dice
+ * «Cambiar el precio» y la ventana abre con el mínimo, los recargos y la
+ * sede de hoy ya puestos, y la tabla de «Así se va a vender» llena desde
+ * el primer momento, con lo de hoy al lado de lo nuevo. Se cambia un
+ * número y la tabla se mueve sola.
+ *
+ * La sede viene con la de quien mira y solo se pregunta si hay más de
+ * una: con «Todas las sedes» por defecto, el precio nuevo quedaba debajo
+ * del de la sede —que le gana— y no cambiaba nada en el mostrador.
  */
 final class FijarPrecioDeVentaAction
 {
     public static function make(): Action
     {
         return Action::make('fijarPrecioDeVenta')
-            ->label('Fijar el precio de venta')
-            ->icon(Heroicon::OutlinedPlus)
+            ->label(fn (RelationManager $livewire): string => self::yaTienePrecio($livewire) ? 'Cambiar el precio' : 'Fijar el precio de venta')
+            ->icon(fn (RelationManager $livewire): Heroicon => self::yaTienePrecio($livewire) ? Heroicon::OutlinedPencilSquare : Heroicon::OutlinedPlus)
             /*
              * Solo en lo que se almacena —medicamentos e insumos—, y con
              * el mismo permiso que fijar cualquier precio: `update` sobre
@@ -74,32 +93,45 @@ final class FijarPrecioDeVentaAction
 
                 return $item instanceof Item && $item->mueveInventario() && Gate::allows('update', $item);
             })
-            ->modalHeading('Fijar el precio de venta')
+            ->modalHeading(fn (RelationManager $livewire): string => self::yaTienePrecio($livewire)
+                ? 'Cambiar el precio de venta'
+                : 'Fijar el precio de venta')
             ->modalDescription(fn (RelationManager $livewire): string => 'Escribí lo menos que se puede cobrar por '
-                .self::laPrincipal($livewire).': lo que paga la cuarta edad. Menos de eso es pérdida. La '
-                .'lista para todos y las demás formas de venta se calculan solas.')
-            ->modalSubmitActionLabel('Fijar')
-            ->modalWidth('3xl')
+                .self::laPrincipal($livewire).' —lo que paga la cuarta edad—. Todo lo demás se calcula solo, '
+                .'y abajo se ve a cuánto se va a vender cada cosa.')
+            ->modalSubmitActionLabel('Guardar los precios')
+            ->modalWidth('4xl')
             ->fillForm(function (RelationManager $livewire): array {
                 $item = $livewire->getOwnerRecord();
-                $recargos = $item instanceof Item
-                    ? app(CalculadoraDePreciosPorForma::class)->recargosPara($item, now())
-                    : null;
+
+                if (! $item instanceof Item) {
+                    return ['vigencia_desde' => now()->toDateString()];
+                }
+
+                /*
+                 * Con lo de hoy, si se sabe de dónde salió: el mínimo que
+                 * se escribió la vez pasada y sus recargos. Si no —un
+                 * precio de antes de esta ventana—, los de la política.
+                 */
+                $origen = app(ResumenDePrecios::class)->de($item, PreciosRelationManager::sedeActual(), now())['origen'];
+                $recargos = $origen ?? app(CalculadoraDePreciosPorForma::class)->recargosPara($item, now());
 
                 return [
-                    'recargo_envase' => $recargos === null ? null : self::porciento($recargos['envase']),
-                    'recargo_suelta' => $recargos === null ? null : self::porciento($recargos['suelta']),
+                    'minimo'         => $origen === null ? null : ItemPresentacion::sinCerosDeMas($origen['minimo']->redondeado(2)),
+                    'recargo_envase' => self::porciento($recargos['envase']),
+                    'recargo_suelta' => self::porciento($recargos['suelta']),
+                    'sede_id'        => ContextoSede::actualId(),
                     'vigencia_desde' => now()->toDateString(),
                 ];
             })
             ->schema([
                 Grid::make(['default' => 1, 'sm' => 2])->schema([
                     TextInput::make('minimo')
-                        ->label(fn (RelationManager $livewire): string => 'Mínimo de '.self::laPrincipal($livewire))
+                        ->label(fn (RelationManager $livewire): string => 'Lo mínimo por '.self::laPrincipal($livewire))
                         ->prefix('L')
                         ->required()
                         ->autofocus()
-                        ->live(onBlur: true)
+                        ->live(debounce: 500)
                         /*
                          * `regex` y no `numeric`: `numeric` acepta «1e3»,
                          * que bcmath lee como cero.
@@ -108,19 +140,21 @@ final class FijarPrecioDeVentaAction
                         ->validationMessages([
                             'regex' => 'Escribí solo el número, con punto decimal: 120 o 87.50.',
                         ])
-                        ->helperText('Lo que paga la cuarta edad, con el 40 % de ley ya descontado.'),
+                        ->helperText('Lo que paga la cuarta edad, con el descuento de ley ya descontado.'),
 
-                    Select::make('sede_id')
-                        ->label('En qué sede')
-                        ->options(fn (): array => Sede::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
-                        ->placeholder('Todas las sedes')
-                        ->native(false),
+                    DatePicker::make('vigencia_desde')
+                        ->label('Rige desde')
+                        ->required()
+                        ->live()
+                        ->native(false)
+                        ->displayFormat('d/m/Y')
+                        ->helperText('Lo de antes queda en el historial. Hoy mismo se puede corregir si nadie cobró con él.'),
 
                     TextInput::make('recargo_envase')
                         ->label(fn (RelationManager $livewire): string => 'Recargo de '.self::elMasChico($livewire))
                         ->suffix('%')
                         ->required()
-                        ->live(onBlur: true)
+                        ->live(debounce: 500)
                         ->rule('regex:/^\d{1,3}(\.\d{1,2})?$/')
                         ->validationMessages(['regex' => 'Solo el número: 10, o 12.5.'])
                         ->visible(fn (RelationManager $livewire): bool => self::elMasChico($livewire) !== null)
@@ -130,24 +164,29 @@ final class FijarPrecioDeVentaAction
                         ->label(fn (RelationManager $livewire): string => 'Recargo de '.self::laSuelta($livewire).' suelta')
                         ->suffix('%')
                         ->required()
-                        ->live(onBlur: true)
+                        ->live(debounce: 500)
                         ->rule('regex:/^\d{1,3}(\.\d{1,2})?$/')
                         ->validationMessages(['regex' => 'Solo el número: 25, o 22.5.'])
                         ->visible(fn (RelationManager $livewire): bool => self::principalDe($livewire) instanceof ItemPresentacion)
-                        ->helperText('Lo suelto cuesta más: abrir la caja deja tabletas que se vencen.'),
+                        ->helperText('Lo suelto cuesta más: abrir la caja deja unidades que se vencen.'),
 
-                    DatePicker::make('vigencia_desde')
-                        ->label('Vigente desde')
-                        ->required()
+                    /*
+                     * Solo si hay más de una sede. Con una sola, se fija
+                     * para la de quien mira (`fillForm`).
+                     */
+                    Select::make('sede_id')
+                        ->label('En qué sede')
+                        ->options(fn (): array => Sede::query()->orderBy('nombre')->pluck('nombre', 'id')->all())
+                        ->placeholder('Todas las sedes')
                         ->native(false)
-                        ->displayFormat('d/m/Y')
-                        ->helperText('Posterior a los precios que ya hay.'),
+                        ->visible(fn (): bool => Sede::query()->vigentesEn(now())->count() > 1),
                 ]),
 
                 Placeholder::make('asi_quedan')
                     ->hiddenLabel()
                     ->columnSpanFull()
-                    ->content(fn (Get $get, RelationManager $livewire): HtmlString => self::tabla(
+                    ->content(fn (Get $get, RelationManager $livewire): View => self::tabla(
+                        $livewire,
                         self::calcular($livewire, $get('minimo'), $get('recargo_envase'), $get('recargo_suelta'), $get('vigencia_desde')),
                     )),
 
@@ -192,7 +231,7 @@ final class FijarPrecioDeVentaAction
                     $fijador->fijar(
                         item: $item,
                         precios: $precios,
-                        sede: is_numeric($data['sede_id'] ?? null) ? Sede::query()->find((int) $data['sede_id']) : null,
+                        sede: self::sedeElegida($data),
                         motivo: is_string($data['motivo'] ?? null) ? $data['motivo'] : '',
                         desde: $desde,
                     );
@@ -211,7 +250,7 @@ final class FijarPrecioDeVentaAction
 
                 Notification::make()
                     ->success()
-                    ->title('Precios fijados')
+                    ->title('Precios guardados · rigen desde el '.$desde->format('d/m/Y'))
                     ->body(implode(' · ', array_map(
                         static fn (PrecioDeForma $forma): string => $forma->rotulo.' '.$forma->lista->formateado(),
                         $precios->formas,
@@ -257,70 +296,78 @@ final class FijarPrecioDeVentaAction
     }
 
     /**
-     * La tabla que se lee antes de apretar «Fijar».
+     * «Así se va a vender»: cada forma con lo que cuesta hoy y lo que va a
+     * costar, y lo que paga cada edad con descuento de ley.
      *
-     * Colores con transparencia y estilos en línea: se ve igual en tema
-     * claro y oscuro, y el CSS del panel viene compilado (§9.A7).
+     * De la más grande a la suelta, que es como se lee una lista de
+     * precios de farmacia.
      */
-    private static function tabla(?PreciosPorForma $precios): HtmlString
+    private static function tabla(RelationManager $livewire, ?PreciosPorForma $precios): View
     {
-        if (! $precios instanceof PreciosPorForma) {
-            return new HtmlString(
-                '<div style="font-size:.875rem;opacity:.7">Escribí el mínimo y acá aparece cuánto se '
-                .'cobra cada forma de venta.</div>'
-            );
+        $item = $livewire->getOwnerRecord();
+        $hoy = [];
+
+        if ($item instanceof Item) {
+            foreach (app(ResumenDePrecios::class)->de($item, PreciosRelationManager::sedeActual(), now())['formas'] as $forma) {
+                $hoy[$forma['clave']] = $forma['lista'];
+            }
         }
 
+        $filas = [];
         $edades = [];
-        $primera = $precios->formas[0] ?? null;
 
-        foreach ($primera instanceof PrecioDeForma ? $primera->porEdad : [] as ['rango' => $rango]) {
-            $edades[] = '<th style="text-align:right;padding:.4rem .6rem;font-weight:600">'.e($rango->etiqueta()).'</th>';
+        foreach ($precios instanceof PreciosPorForma ? $precios->formas : [] as $forma) {
+            $antes = $hoy[$forma->clave] ?? null;
+            $edades = array_map(fn (array $edad): string => $edad['rango']->etiqueta(), $forma->porEdad);
+
+            $filas[] = [
+                'rotulo'    => $forma->rotulo,
+                'contenido' => $forma->contenido,
+                'principal' => $forma->esLaPrincipal,
+                'recargo'   => $forma->esLaPrincipal || $forma->recargo->esCero() ? null : '+'.$forma->recargo->comoPorcentaje(),
+                'lista'     => $forma->lista,
+                'porUnidad' => $forma->esLaSuelta() ? null : Monto::de($forma->listaPorUnidad()->redondeado(2)),
+                'antes'     => $antes,
+                'cambio'    => $antes === null ? 'nuevo' : ($forma->lista->mayorQue($antes) ? 'sube' : ($forma->lista->menorQue($antes) ? 'baja' : 'igual')),
+                'porEdad'   => array_map(fn (array $edad): Monto => $edad['paga'], $forma->porEdad),
+            ];
         }
 
-        $filas = '';
+        usort($filas, fn (array $una, array $otra): int => $otra['contenido']->comparar($una['contenido']));
 
-        foreach ($precios->formas as $forma) {
-            $filas .= self::fila($forma);
-        }
-
-        return new HtmlString(
-            '<div style="border:1px solid rgba(245,158,11,.30);background:rgba(245,158,11,.06);'
-            .'border-radius:.625rem;padding:.5rem .25rem;overflow-x:auto">'
-            .'<table style="width:100%;border-collapse:collapse;font-size:.875rem">'
-            .'<thead><tr style="opacity:.75">'
-            .'<th style="text-align:left;padding:.4rem .6rem;font-weight:600">Forma</th>'
-            .'<th style="text-align:right;padding:.4rem .6rem;font-weight:600">Lista (todos)</th>'
-            .implode('', $edades)
-            .'</tr></thead><tbody>'.$filas.'</tbody></table>'
-            .'<div style="font-size:.75rem;opacity:.7;padding:.4rem .6rem 0">La lista se redondea hacia '
-            .'arriba, así que la cuarta edad nunca paga menos que el mínimo.</div>'
-            .'</div>'
-        );
+        return view('filament.forms.asi-se-vendera', [
+            'filas'  => $filas,
+            'edades' => $edades,
+            'hayHoy' => $hoy !== [],
+        ]);
     }
 
-    private static function fila(PrecioDeForma $forma): string
+    /**
+     * ¿Ya tiene un precio de lista que rige hoy? Cambia el botón de
+     * «Fijar» a «Cambiar».
+     */
+    private static function yaTienePrecio(RelationManager $livewire): bool
     {
-        $marca = $forma->esLaPrincipal
-            ? ' <span style="color:rgb(245 158 11);font-weight:600">★ principal</span>'
-            : ($forma->recargo->esCero() ? '' : ' <span style="opacity:.7">+'.e($forma->recargo->comoPorcentaje()).'</span>');
+        $item = $livewire->getOwnerRecord();
 
-        $unitario = $forma->esLaSuelta()
-            ? ''
-            : '<div style="font-size:.75rem;opacity:.65">'
-                .e(Monto::de($forma->listaPorUnidad())->formateado()).' c/u</div>';
+        return $item instanceof Item && Tarifario::query()
+            ->where('item_id', $item->id)
+            ->whereNull('convenio_id')
+            ->vigentesEn(now())
+            ->exists();
+    }
 
-        $porEdad = '';
+    /**
+     * La sede elegida o, si no se preguntó porque hay una sola, la de
+     * quien está fijando el precio.
+     *
+     * @param array<string, mixed> $data
+     */
+    private static function sedeElegida(array $data): ?Sede
+    {
+        $id = array_key_exists('sede_id', $data) ? $data['sede_id'] : ContextoSede::actualId();
 
-        foreach ($forma->porEdad as ['paga' => $paga]) {
-            $porEdad .= '<td style="text-align:right;padding:.4rem .6rem">'.e($paga->formateado()).'</td>';
-        }
-
-        return '<tr style="border-top:1px solid rgba(127,127,127,.18)">'
-            .'<td style="padding:.4rem .6rem"><strong>'.e($forma->rotulo).'</strong>'.$marca.'</td>'
-            .'<td style="text-align:right;padding:.4rem .6rem"><strong>'.e($forma->lista->formateado()).'</strong>'.$unitario.'</td>'
-            .$porEdad
-            .'</tr>';
+        return is_numeric($id) ? Sede::query()->find((int) $id) : null;
     }
 
     // ── Lo que se pregunta del producto ───────────────────────────────

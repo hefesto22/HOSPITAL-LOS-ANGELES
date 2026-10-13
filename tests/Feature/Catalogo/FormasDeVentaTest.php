@@ -9,6 +9,7 @@ use App\Filament\Resources\Items\Schemas\FormasDeVenta;
 use App\Models\Almacen;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
+use App\Models\Lote;
 use App\Models\Unidad;
 use App\Services\FormasDeCobro;
 use App\Services\RegistradorDeRecepcion;
@@ -194,7 +195,7 @@ it('una forma sin mercaderia se corrige y se quita', function (): void {
         ->and(ItemPresentacion::withTrashed()->where('item_id', $item->id)->count())->toBe(1);
 })->note('Una forma que nunca se usó no explica ningún lote ni ninguna factura: se puede corregir o quitar.');
 
-it('🔴 una forma por la que ya entro mercaderia no cambia de tamaño ni se quita', function (): void {
+it('🔴 una forma por la que ya entro mercaderia no se quita, y cambiarla la reemplaza desde hoy', function (): void {
     $item = unProductoQueSeDispensaEn();
 
     guardarFormasDeVenta($item, [unaFormaDeVenta('CAJA', '100')]);
@@ -202,13 +203,25 @@ it('🔴 una forma por la que ya entro mercaderia no cambia de tamaño ni se qui
 
     entraUnaCajaDe($caja);
 
-    expect(fn () => guardarFormasDeVenta($item, [unaFormaDeVenta('CAJA', '50', $caja->id)]))
+    expect(fn () => guardarFormasDeVenta($item, []))
         ->toThrow(FormasDeVentaException::class)
-        ->and(fn () => guardarFormasDeVenta($item, []))
-        ->toThrow(FormasDeVentaException::class)
-        ->and($caja->refresh()->unidades_por_presentacion)->toBe('100.0000')
-        ->and($caja->trashed())->toBeFalse();
-})->note('🔴 §9.G11: si la CAJA X 100 pasara a ser de 50, cada lote que entró en esa caja se leería con la mitad, y eso se descubre en el conteo.');
+        ->and($caja->refresh()->trashed())->toBeFalse();
+
+    $cambios = app(SincronizadorDeFormasDeVenta::class)->sincronizar($item, [unaFormaDeVenta('CAJA', '50', $caja->id)]);
+
+    $nueva = presentacionDeFormaDeVenta($item, 'CAJA');
+    $lote = Lote::query()->where('item_id', $item->id)->sole();
+
+    expect($caja->refresh()->trashed())->toBeTrue()
+        ->and($caja->unidades_por_presentacion)->toBe('100.0000')
+        ->and($caja->es_predeterminada)->toBeFalse()
+        ->and($nueva->unidades_por_presentacion)->toBe('50.0000')
+        ->and($nueva->es_predeterminada)->toBeTrue()
+        ->and($lote->presentacion->unidades_por_presentacion)->toBe('100.0000')
+        ->and($cambios->cambios)->toBe(['CAJA X 100 TAB PASÓ A CAJA X 50 TAB']);
+
+    expect($nueva->id)->not->toBe($caja->id);
+})->note('🔴 §9.G11: si la CAJA X 100 pasara a decir 50 en su fila, cada lote que entró en esa caja se leería con la mitad. Por eso se reemplaza: el lote sigue diciendo 100 (Mauricio, 13-oct-2026: «debería poder editarla»).');
 
 it('la misma forma dos veces no se guarda', function (): void {
     $item = unProductoQueSeDispensaEn();

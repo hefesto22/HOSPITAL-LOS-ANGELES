@@ -13,8 +13,9 @@ use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Sede;
-use App\Models\Tarifario;
 use App\Services\FijadorDePrecio;
+use App\Services\ResumenDePrecios;
+use App\Support\ContextoSede;
 use App\Support\NumeroDeFormulario;
 use Carbon\Carbon;
 use Filament\Actions\Action;
@@ -26,36 +27,57 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Table;
 use Illuminate\Support\Facades\Gate;
 
 /**
- * Los precios de un ítem — el tarifario, visto desde el producto.
+ * Los precios de un producto, en su ficha.
  *
  * ─────────────────────────────────────────────────────────────────────
- * ACÁ NO SE EDITA: SE FIJA
+ * PRIMERO LO QUE SE COBRA HOY; LO DE ANTES, APARTE (13-oct-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * No hay botón de editar ni de borrar, igual que en márgenes objetivo.
- * Cambiar un precio es cerrar el vigente y abrir uno nuevo con fecha: un
- * `UPDATE` sobre la fila vigente borraría la respuesta a «¿por qué esta
- * factura de marzo dice L 29.33?», y una factura que no se puede explicar
- * es un problema ante el SAR.
+ * Hasta hoy era la tabla del tarifario tal cual: siete columnas, el
+ * porqué repetido en cada renglón y dos filas que decían «Vigente» para
+ * la tableta —la de la sede y la de todas—. Mauricio: «se ve demasiado
+ * saturado y no se entiende cómo funciona», «¿cuál es el precio
+ * vigente?».
+ *
+ * Ahora es una vista propia (`ResumenDePrecios` arma los datos):
+ *
+ *   1. A cuánto se vende hoy cada forma —caja, blíster, suelta— y lo
+ *      que paga cada edad con la ley de hoy. Resuelto con la misma
+ *      regla que el cargo, así que lo que se ve es lo que se cobra.
+ *   2. Cómo funciona, en una línea: el mínimo de la principal y los
+ *      recargos de los que salió todo.
+ *   3. Lo demás —cerrado, de otra sede, tapado, próximo—, plegado y
+ *      agrupado por cambio.
  *
  * ─────────────────────────────────────────────────────────────────────
- * SE MUESTRAN TAMBIÉN LOS VENCIDOS
+ * ACÁ NO SE EDITA UNA FILA: SE CAMBIA EL PRECIO
  * ─────────────────────────────────────────────────────────────────────
  *
- * Esconder los precios viejos convertiría la tabla en un campo de
- * configuración con pasos de más. Son el historial, y es lo único que
- * contesta por las facturas de ayer.
+ * «Cambiar el precio» abre la misma ventana que «Fijar», con el mínimo y
+ * los recargos de hoy ya puestos. Lo nuevo rige desde la fecha que se
+ * elija y lo viejo queda en el historial: un `UPDATE` sobre la fila
+ * vigente borraría la respuesta a «¿por qué esta factura de marzo dice
+ * L 29.33?». El error de tecleo del mismo día sí se corrige, si nadie
+ * cobró con él (`FijadorDePreciosPorForma`).
+ *
+ * ⚠️ La vista no lleva la tabla de Filament, y es la tabla la que pinta
+ * las ventanas de las acciones: por eso `precios-del-item.blade.php`
+ * incluye `<x-filament-actions::modals />` a mano. Sin eso el botón no
+ * abre nada.
  */
 class PreciosRelationManager extends RelationManager
 {
     protected static string $relationship = 'precios';
 
     protected static ?string $title = 'Precios';
+
+    /**
+     * @var view-string
+     */
+    protected string $view = 'filament.resources.items.precios-del-item';
 
     protected static function getModelLabel(): ?string
     {
@@ -68,218 +90,35 @@ class PreciosRelationManager extends RelationManager
     }
 
     /**
-     * Lo que cuesta el envase entero.
-     *
-     * El tarifario guarda el precio por unidad de dispensación; si la
-     * fila declara un envase, se multiplica por su contenido. Sin envase
-     * —la fila de respaldo— el precio ya es el que se cobra.
+     * @return array<string, mixed>
      */
-    private static function porEnvase(Tarifario $tarifario): Monto
-    {
-        /*
-         * El envase entero exacto, cuando la fila lo tiene: L 25.00 el
-         * blíster de 14, y no los L 25.00 que da 1.7857 × 14 redondeado.
-         */
-        $entero = $tarifario->montoDelEnvase();
-
-        if ($entero instanceof Monto) {
-            return $entero;
-        }
-
-        $presentacion = $tarifario->presentacion;
-
-        if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
-            return $tarifario->monto();
-        }
-
-        return Monto::de(
-            Decimal::de($tarifario->precio)
-                ->por(Decimal::de($presentacion->unidades_por_presentacion))
-                ->redondeado(2)
-        );
-    }
-
-    /**
-     * De dónde sale la cifra de arriba: «L 61.11 el ML», o «antes del ISV
-     * · L 61.11 el ML» en lo que sí lleva impuesto.
-     *
-     * El precio unitario no se esconde. Es el que se cobra cuando el
-     * producto se fracciona, y es el que hay que mirar para comparar dos
-     * envases del mismo jarabe.
-     */
-    private function comoSeCalcula(Tarifario $tarifario): ?string
-    {
-        $isv = $this->llevaIsv() ? 'antes del ISV' : null;
-        $presentacion = $tarifario->presentacion;
-
-        if (! $presentacion instanceof ItemPresentacion || ! is_numeric($presentacion->unidades_por_presentacion)) {
-            return $isv;
-        }
-
-        $unidad = $tarifario->item?->unidadDispensacion?->codigo;
-        $unitario = $tarifario->monto()->formateado().($unidad === null ? ' por unidad' : ' el '.$unidad);
-
-        return $isv === null ? $unitario : $isv.' · '.$unitario;
-    }
-
-    /**
-     * ¿A este ítem la factura le suma ISV?
-     *
-     * ─────────────────────────────────────────────────────────────────
-     * 🔴 «ANTES DEL ISV» SOLO DONDE HAY ISV (Mauricio, 10-oct-2026)
-     * ─────────────────────────────────────────────────────────────────
-     *
-     * Los medicamentos, el laboratorio, la hospitalización y los demás
-     * servicios médicos son EXENTOS (Ley del ISV, Art. 15 b y d). En
-     * ellos «Precio antes del ISV» hacía pensar que al número escrito se
-     * le iba a sumar un 15 % en la factura, y quien carga el catálogo
-     * terminaba descontándolo a mano. Lo dice solo lo que sí va gravado:
-     * cafetería, estética, parqueo.
-     */
-    private function llevaIsv(): bool
+    protected function getViewData(): array
     {
         $item = $this->getOwnerRecord();
+        $sede = self::sedeActual();
 
-        return $item instanceof Item && $item->regimen_isv->esGravado();
+        return [
+            'resumen'          => $item instanceof Item ? app(ResumenDePrecios::class)->de($item, $sede, now()) : null,
+            'sede'             => $sede?->nombre,
+            'seVendePorFormas' => $this->seVendePorFormas(),
+            'llevaIsv'         => $this->llevaIsv(),
+        ];
     }
 
     /**
-     * ¿Es un producto de farmacia, que se vende por formas —suelta,
-     * blíster, caja— y se pone precio desde el mínimo?
+     * En farmacia el precio se fija desde el mínimo del envase principal
+     * y salen todas las formas juntas (11-oct-2026).
      */
-    private function seVendePorFormas(): bool
+    public function fijarPrecioDeVentaAction(): Action
     {
-        $item = $this->getOwnerRecord();
-
-        return $item instanceof Item && $item->mueveInventario();
+        return FijarPrecioDeVentaAction::make();
     }
 
-    public function table(Table $table): Table
-    {
-        return $table
-            ->columns([
-                TextColumn::make('convenio.nombre')
-                    ->label('Pagador')
-                    ->badge()
-                    ->color(fn (Tarifario $record): string => $record->esPrecioDeLista() ? 'gray' : 'info')
-                    ->placeholder('Precio de lista')
-                    ->description(fn (Tarifario $record): ?string => $record->esPrecioDeLista()
-                        ? 'Vale para todo pagador sin precio propio'
-                        : null),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * DE QUÉ ENVASE ES ESTE PRECIO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * El frasco de 60 ML costó L 16.67 el mililitro y el de
-                 * 80 ML costó 18.75: con un solo precio para los dos, el
-                 * margen del hospital dependería de cuál estaba abierto y
-                 * nadie lo sabría. Acá se ve separado igual que en la
-                 * existencia.
-                 *
-                 * «Todo el producto» es el respaldo: se usa cuando se
-                 * dispensa de un lote que no declaró envase.
-                 */
-                TextColumn::make('presentacion.nombre')
-                    ->label('Presentación')
-                    /*
-                     * «Respaldo» y no «Todo el producto»: la fila sin
-                     * envase NO compite con las otras tres, se usa cuando
-                     * ninguna aplica. Llamarla como al producto entero
-                     * hacía parecer que había cuatro precios para elegir.
-                     */
-                    /*
-                     * En farmacia la fila sin envase ES la unidad suelta
-                     * desde el 11-oct-2026: el precio de la tableta. En
-                     * el catálogo de servicios sigue siendo el respaldo.
-                     */
-                    ->placeholder(fn (): string => $this->seVendePorFormas() ? 'Suelta' : 'Respaldo · sin envase')
-                    /*
-                     * Un solo `?->`, en `presentacion`: el nullsafe corta
-                     * toda la cadena, así que si no hay presentación esto
-                     * ya devuelve null sin tocar `unidad`. Y `unidad_id`
-                     * es NOT NULL, o sea que una presentación SIEMPRE
-                     * tiene unidad — poner `?->` ahí decía que puede no
-                     * tenerla, que es una mentira sobre el esquema.
-                     */
-                    ->description(fn (Tarifario $record): string => $record->presentacion?->unidad->codigo
-                        ?? ($this->seVendePorFormas()
-                            ? 'Lo que se vende sin envase, por unidad'
-                            : 'Se usa si el lote no declaró envase')),
-
-                TextColumn::make('sede.nombre')
-                    ->label('Sede')
-                    ->placeholder('Todas')
-                    ->toggleable(),
-
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 EL PRECIO DEL ENVASE, NO EL DEL MILILITRO
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * El tarifario se guarda por unidad de dispensación —L
-                 * 61.11 el mililitro— y así tiene que seguir: es la
-                 * unidad en la que se cobra un jarabe fraccionado y la
-                 * que cuadra con el kardex.
-                 *
-                 * Pero al lado de una fila que dice «FRASCO 60 ML», ese
-                 * 61.11 se lee como el precio del frasco. Y el frasco
-                 * cuesta L 3,666.67: sesenta veces más. Alguien que
-                 * revisa precios y ve 61.11 concluye que están mal
-                 * cargados, o peor, que el hospital vende regalado.
-                 *
-                 * Arriba va lo que se cobra por envase; debajo, en chico,
-                 * el precio unitario del que sale.
-                 */
-                TextColumn::make('precio')
-                    ->label('Precio')
-                    ->weight('bold')
-                    ->alignEnd()
-                    ->formatStateUsing(fn (Tarifario $record): string => self::porEnvase($record)->formateado())
-                    ->description(fn (Tarifario $record): ?string => $this->comoSeCalcula($record)),
-
-                TextColumn::make('vigencia_desde')
-                    ->label('Desde')
-                    ->date('d/m/Y')
-                    ->sortable(),
-
-                TextColumn::make('vigencia_hasta')
-                    ->label('Hasta')
-                    ->date('d/m/Y')
-                    ->placeholder('Vigente')
-                    ->badge()
-                    ->color(fn (Tarifario $record): string => $record->vigencia_hasta === null
-                        ? 'success'
-                        : 'gray'),
-
-                TextColumn::make('motivo')
-                    ->label('Por qué')
-                    ->wrap()
-                    ->toggleable(),
-            ])
-            ->defaultSort('vigencia_desde', 'desc')
-            ->paginated([10, 25])
-            ->headerActions([
-                $this->accionDeFijar(),
-                /*
-                 * En farmacia el precio se fija desde el mínimo del envase
-                 * principal y salen todas las formas juntas (11-oct-2026).
-                 * La acción de arriba queda para el catálogo de servicios.
-                 */
-                FijarPrecioDeVentaAction::make(),
-            ])
-            ->recordActions([])
-            ->toolbarActions([])
-            ->emptyStateIcon('heroicon-o-banknotes')
-            ->emptyStateHeading('Este ítem todavía no se puede cobrar')
-            ->emptyStateDescription(
-                'Sin precio de lista, el resolutor se niega a inventar uno: ni el costo ni el '
-                .'último precio conocido sirven de reemplazo.'
-            );
-    }
-
-    private function accionDeFijar(): Action
+    /**
+     * Para lo que no se vende por formas —un producto «Otro»—: un precio
+     * por pagador, escrito a mano.
+     */
+    public function fijarPrecioAction(): Action
     {
         return Action::make('fijarPrecio')
             ->label('Fijar un precio')
@@ -452,6 +291,49 @@ class PreciosRelationManager extends RelationManager
                     ->body('Rige desde el '.$fila->vigencia_desde->format('d/m/Y').'.')
                     ->send();
             });
+    }
+
+    /**
+     * La sede de quien mira: los precios que se muestran son los que se
+     * cobran en ella.
+     */
+    public static function sedeActual(): ?Sede
+    {
+        $id = ContextoSede::actualId();
+
+        return $id === null ? null : Sede::query()->find($id);
+    }
+
+    /**
+     * ¿A este ítem la factura le suma ISV?
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 «ANTES DEL ISV» SOLO DONDE HAY ISV (Mauricio, 10-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Los medicamentos, el laboratorio, la hospitalización y los demás
+     * servicios médicos son EXENTOS (Ley del ISV, Art. 15 b y d). En
+     * ellos «Precio antes del ISV» hacía pensar que al número escrito se
+     * le iba a sumar un 15 % en la factura, y quien carga el catálogo
+     * terminaba descontándolo a mano. Lo dice solo lo que sí va gravado:
+     * cafetería, estética, parqueo.
+     */
+    private function llevaIsv(): bool
+    {
+        $item = $this->getOwnerRecord();
+
+        return $item instanceof Item && $item->regimen_isv->esGravado();
+    }
+
+    /**
+     * ¿Es un producto de farmacia, que se vende por formas —suelta,
+     * blíster, caja— y se pone precio desde el mínimo?
+     */
+    private function seVendePorFormas(): bool
+    {
+        $item = $this->getOwnerRecord();
+
+        return $item instanceof Item && $item->mueveInventario();
     }
 
     /**

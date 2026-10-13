@@ -150,6 +150,32 @@ final class CalculadoraDePreciosPorForma
     }
 
     /**
+     * Lo que paga cada edad con descuento de ley por un precio de lista
+     * que ya está fijado, con la ley que rige ESE día.
+     *
+     * Para la ficha del producto: la cuarta edad se calcula con el
+     * descuento de hoy y no con el que regía cuando se fijó el precio. Si
+     * la ley sube del 40 al 45 %, ahí se ve que la cuarta edad pasa a
+     * pagar menos que el mínimo (Mauricio, 13-oct-2026).
+     *
+     * @return list<array{rango: RangoEdad, paga: Monto}>
+     */
+    public function porEdadDe(Item $item, Monto $lista, CarbonInterface $fecha): array
+    {
+        return self::loQuePagaCadaEdad($this->descuentosPorEdad($item, $fecha), $lista);
+    }
+
+    /**
+     * «TABLETA», «ML», «AMPOLLA»: cómo se llama lo que se vende suelto.
+     */
+    public function rotuloDeLaSuelta(Item $item): string
+    {
+        $unidad = $item->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $unidad->nombre : 'UNIDAD';
+    }
+
+    /**
      * La principal, entre los envases que se venden sin abrir: la que tiene
      * la estrella de la ficha. Sin ninguna, la principal es la unidad
      * suelta —la bolsa de suero, la ampolla—.
@@ -206,11 +232,7 @@ final class CalculadoraDePreciosPorForma
         $minimo = $porUnidad->por($contenido)->por(Decimal::de('1')->sumar($recargo));
         $lista = Monto::de($this->redondeo->haciaArriba($minimo->entre($divisor)));
 
-        $porEdad = [];
-
-        foreach ($descuentosPorEdad as ['rango' => $rango, 'descuento' => $descuento]) {
-            $porEdad[] = ['rango' => $rango, 'paga' => $descuento->netoDe($lista)];
-        }
+        $porEdad = self::loQuePagaCadaEdad($descuentosPorEdad, $lista);
 
         return new PrecioDeForma(
             clave: $clave,
@@ -244,6 +266,22 @@ final class CalculadoraDePreciosPorForma
         return $porEdad;
     }
 
+    /**
+     * @param list<array{rango: RangoEdad, descuento: DescuentoAplicable}> $descuentosPorEdad
+     *
+     * @return list<array{rango: RangoEdad, paga: Monto}>
+     */
+    private static function loQuePagaCadaEdad(array $descuentosPorEdad, Monto $lista): array
+    {
+        $porEdad = [];
+
+        foreach ($descuentosPorEdad as ['rango' => $rango, 'descuento' => $descuento]) {
+            $porEdad[] = ['rango' => $rango, 'paga' => $descuento->netoDe($lista)];
+        }
+
+        return $porEdad;
+    }
+
     private function recargoEnvaseDe(Item $item, CarbonInterface $fecha): Decimal
     {
         return $this->politicas->para($item->tipo, $fecha)?->recargoEnvase()
@@ -254,13 +292,6 @@ final class CalculadoraDePreciosPorForma
     {
         return $this->politicas->para($item->tipo, $fecha)?->recargoSuelta()
             ?? FijadorDeMargenObjetivo::porDefecto('suelta');
-    }
-
-    private function rotuloDeLaSuelta(Item $item): string
-    {
-        $unidad = $item->unidadDispensacion;
-
-        return $unidad instanceof Unidad ? $unidad->nombre : 'UNIDAD';
     }
 
     private static function contenidoDe(ItemPresentacion $presentacion): Decimal

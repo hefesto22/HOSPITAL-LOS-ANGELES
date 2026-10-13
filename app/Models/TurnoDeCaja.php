@@ -20,8 +20,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 
 /**
- * El turno de caja de una persona: desde que abre la gaveta hasta que la
+ * Un turno de la gaveta de una sede: desde que se abre hasta que se
  * cuenta.
+ *
+ * `usuario_id` es quién lo abrió y `cerrado_por` quién lo contó; pueden
+ * ser personas distintas (la administración abre, la cajera del turno
+ * cierra). Quién trabaja en él lo decide
+ * `AbridorDeTurnoDeCaja::puedeOperar()`.
  *
  * 🔴 TODO LO QUE SE CALCULA ACÁ ES DERIVADO. El efectivo esperado sale de
  * sumar los medios de los abonos vivos del turno, nunca de una columna
@@ -96,8 +101,7 @@ class TurnoDeCaja extends Model
      * El nombre del turno —«TURNO A»— es un rótulo del hospital como
      * cualquier otro y sale impreso en el corte de caja, al lado de
      * datos que ya van en mayúsculas.
-     */
-    /**
+     *
      * @return array<int, string>
      */
     public static function camposEnMayusculas(): array
@@ -208,6 +212,15 @@ class TurnoDeCaja extends Model
         }
 
         return $total;
+    }
+
+    /**
+     * «TURNO A», o el número si el turno no tiene nombre. Para los
+     * mensajes: «La gaveta está en el TURNO A».
+     */
+    public function etiquetaCorta(): string
+    {
+        return $this->nombre === null || trim($this->nombre) === '' ? 'turno '.$this->numero : $this->nombre;
     }
 
     public function etiqueta(): string

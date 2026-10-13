@@ -55,10 +55,12 @@ use Illuminate\Support\Str;
  * La unidad suelta NO es una fila: es «Se dispensa en», que ya está en
  * la ficha. Una fila de «TABLETA X 1» sería lo mismo dicho dos veces.
  *
- * ⚠️ Una forma por la que ya entró mercadería queda con el envase y la
- * cantidad bloqueados y sin botón de quitar: cambiarla multiplicaría el
- * inventario de los lotes que entraron así (§9.G11). El servicio lo
- * vuelve a comprobar al guardar.
+ * ⚠️ Una forma por la que ya entró mercadería se puede cambiar de envase
+ * o de tamaño (Mauricio, 13-oct-2026: «si cambio el blíster a 12, que se
+ * pueda y que actualice el precio»), pero no en su fila: al guardar, el
+ * servicio la REEMPLAZA desde hoy y lo que entró sigue como entró (§9.G11,
+ * `SincronizadorDeFormasDeVenta`). La fila lo dice mientras se edita. Lo
+ * que no tiene es botón de quitar.
  *
  * ─────────────────────────────────────────────────────────────────────
  * LA PRINCIPAL SE ELIGE CON LA ESTRELLA (11-oct-2026)
@@ -143,6 +145,12 @@ final class FormasDeVenta
                     Hidden::make('presentacion_id'),
                     Hidden::make('usada'),
                     Hidden::make('principal'),
+                    /*
+                     * Cómo era al abrir la ficha, para decir «antes era
+                     * BLISTER X 10» mientras se cambia una ya usada.
+                     */
+                    Hidden::make('era'),
+                    Hidden::make('era_clave'),
 
                     Select::make('unidad_id')
                         ->hiddenLabel()
@@ -152,14 +160,7 @@ final class FormasDeVenta
                         ))
                         ->required()
                         ->native(false)
-                        ->live()
-                        ->disabled(fn (Get $get): bool => self::esSi($get('usada')))
-                        /*
-                         * Deshabilitado pero se manda igual: sin esto la
-                         * fila llegaría sin envase y el servicio la
-                         * leería como una forma que se quitó.
-                         */
-                        ->dehydrated(),
+                        ->live(),
 
                     TextInput::make('unidades_por_presentacion')
                         ->hiddenLabel()
@@ -169,8 +170,6 @@ final class FormasDeVenta
                         ->minValue(0.0001)
                         ->suffix(fn (Get $get): ?string => self::codigoDe($get('../../unidad_dispensacion_id')))
                         ->live(onBlur: true)
-                        ->disabled(fn (Get $get): bool => self::esSi($get('usada')))
-                        ->dehydrated()
                         /*
                          * La fila que se acaba de agregar con «+ Caja»
                          * llega con el cursor puesto acá: el envase ya
@@ -216,7 +215,7 @@ final class FormasDeVenta
      * la más grande —se lee igual que en el estante: tableta, blíster,
      * caja—.
      *
-     * @return array<string, array{presentacion_id: int, usada: bool, principal: bool, unidad_id: int, unidades_por_presentacion: string}>
+     * @return array<string, array{presentacion_id: int, usada: bool, principal: bool, era: string, era_clave: string, unidad_id: int, unidades_por_presentacion: string}>
      */
     public static function filasDe(Item $item): array
     {
@@ -238,6 +237,8 @@ final class FormasDeVenta
                 'presentacion_id'           => $presentacion->id,
                 'usada'                     => in_array($presentacion->id, $usadas, true),
                 'principal'                 => $presentacion->es_predeterminada,
+                'era'                       => $presentacion->envase(),
+                'era_clave'                 => self::clave($presentacion->unidad_id, $presentacion->unidades_por_presentacion),
                 'unidad_id'                 => $presentacion->unidad_id,
                 'unidades_por_presentacion' => ItemPresentacion::sinCerosDeMas($presentacion->unidades_por_presentacion),
             ];
@@ -373,7 +374,13 @@ final class FormasDeVenta
         }
 
         if (self::esSi($get('usada'))) {
-            $partes[] = '<span style="opacity:.6">ya entró mercadería así: no se cambia</span>';
+            $era = $get('era');
+            $cambio = is_string($era) && $get('era_clave') !== self::clave($envase->id, $trae->paraBase());
+
+            $partes[] = $cambio
+                ? '<span style="color:rgb(217 119 6)">antes era '.e($era).': desde hoy se vende este y los precios se '
+                    .'recalculan solos con el mismo mínimo; lo que ya entró sigue como entró</span>'
+                : '<span style="opacity:.6">ya entró mercadería así; si cambia, los precios se ajustan solos</span>';
         }
 
         return new HtmlString(
@@ -437,6 +444,8 @@ final class FormasDeVenta
             'presentacion_id'           => null,
             'usada'                     => false,
             'principal'                 => false,
+            'era'                       => null,
+            'era_clave'                 => null,
             'unidad_id'                 => $unidad,
             'unidades_por_presentacion' => null,
         ];
@@ -684,6 +693,17 @@ final class FormasDeVenta
         }
 
         return self::esSi($filas[$clave]['usada'] ?? null);
+    }
+
+    /**
+     * «7:10.0000»: el envase y lo que trae, para saber si una fila usada
+     * cambió desde que se abrió la ficha.
+     */
+    private static function clave(mixed $unidad, mixed $contenido): string
+    {
+        $decimal = NumeroDeFormulario::aDecimal($contenido);
+
+        return self::entero($unidad).':'.($decimal instanceof Decimal ? $decimal->paraBase() : '');
     }
 
     public static function esSi(mixed $valor): bool

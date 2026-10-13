@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Abonos;
 
+use App\Filament\Pages\Caja;
 use App\Filament\Resources\Abonos\Pages\ListAbonos;
 use App\Filament\Resources\Abonos\Tables\AbonosTable;
 use App\Models\Abono;
 use BackedEnum;
 use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -32,7 +34,7 @@ class AbonoResource extends Resource
 {
     protected static ?string $model = Abono::class;
 
-    protected static string|BackedEnum|null $navigationIcon = null;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedInboxArrowDown;
 
     protected static ?string $slug = 'abonos';
 
@@ -61,6 +63,20 @@ class AbonoResource extends Resource
     }
 
     /**
+     * Cuelga de «Caja» en el menú y se esconde con ella: aparece cuando se
+     * está en Caja, en Abonos recibidos o en Turnos de caja, y fuera de ahí
+     * el menú queda corto.
+     *
+     * Si un rol llegara a ver esto sin poder entrar a Caja, Filament botaría
+     * el renglón entero (un hijo sin papá no se pinta); por eso, sin Caja,
+     * queda suelto en el grupo.
+     */
+    public static function getNavigationParentItem(): ?string
+    {
+        return Caja::canAccess() ? Caja::getNavigationLabel() : null;
+    }
+
+    /**
      * @return Builder<Abono>
      */
     public static function getEloquentQuery(): Builder
@@ -72,7 +88,7 @@ class AbonoResource extends Resource
             'cuenta:id,numero,encuentro_id',
             'cuenta.encuentro:id,persona_id',
             'cuenta.encuentro.persona:id,primer_nombre,segundo_nombre,primer_apellido,segundo_apellido',
-            'turno:id,numero,nombre,estado',
+            'turno:id,numero,nombre,estado,usuario_id',
             'recibidoPor:id,name',
             'medios',
         ]);

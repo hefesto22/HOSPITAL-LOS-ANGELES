@@ -5,18 +5,25 @@ declare(strict_types=1);
 namespace App\Filament\Resources\Productos\Pages;
 
 use App\Domain\Exceptions\SihlaException;
+use App\Domain\ValueObjects\CambiosDeFormasDeVenta;
+use App\Domain\ValueObjects\Monto;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Schemas\FormasDeVenta;
 use App\Filament\Resources\Productos\ProductoResource;
 use App\Models\Item;
+use App\Models\PrecioMinimo;
+use App\Models\Tarifario;
 use App\Services\CambiadorDeStockInfinito;
+use App\Services\ReajustadorDePrecios;
 use App\Services\SincronizadorDeFormasDeVenta;
 use App\Services\SincronizadorDePrincipiosActivos;
 use App\Services\UbicadorDeProducto;
+use Carbon\CarbonInterface;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\HtmlString;
 
 /**
  * Ficha de un producto de farmacia.
@@ -99,12 +106,31 @@ class EditProducto extends EditItem
             $data['ubicaciones'],
         );
 
+        $cambios = new CambiosDeFormasDeVenta;
+        $reajustes = [];
+
         try {
-            return DB::transaction(function () use ($record, $data, $formas, $sueltaPrincipal, $infinito, $lugares): Model {
+            $guardado = DB::transaction(function () use ($record, $data, $formas, $sueltaPrincipal, $infinito, $lugares, &$cambios, &$reajustes): Model {
                 $guardado = parent::handleRecordUpdate($record, $data);
 
                 if ($guardado instanceof Item) {
-                    app(SincronizadorDeFormasDeVenta::class)->sincronizar($guardado, $formas, $sueltaPrincipal);
+                    $cambios = app(SincronizadorDeFormasDeVenta::class)->sincronizar($guardado, $formas, $sueltaPrincipal);
+
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 SI CAMBIARON LOS ENVASES, CAMBIAN LOS PRECIOS
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Mauricio (13-oct-2026): «si cambio el blíster a 12
+                     * tabletas tiene que actualizar el precio para no
+                     * vender a pérdida, y eso automático». Desde el mínimo
+                     * guardado, con lo que cambió como porqué. En la misma
+                     * transacción: el blíster de 12 no existe ni un
+                     * segundo con el precio del de 10.
+                     */
+                    if ($cambios->hayCambios()) {
+                        $reajustes = app(ReajustadorDePrecios::class)->reajustar($guardado, now(), $cambios->porQue());
+                    }
 
                     if ($infinito !== null && (bool) $guardado->stock_infinito !== $infinito) {
                         app(CambiadorDeStockInfinito::class)->cambiar([$guardado], $infinito);
@@ -137,6 +163,66 @@ class EditProducto extends EditItem
 
             throw new Halt;
         }
+
+        $this->avisarLoQueCambio($cambios, $reajustes, $guardado);
+
+        return $guardado;
+    }
+
+    /**
+     * Lo que pasó solo al guardar: los precios que se movieron y lo que
+     * quedó en el estante con el envase de antes. Se queda en pantalla
+     * hasta que se cierre: es plata.
+     *
+     * @param list<array{sede: string, desde: CarbonInterface, formas: list<array{rotulo: string, antes: Monto|null, ahora: Monto}>}> $reajustes
+     */
+    private function avisarLoQueCambio(CambiosDeFormasDeVenta $cambios, array $reajustes, Model $producto): void
+    {
+        $lineas = [];
+
+        /*
+         * Un precio de antes de que se guardara el mínimo —cargado a mano,
+         * o uno que la migración no pudo leer— no se ajusta solo: se dice,
+         * para que no quede el envase nuevo cobrándose como sueltas.
+         */
+        if ($cambios->hayCambios() && $reajustes === [] && $producto instanceof Item && $this->tienePrecioSinMinimo($producto)) {
+            $lineas[] = 'Este producto no tiene guardado de qué mínimo salen sus precios, así que no se ajustaron solos. '
+                .'Abrí «Precios» y usá «Cambiar el precio» una vez: de ahí en adelante se ajustan solos.';
+        }
+
+        if ($reajustes === [] && $cambios->avisos === [] && $lineas === []) {
+            return;
+        }
+
+        foreach ($reajustes as $reajuste) {
+            $precios = [];
+
+            foreach ($reajuste['formas'] as $forma) {
+                $precios[] = $forma['antes'] instanceof Monto && ! $forma['antes']->igualA($forma['ahora'])
+                    ? $forma['rotulo'].' '.$forma['antes']->formateado().' → '.$forma['ahora']->formateado()
+                    : $forma['rotulo'].' '.$forma['ahora']->formateado();
+            }
+
+            $lineas[] = e($reajuste['sede'].', desde el '.$reajuste['desde']->format('d/m/Y').': '.implode(' · ', $precios));
+        }
+
+        foreach ($cambios->avisos as $aviso) {
+            $lineas[] = e($aviso);
+        }
+
+        Notification::make()
+            ->title($reajustes === [] ? 'Revisá los precios' : 'Los precios se ajustaron solos')
+            ->body(new HtmlString(implode('<br>', $lineas)))
+            ->icon('heroicon-o-arrow-path')
+            ->iconColor('warning')
+            ->persistent()
+            ->send();
+    }
+
+    private function tienePrecioSinMinimo(Item $producto): bool
+    {
+        return Tarifario::query()->where('item_id', $producto->id)->whereNull('convenio_id')->vigentesEn(now())->exists()
+            && ! PrecioMinimo::query()->where('item_id', $producto->id)->vigentesEn(now())->exists();
     }
 
     /**

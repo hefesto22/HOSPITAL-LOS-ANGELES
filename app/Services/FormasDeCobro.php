@@ -78,6 +78,11 @@ final class FormasDeCobro
     public const ENVASE = 'presentacion:';
 
     /**
+     * @var array<int, Collection<int, ItemPresentacion>>
+     */
+    private array $retiradas = [];
+
+    /**
      * Las claves de las formas que admite el producto, en el orden en
      * que se ofrecen. Nunca vacío: la unidad suelta está siempre.
      *
@@ -242,6 +247,23 @@ final class FormasDeCobro
             }
         }
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * Y LOS ENVASES RETIRADOS QUE LO TRAEN (13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Si la CAJA X 100 pasó a ser de 120, la caja vieja ya no se
+         * ofrece (`SincronizadorDeFormasDeVenta`), pero las que quedan en
+         * el estante siguen trayendo sus diez blísteres de 10, y esos sí
+         * se venden sin abrir. Sin esto, lo que quedó de antes se podía
+         * vender solo suelto.
+         */
+        foreach ($this->retiradasDe($envase->item_id) as $retirada) {
+            if (! in_array($retirada->id, $ids, true) && $this->loTraeAdentro($retirada, $envase)) {
+                $ids[] = $retirada->id;
+            }
+        }
+
         return $ids;
     }
 
@@ -310,6 +332,21 @@ final class FormasDeCobro
         $enteros = $this->enterosQueCaben($deGrande, $deChica);
 
         return $enteros->por($deChica)->igualA($deGrande) ? $enteros : null;
+    }
+
+    /**
+     * Los envases retirados del producto, una consulta por producto y por
+     * instancia —nunca en una propiedad estática: quedaría vieja entre
+     * pruebas (§9.C8)—. Casi siempre vuelve vacía.
+     *
+     * @return Collection<int, ItemPresentacion>
+     */
+    private function retiradasDe(int $itemId): Collection
+    {
+        return $this->retiradas[$itemId] ??= ItemPresentacion::onlyTrashed()
+            ->with('unidad')
+            ->where('item_id', $itemId)
+            ->get();
     }
 
     private function loTraeAdentro(ItemPresentacion $grande, ItemPresentacion $chico): bool

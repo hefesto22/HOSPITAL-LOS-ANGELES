@@ -24,8 +24,10 @@ use Illuminate\Support\Facades\DB;
  * QUÉ PASA ACÁ ADENTRO
  * ─────────────────────────────────────────────────────────────────────
  *
- *  1. Tiene que haber un turno ABIERTO de quien recibe. Sin gaveta que
- *     alguien cuadre al final, un abono es una fila que nadie verifica.
+ *  1. Tiene que haber un turno ABIERTO en la gaveta de la sede de la
+ *     cuenta, y quien recibe tiene que poder trabajar en él (lo abrió,
+ *     es de ese turno o es de la administración). Sin gaveta que alguien
+ *     cuadre al final, un abono es una fila que nadie verifica.
  *  2. El recibo y sus medios se escriben en UNA transacción. A mitad de
  *     camino quedaría un recibo de L 5,000 sin decir con qué se pagó, y
  *     el arqueo de esa noche no cuadraría por una razón invisible.
@@ -72,10 +74,18 @@ final class ReceptorDeAbono
             throw CajaException::laCuentaNoRecibeAbonos($cuenta->numero, $cuenta->estado->etiqueta());
         }
 
-        $turno = $this->turnos->abiertoDe($quienRecibe);
+        /*
+         * El turno se busca en la sede de la CUENTA: la plata del
+         * paciente de una sede no cae en la gaveta de otra.
+         */
+        $turno = $this->turnos->elQueOpera($quienRecibe, $cuenta->sede_id);
 
         if (! $turno instanceof TurnoDeCaja) {
-            throw CajaException::sinTurnoAbierto();
+            $deLaGaveta = $this->turnos->abiertoEn($cuenta->sede_id);
+
+            throw $deLaGaveta instanceof TurnoDeCaja
+                ? CajaException::noEsTuTurno($deLaGaveta->etiquetaCorta(), $quienRecibe->turno)
+                : CajaException::sinTurnoAbierto();
         }
 
         $total = Decimal::cero();
@@ -150,8 +160,9 @@ final class ReceptorDeAbono
     /**
      * Deshace un recibo mal hecho.
      *
-     * 🔴 Solo con el turno abierto. Cerrado el turno, el efectivo ya se
-     * contó y se entregó: eso es una devolución, y es otro hecho.
+     * 🔴 Solo con el turno abierto, y solo quien trabaja en él. Cerrado
+     * el turno, el efectivo ya se contó y se entregó: eso es una
+     * devolución, y es otro hecho.
      */
     public function anular(Abono $abono, string $motivo, ?int $quien = null): Abono
     {
@@ -177,6 +188,22 @@ final class ReceptorDeAbono
 
             if (! $turno instanceof TurnoDeCaja || ! $turno->estaAbierto()) {
                 throw CajaException::noSeAnulaConElTurnoCerrado($bloqueado->numero);
+            }
+
+            /*
+             * 🔴 Anular saca plata del arqueo de ese turno, así que lo
+             * hace quien trabaja en él (Mauricio, 13-oct-2026): la cajera
+             * de otro turno, o sin turno, carga en la cuenta pero no
+             * toca la gaveta de otra persona.
+             */
+            $quienAnula = User::query()->find($quien);
+
+            if (! $quienAnula instanceof User) {
+                throw CajaException::sinQuienAnula();
+            }
+
+            if (! $this->turnos->puedeOperar($quienAnula, $turno)) {
+                throw CajaException::noEsTuTurno($turno->etiquetaCorta(), $quienAnula->turno);
             }
 
             $bloqueado->update([

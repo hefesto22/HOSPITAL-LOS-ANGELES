@@ -11,9 +11,10 @@ use Illuminate\Foundation\Auth\User as AuthUser;
 /**
  * Autorización del turno de caja.
  *
- * `create` es abrir el turno y `update` es cerrarlo con su arqueo. Que
- * el turno sea SUYO no lo decide el permiso: lo decide el servicio, que
- * solo encuentra el turno abierto de quien está operando.
+ * `create` es abrir el turno y `update` es cerrarlo con su arqueo. EN
+ * QUÉ turno trabaja cada quien no lo decide el permiso: lo decide
+ * `AbridorDeTurnoDeCaja::puedeOperar()` —quien lo abrió, quien es de
+ * ese turno y la administración—.
  *
  * 🔴 `php artisan shield:generate --all --option=permissions`. Nunca
  * `--all` a secas.

@@ -312,6 +312,32 @@ Por eso los porcentajes van como **configuración con vigencia y jamás hardcode
 
 ⚠️ **Suero:** si la principal es la unidad suelta (la BOLSA, estrella en la línea de la suelta), la CAJA X 12 sale a 12 bolsas sin recargo: no se cobra más por llevarse más.
 
+### 4.7 Los precios se ajustan solos — DECIDIDO Y CONSTRUIDO (13-oct-2026)
+
+> **Mauricio:** «Si cambio el blíster a 12 tabletas tiene que actualizar el precio para no vender a pérdida, y eso automático; lo mismo si el descuento cambia, a más o a menos. Si baja al 30, bajan los precios para seguir vendiendo con ganancia y con mejores precios. Y que quede en el historial que el descuento o la cantidad cambió y por eso se modificó el precio.»
+
+| Decisión | Resolución |
+|---|---|
+| Qué se guarda al «Cambiar el precio» | Además de las filas del tarifario, **el mínimo y los recargos** en `precios_minimos` (por producto y sede, con vigencia): `minimo` por el envase en que se escribió y su `contenido`. Los precios fijados antes se recuperaron del motivo en la migración |
+| Qué se conserva al recalcular | **El mínimo POR UNIDAD** (L 120 ÷ 100 = L 1.20 la tableta). Si la caja pasa a 120, su mínimo pasa a L 144; si la principal pasa a ser el blíster de 10, su mínimo es L 12. Ninguna tableta queda más barata que lo decidido |
+| Cuándo se recalcula | Al guardar la ficha con un envase cambiado, agregado o con otra principal (`EditProducto`, en la misma transacción); al guardar un descuento por edad que rige desde hoy (job `AjustarPreciosAlDescuentoPorEdad`, después del commit), y a las 00:10 del día en que empieza o termina uno cargado a futuro (`precios:seguir-el-descuento`) |
+| Qué escribe | Solo si alguna lista cambia. Filas nuevas desde ese día con el porqué: «AJUSTE AUTOMÁTICO: CAMBIÓ EL DESCUENTO POR EDAD (CUARTA EDAD 40 % → 45 %)» o «AJUSTE AUTOMÁTICO: BLISTER X 10 TAB PASÓ A BLISTER X 12 TAB». El mínimo guardado no cambia: nadie decidió otro |
+| Si ya se cobró con el precio de ese día | El ajuste arranca al día siguiente (el de hoy ya lo cita una factura) |
+| Lo que no toca | Una lista cuya última fila no salió de un mínimo (cargada a mano o por un ajuste masivo): alguien decidió otra cosa y el sistema no le pasa por encima. La ficha avisa si la cuarta edad queda debajo del mínimo |
+| Envase usado que cambia de tamaño | **Se reemplaza, no se edita** (§9.G11): el viejo queda retirado —borrado lógico, vigencia cerrada ayer, precios cerrados— y todo lo que pasó con él lo sigue leyendo como era (`withTrashed()` en lotes, cargos, recepciones, préstamos, presupuestos y tarifario). Los lugares del stock infinito que lo tenían pasan al nuevo. Un envase usado sigue sin poder **quitarse** |
+| Lo que quedó en el estante | Los lotes que entraron en el envase viejo siguen en su lote y se venden sueltos; los que entraron en una caja retirada siguen dando los blísteres que traen (`FormasDeCobro::envasesQueLoTraen`) |
+
+**Golden tests** (`tests/Feature/Catalogo/PreciosQueSeAjustanSolosTest.php`), mínimo L 120 por la CAJA X 100, recargos 10 / 25 %:
+
+| Cambio | CAJA | BLÍSTER | TABLETA |
+|---|---:|---:|---:|
+| Cuarta edad 40 % (antes) | L 200.00 | L 22.00 (X 10) | L 2.50 |
+| Cuarta edad sube a 45 % | **L 219.00** | L 24.00 | L 2.75 |
+| Cuarta edad baja a 30 % | **L 172.00** | L 19.00 | L 2.15 |
+| Blíster de 10 a 12 | L 200.00 | **L 26.50** (X 12) | L 2.50 |
+| Caja de 100 a 120 | **L 240.00** (X 120) | L 22.00 | L 2.50 |
+| Estrella al blíster | L 200.00 | **L 20.00** | L 2.50 |
+
 ## 5. Convenios y seguros
 
 **Confirmado por Mauricio:** los seguros y el Hospital Militar tienen **precios propios e independientes** para habitación, camilla, servicios del hospital, laboratorio y radiografía. No son un porcentaje sobre el precio normal.

@@ -122,7 +122,12 @@ class PresupuestoLinea extends Model
      */
     public function presentacion(): BelongsTo
     {
-        return $this->belongsTo(ItemPresentacion::class, 'presentacion_id');
+        /*
+         * Con las retiradas: un envase que cambió de tamaño se reemplaza y
+         * el viejo queda borrado lógicamente, pero lo que pasó con él se
+         * sigue leyendo como era (13-oct-2026).
+         */
+        return $this->belongsTo(ItemPresentacion::class, 'presentacion_id')->withTrashed();
     }
 
     /**

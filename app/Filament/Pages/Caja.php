@@ -82,7 +82,7 @@ class Caja extends Page
 
     public function getSubheading(): string
     {
-        return 'Lo que entró en tu turno y cuánto efectivo tiene que haber en la gaveta.';
+        return 'Lo que entró en el turno y cuánto efectivo tiene que haber en la gaveta.';
     }
 
     public static function canAccess(): bool

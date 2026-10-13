@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Users\Tables;
 
+use App\Support\NombresDeTurno;
 use Exception;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -64,7 +65,7 @@ class UsersTable
                  */
                 SelectColumn::make('turno')
                     ->label('Turno')
-                    ->options(fn (): array => self::turnos())
+                    ->options(fn (): array => NombresDeTurno::opciones())
                     ->selectablePlaceholder(true)
                     ->placeholder('Sin turno'),
 
@@ -148,26 +149,5 @@ class UsersTable
             ->modifyQueryUsing(fn (Builder $query) => $query->withoutGlobalScopes([
                 SoftDeletingScope::class,
             ]));
-    }
-
-    /**
-     * Los turnos que definió el hospital, de la configuración.
-     *
-     * @return array<string, string>
-     */
-    private static function turnos(): array
-    {
-        $configurados = config('sihla.caja.turnos');
-        $opciones = [];
-
-        if (is_array($configurados)) {
-            foreach ($configurados as $turno) {
-                if (is_string($turno) && trim($turno) !== '') {
-                    $opciones[$turno] = $turno;
-                }
-            }
-        }
-
-        return $opciones;
     }
 }

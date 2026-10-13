@@ -71,6 +71,17 @@ Schedule::command('horizon:snapshot')
     ->onOneServer()
     ->name('horizon-snapshot');
 
+// ─── Precios de farmacia ───────────────────────────────────────────────
+// Si hoy empieza o termina un descuento por edad, los precios con mínimo
+// guardado se recalculan para que ninguna edad pague menos que el mínimo
+// (y bajan si el descuento bajó). Después de medianoche, antes de que
+// abra nadie.
+Schedule::command('precios:seguir-el-descuento')
+    ->dailyAt('00:10')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->name('precios-seguir-el-descuento');
+
 // ─── Mantenimiento de modelos ──────────────────────────────────────────
 // Borra registros soft-deleted que cumplan la política de retención
 // (cada modelo define su prunable() — opcional).

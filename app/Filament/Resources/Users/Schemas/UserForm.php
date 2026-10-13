@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Users\Schemas;
 
+use App\Support\NombresDeTurno;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
@@ -102,9 +103,9 @@ class UserForm
                          * ─────────────────────────────────────────────
                          *
                          * No es el turno de caja —ese es un hecho, con
-                         * su arqueo—: es la asignación. Al abrir la
-                         * gaveta, el nombre del turno ya viene puesto
-                         * desde acá y la cajera no teclea nada.
+                         * su arqueo—: es la asignación. Quien es del
+                         * TURNO A cobra y cierra el TURNO A aunque lo
+                         * haya abierto otra persona (13-oct-2026).
                          *
                          * Se puede cambiar también desde la propia fila
                          * del listado, que es como se hace cuando rotan
@@ -112,10 +113,10 @@ class UserForm
                          */
                         Select::make('turno')
                             ->label('Turno')
-                            ->options(fn (): array => self::turnos())
+                            ->options(fn (): array => NombresDeTurno::opciones())
                             ->native(false)
                             ->placeholder('Sin turno asignado')
-                            ->helperText('Se propone al abrir la caja. Se puede cambiar desde el listado.'),
+                            ->helperText('Cobra y cierra la caja cuando está abierta en este turno, aunque la haya abierto otra persona. Se cambia también desde el listado.'),
                     ]),
 
                 Section::make('Estado de la Cuenta')
@@ -131,26 +132,5 @@ class UserForm
                             ->helperText('Si se desactiva, el usuario no podrá iniciar sesión en el panel.'),
                     ]),
             ]);
-    }
-
-    /**
-     * Los turnos que definió el hospital, de la configuración.
-     *
-     * @return array<string, string>
-     */
-    private static function turnos(): array
-    {
-        $configurados = config('sihla.caja.turnos');
-        $opciones = [];
-
-        if (is_array($configurados)) {
-            foreach ($configurados as $turno) {
-                if (is_string($turno) && trim($turno) !== '') {
-                    $opciones[$turno] = $turno;
-                }
-            }
-        }
-
-        return $opciones;
     }
 }

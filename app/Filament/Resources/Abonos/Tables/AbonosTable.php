@@ -10,6 +10,8 @@ use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
 use App\Models\Persona;
 use App\Models\TurnoDeCaja;
+use App\Models\User;
+use App\Services\AbridorDeTurnoDeCaja;
 use App\Services\ReceptorDeAbono;
 use App\Support\UsuarioAutenticado;
 use Filament\Actions\Action;
@@ -18,6 +20,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 
@@ -130,6 +133,8 @@ class AbonosTable
              * `ReceptorDeAbono::anular()`: motivo escrito y turno
              * abierto. Con el turno cerrado ese efectivo ya se contó y se
              * entregó — devolverlo es otro hecho —, y el botón no aparece.
+             * Tampoco aparece a quien no trabaja en ese turno (13-oct-2026):
+             * anular saca plata de un arqueo que cuenta otra persona.
              */
             ->recordActions([
                 Action::make('anular')
@@ -142,6 +147,7 @@ class AbonosTable
                     ->visible(fn (Abono $record): bool => $record->estado === EstadoAbono::Aplicado
                         && $record->turno instanceof TurnoDeCaja
                         && $record->turno->estaAbierto()
+                        && self::trabajaEn($record->turno)
                         && Gate::allows('update', $record))
                     ->schema([
                         CampoMayusculas::area('motivo')
@@ -185,5 +191,16 @@ class AbonosTable
     private static function lempiras(mixed $monto): string
     {
         return 'L '.number_format(is_numeric($monto) ? (float) $monto : 0.0, 2);
+    }
+
+    /**
+     * Si quien mira trabaja en ese turno: lo abrió, es de ese turno o es
+     * de la administración.
+     */
+    private static function trabajaEn(TurnoDeCaja $turno): bool
+    {
+        $usuario = Auth::user();
+
+        return $usuario instanceof User && app(AbridorDeTurnoDeCaja::class)->puedeOperar($usuario, $turno);
     }
 }

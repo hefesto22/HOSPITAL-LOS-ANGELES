@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Un precio, para un ítem, para un pagador, en un rango de fechas.
@@ -114,6 +115,18 @@ class Tarifario extends Model
         return $this->precio_envase === null ? null : Monto::de($this->precio_envase);
     }
 
+    /**
+     * ¿Ya se cobró o se presupuestó con este precio?
+     *
+     * Un precio con el que ya se cobró es historia que una factura cita:
+     * solo uno que nadie usó se puede corregir el mismo día.
+     */
+    public function yaSeUso(): bool
+    {
+        return DB::table('cargos')->where('tarifario_id', $this->id)->exists()
+            || DB::table('presupuesto_lineas')->where('tarifario_id', $this->id)->exists();
+    }
+
     public function esPrecioDeLista(): bool
     {
         return $this->convenio_id === null;
@@ -155,7 +168,12 @@ class Tarifario extends Model
      */
     public function presentacion(): BelongsTo
     {
-        return $this->belongsTo(ItemPresentacion::class, 'item_presentacion_id');
+        /*
+         * Con las retiradas: un envase que cambió de tamaño se reemplaza y
+         * el viejo queda borrado lógicamente, pero lo que pasó con él se
+         * sigue leyendo como era (13-oct-2026).
+         */
+        return $this->belongsTo(ItemPresentacion::class, 'item_presentacion_id')->withTrashed();
     }
 
     /**

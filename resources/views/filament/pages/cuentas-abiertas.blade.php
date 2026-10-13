@@ -40,7 +40,7 @@
         @php($cuentas = $this->cuentas())
         @php($puedeCargar = $this->puedeCargar())
         @php($puedeDiagnosticar = $this->puedeDiagnosticar())
-        @php($puedeAbonar = $this->puedeAbonar())
+        @php($porQueNoAbona = $this->porQueNoAbona())
         @php($porQueNoFactura = $this->porQueNoFactura())
 
         @if ($cuentas->isEmpty())
@@ -193,12 +193,12 @@
                         --}}
                         <button
                             type="button"
-                            @if ($puedeAbonar)
+                            @if ($porQueNoAbona === null)
                                 wire:click="prepararAbono({{ $cuenta->id }})"
                                 wire:loading.attr="disabled"
                             @else
                                 disabled
-                                title="Los abonos los recibe caja, con el turno abierto."
+                                title="{{ $porQueNoAbona }}"
                             @endif
                             class="sihla-accion-clinica"
                         >

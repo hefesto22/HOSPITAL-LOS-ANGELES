@@ -8,6 +8,7 @@ use App\Models\Factura;
 use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeTurnoDeCaja;
+use App\Support\ContextoSede;
 use Illuminate\Auth\Access\HandlesAuthorization;
 use Illuminate\Foundation\Auth\User as AuthUser;
 
@@ -43,9 +44,11 @@ class FacturaPolicy
      *
      * Mauricio: «facturar es exclusivo de las cajeras que estén en
      * turno». El permiso dice QUIÉN puede facturar (caja y dirección);
-     * esto agrega CUÁNDO: con su turno de caja abierto. La factura casi
-     * siempre se cobra en el acto —primero se salda— y esa plata tiene
-     * que caer en una gaveta que alguien cuente al cerrar.
+     * esto agrega CUÁNDO: con un turno de caja abierto en el que pueda
+     * trabajar —el que abrió, o el de la gaveta si es de ese turno—.
+     * La factura casi siempre se cobra en el acto —primero se salda— y
+     * esa plata tiene que caer en una gaveta que alguien cuente al
+     * cerrar.
      *
      * Los roles de `sihla.caja.facturan_sin_turno` (dirección) facturan
      * con o sin turno. Si en ese momento hay que cobrar, el abono les
@@ -64,7 +67,7 @@ class FacturaPolicy
             return true;
         }
 
-        return app(AbridorDeTurnoDeCaja::class)->abiertoDe($authUser) instanceof TurnoDeCaja;
+        return app(AbridorDeTurnoDeCaja::class)->elQueOpera($authUser, ContextoSede::actualId()) instanceof TurnoDeCaja;
     }
 
     private static function facturaSinTurno(User $usuario): bool

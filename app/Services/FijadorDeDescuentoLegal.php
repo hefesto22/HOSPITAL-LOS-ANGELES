@@ -8,6 +8,7 @@ use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\RangoEdad;
 use App\Domain\Exceptions\DescuentoNoFijableException;
 use App\Domain\ValueObjects\Decimal;
+use App\Jobs\AjustarPreciosAlDescuentoPorEdad;
 use App\Models\DescuentoLegal;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,20 @@ use Illuminate\Support\Facades\DB;
  * cuando empezó hoy dejaría la fila con desde-hoy y hasta-ayer, que el
  * CHECK `descuentos_vigencia_coherente` rechaza. Sin esta rama, corregir
  * un cero de más recién cargado revienta contra la base.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * 🔴 LOS PRECIOS DE FARMACIA SE ACOMODAN SOLOS (13-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * La lista de farmacia está calculada para que la edad con más descuento
+ * pague exactamente el mínimo. Si la cuarta edad pasa del 40 al 45 %,
+ * con la lista vieja pagaría menos que el mínimo; si baja al 30 %, la
+ * lista quedaría más cara de lo necesario. Mauricio: «debe corregirse en
+ * automático, a más o a menos».
+ *
+ * Un porcentaje que rige desde hoy (o antes) dispara el recálculo en la
+ * cola en cuanto queda guardado; uno de más adelante lo aplica ese día
+ * `precios:seguir-el-descuento`.
  */
 final class FijadorDeDescuentoLegal
 {
@@ -62,7 +77,7 @@ final class FijadorDeDescuentoLegal
 
         $dia = $desde->copy()->startOfDay();
 
-        return DB::transaction(function () use (
+        $fijado = DB::transaction(function () use (
             $categoria,
             $rango,
             $porcentaje,
@@ -120,5 +135,11 @@ final class FijadorDeDescuentoLegal
                 'vigencia_hasta'  => null,
             ]);
         });
+
+        if (! $dia->greaterThan(now()->startOfDay())) {
+            AjustarPreciosAlDescuentoPorEdad::dispatch()->afterCommit();
+        }
+
+        return $fijado;
     }
 }

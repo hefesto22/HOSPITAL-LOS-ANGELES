@@ -318,8 +318,7 @@ final class PreciosDeLaFicha
      */
     private static function seUso(Tarifario $fila): bool
     {
-        return DB::table('cargos')->where('tarifario_id', $fila->id)->exists()
-            || DB::table('presupuesto_lineas')->where('tarifario_id', $fila->id)->exists();
+        return $fila->yaSeUso();
     }
 
     /**

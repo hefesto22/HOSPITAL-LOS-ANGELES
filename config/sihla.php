@@ -724,19 +724,14 @@ return [
      */
     'caja' => [
         /*
-         * Los bancos a los que la familia puede depositar.
+         * ─────────────────────────────────────────────────────────────
+         * LOS TURNOS, EN EL ORDEN EN QUE SE SUCEDEN
+         * ─────────────────────────────────────────────────────────────
          *
-         * Vive en config y no en un enum ni en una tabla: la lista cambia
-         * cuando el hospital abre o cierra una cuenta bancaria, y eso no
-         * merece una migracion. Agregar uno es una linea acá.
-         *
-         * ⚠️ El nombre que se elija queda ESCRITO en el recibo. Cambiar
-         * un texto de esta lista no reescribe los abonos viejos, y está
-         * bien: el recibo dice a qué banco se depositó ese día.
-         */
-        /*
-         * Cómo se llaman los turnos acá. Se usan para asignarlos al
-         * usuario y para nombrar el turno de caja al abrirlo.
+         * Se usan para asignarlos al usuario y para nombrar el turno de
+         * caja al abrirlo. 🔴 El ORDEN importa (Mauricio, 13-oct-2026):
+         * al cerrar el A, la caja ya propone el B; después del último
+         * vuelve al primero.
          *
          * Texto, no enum: el día que abran un turno de fin de semana es
          * una línea más, no una migración.
@@ -747,6 +742,38 @@ return [
             'Turno C',
         ],
 
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * QUIÉN OPERA EL TURNO DE OTRO (Mauricio, 13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El turno es de la gaveta, no de quien lo abrió: a veces lo abre
+         * la administración y lo cierra la cajera de ese turno, o al
+         * revés. Cobrar en el turno abierto, facturar con él y cerrarlo
+         * con su arqueo lo pueden hacer:
+         *
+         *   · quien lo abrió;
+         *   · quien tiene ese turno asignado en su usuario (columna Turno
+         *     del listado de usuarios);
+         *   · los roles de esta lista, con cualquier turno. El super
+         *     administrador también, sin estar acá.
+         *
+         * Una cajera del turno B no cobra en el A: la plata caería en un
+         * arqueo que cuenta otra persona.
+         */
+        'operan_cualquier_turno' => ['direccion'],
+
+        /*
+         * Los bancos a los que la familia puede depositar.
+         *
+         * Vive en config y no en un enum ni en una tabla: la lista cambia
+         * cuando el hospital abre o cierra una cuenta bancaria, y eso no
+         * merece una migracion. Agregar uno es una linea acá.
+         *
+         * ⚠️ El nombre que se elija queda ESCRITO en el recibo. Cambiar
+         * un texto de esta lista no reescribe los abonos viejos, y está
+         * bien: el recibo dice a qué banco se depositó ese día.
+         */
         'bancos' => [
             'Banco Atlántida',
             'Banco de Occidente',
@@ -781,10 +808,10 @@ return [
          * sin gaveta; si en ese momento hay que cobrar, el abono le pide
          * el turno igual.
          *
-         * Los demás roles con permiso de facturar necesitan su turno
-         * abierto. El turno es de la PERSONA, no del nombre: la cajera
-         * del turno A que hoy cubre el C abre su turno y le pone «TURNO
-         * C».
+         * Los demás roles con permiso de facturar necesitan un turno
+         * abierto que puedan operar: el que abrieron, o el de la gaveta
+         * si es el turno que tienen asignado (ver
+         * `operan_cualquier_turno`).
          */
         'facturan_sin_turno' => ['direccion'],
     ],

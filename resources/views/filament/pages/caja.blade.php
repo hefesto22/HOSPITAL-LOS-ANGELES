@@ -30,10 +30,25 @@
     @php($lempiras = static fn (\App\Domain\ValueObjects\Decimal $monto): string => 'L '.number_format((float) $monto->redondeado(2), 2))
 
     <div class="sihla-caja">
-        @if ($resumen === null)
+        @if ($resumen === null && ($ajena = $this->gavetaDeOtroTurno()) !== null)
+            {{--
+                La gaveta está abierta en un turno que no es de quien mira
+                (13-oct-2026): no cobra ni cierra, y la pantalla dice quién.
+            --}}
             <x-filament::empty-state
-                heading="No tenés un turno abierto"
-                description="Abrí el turno con el fondo que hay en la gaveta para empezar a cobrar. Sin turno no se recibe plata: el efectivo tiene que caer en una gaveta que alguien cuente al final."
+                :heading="'La gaveta está en el '.$ajena->etiquetaCorta()"
+                :description="'La abrió '.($ajena->usuario?->name ?? 'otra persona').' el '.$ajena->abierto_en->format('d/m').' a las '.$ajena->abierto_en->format('H:i').'. Cobran y la cierran quienes son de ese turno, quien la abrió o la administración; después se abre el turno que sigue.'"
+                icon="heroicon-o-lock-closed"
+                icon-color="gray"
+            >
+                <x-slot name="footer">
+                    {{ $this->gavetaOcupadaAction }}
+                </x-slot>
+            </x-filament::empty-state>
+        @elseif ($resumen === null)
+            <x-filament::empty-state
+                heading="La gaveta está cerrada"
+                description="Abrí el turno con el fondo que hay en la gaveta para empezar a cobrar. El turno que sigue ya viene marcado. Sin turno no se recibe plata: el efectivo tiene que caer en una gaveta que alguien cuente al final."
                 icon="heroicon-o-lock-closed"
                 icon-color="gray"
             >

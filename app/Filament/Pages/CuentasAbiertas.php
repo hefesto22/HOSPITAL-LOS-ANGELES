@@ -56,6 +56,7 @@ use App\Models\Prestamo;
 use App\Models\Presupuesto;
 use App\Models\PresupuestoLinea;
 use App\Models\PrincipioActivo;
+use App\Models\TurnoDeCaja;
 use App\Models\Unidad;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
@@ -592,21 +593,41 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Abonar es de caja (y dirección). Laboratorio y consulta externa ven
-     * la tarjeta entera pero el botón apagado: antes se veía encendido y
-     * no hacía nada, que es peor que no estar.
+     * Por qué el botón «Abonar» está apagado, o `null` si se puede.
+     *
+     * Abonar es de caja (y dirección), y en el turno abierto de la gaveta
+     * cuando quien mira trabaja en él (Mauricio, 13-oct-2026): la cajera
+     * de otro turno, o sin turno asignado, carga en la cuenta pero no
+     * recibe plata. Antes el botón se veía encendido y el «no» llegaba
+     * recién al guardar, con el formulario ya lleno.
+     *
+     * Laboratorio y consulta externa ven la tarjeta entera pero el botón
+     * apagado. La regla de verdad la pone `ReceptorDeAbono`.
      */
-    public function puedeAbonar(): bool
+    public function porQueNoAbona(): ?string
     {
-        return Gate::allows('create', Abono::class);
+        if (! Gate::allows('create', Abono::class)) {
+            return 'Los abonos los recibe caja, con el turno abierto.';
+        }
+
+        if ($this->turno() instanceof TurnoDeCaja) {
+            return null;
+        }
+
+        $ajena = $this->gavetaDeOtroTurno();
+
+        return $ajena instanceof TurnoDeCaja
+            ? "La gaveta está en el {$ajena->etiquetaCorta()}: abonan quienes son de ese turno o la administración."
+            : 'Abrí el turno de caja para recibir abonos.';
     }
 
     /**
      * Por qué el botón «Facturar» está apagado, o `null` si se puede.
      *
-     * Dos respuestas distintas porque son dos soluciones distintas: la
-     * cajera sin turno tiene que abrirlo (el botón está arriba, en el
-     * encabezado); el laboratorio no tiene nada que hacer — le toca a
+     * Tres respuestas distintas porque son tres soluciones distintas: si
+     * la gaveta está cerrada, se abre (el botón está arriba, en el
+     * encabezado); si está en el turno de otra persona, factura quien es
+     * de ese turno; y el laboratorio no tiene nada que hacer — le toca a
      * caja. La regla vive en `FacturaPolicy::create()`.
      */
     public function porQueNoFactura(): ?string
@@ -617,9 +638,15 @@ class CuentasAbiertas extends Page
 
         $usuario = Auth::user();
 
-        return $usuario instanceof User && $usuario->can('Create:Factura')
-            ? 'Abrí tu turno de caja para facturar.'
-            : 'Facturar es de caja, con el turno abierto.';
+        if (! $usuario instanceof User || ! $usuario->can('Create:Factura')) {
+            return 'Facturar es de caja, con el turno abierto.';
+        }
+
+        $ajena = $this->gavetaDeOtroTurno();
+
+        return $ajena instanceof TurnoDeCaja
+            ? "La gaveta está en el {$ajena->etiquetaCorta()}: facturan quienes son de ese turno o la administración."
+            : 'Abrí el turno de caja para facturar.';
     }
 
     // ── Abrir una cuenta ──────────────────────────────────────────────
@@ -639,17 +666,19 @@ class CuentasAbiertas extends Page
     protected function getHeaderActions(): array
     {
         /*
-         * ⚠️ SE REGISTRAN LAS DOS, y cada una decide si se ve.
+         * ⚠️ SE REGISTRAN LAS TRES, y cada una decide si se ve.
          *
          * Filament cachea las acciones del encabezado al montar la
          * página: devolviendo solo una, el botón se quedaba en «Abrir
          * turno» después de abrirlo y solo cambiaba al recargar. Con las
-         * dos registradas, `visible()` se evalúa en cada render y el
-         * botón se transforma solo.
+         * tres registradas —abrir, cerrar y «gaveta en otro turno»—,
+         * `visible()` se evalúa en cada render y el botón se transforma
+         * solo.
          */
         return [
             $this->abrirTurnoAction(),
             $this->cerrarTurnoAction(),
+            $this->gavetaOcupadaAction(),
         ];
     }
 
