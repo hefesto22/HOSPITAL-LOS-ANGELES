@@ -58,7 +58,7 @@ return [
             |------------------------------------------------------------------
             */
             'databases' => [
-                config('database.default'),
+                env('DB_CONNECTION', 'pgsql'),
             ],
         ],
 
