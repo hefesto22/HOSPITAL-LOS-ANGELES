@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\EstadoFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Especialidad;
@@ -70,23 +71,8 @@ use Livewire\Attributes\Locked;
  */
 class HonorariosPorMedico extends Page implements HasTable
 {
+    use ElijePeriodo;
     use InteractsWithTable;
-
-    /**
-     * Los atajos de período, en el orden en que se muestran. Los
-     * honorarios se liquidan por quincena o por mes.
-     */
-    private const ATAJOS = [
-        'esta_quincena'   => 'Esta quincena',
-        'quincena_pasada' => 'Quincena pasada',
-        'este_mes'        => 'Este mes',
-        'mes_pasado'      => 'Mes pasado',
-    ];
-
-    private const MESES = [
-        1 => 'enero', 2 => 'febrero', 3 => 'marzo', 4 => 'abril', 5 => 'mayo', 6 => 'junio',
-        7 => 'julio', 8 => 'agosto', 9 => 'septiembre', 10 => 'octubre', 11 => 'noviembre', 12 => 'diciembre',
-    ];
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBanknotes;
 
@@ -95,15 +81,6 @@ class HonorariosPorMedico extends Page implements HasTable
     protected static ?int $navigationSort = 40;
 
     protected string $view = 'filament.pages.honorarios-por-medico';
-
-    /**
-     * El período, en `Y-m-d`; nulo = el mes en curso. Las escribe el
-     * navegador (los dos campos de fecha), así que todo lo que entra se
-     * valida con `fechaValida()` antes de tocar una consulta.
-     */
-    public ?string $desde = null;
-
-    public ?string $hasta = null;
 
     /**
      * `#[Locked]`: solo lo cambian `verSoloEste()` y `verTodos()`.
@@ -156,88 +133,32 @@ class HonorariosPorMedico extends Page implements HasTable
     }
 
     /**
-     * `?desde=`, `?hasta=` y `?medico=` se leen a mano y no con
-     * `#[Url]`: Livewire asignaría el valor crudo a la propiedad tipada,
-     * y un enlace mal pegado reventaría con un TypeError en vez de
-     * ignorarse (la misma lección de `BasesDePrecios`).
+     * `?medico=` se lee a mano y no con `#[Url]`, por la misma razón que
+     * el período (ver `leerElPeriodoDeLaUrl()`).
      */
     public function mount(): void
     {
-        $this->desde = self::fechaValida(request()->query('desde')) ?? now()->startOfMonth()->toDateString();
-        $this->hasta = self::fechaValida(request()->query('hasta')) ?? now()->endOfMonth()->toDateString();
+        $this->leerElPeriodoDeLaUrl();
 
         $medico = request()->query('medico');
         $this->medico = is_string($medico) && ctype_digit($medico) ? (int) $medico : null;
-
-        $this->ordenarElRango();
     }
 
     // ── El período ────────────────────────────────────────────────────
 
     /**
-     * Los atajos de arriba, con su rango y cuál coincide con el actual.
+     * Los honorarios se liquidan por quincena o por mes.
      *
-     * @return list<array{clave: string, etiqueta: string, rango: string, activo: bool}>
+     * @return array<string, string>
      */
-    public function periodos(): array
+    protected function atajosDelPeriodo(): array
     {
-        $lista = [];
-
-        foreach (self::ATAJOS as $clave => $etiqueta) {
-            [$desde, $hasta] = self::rangoDelAtajo($clave);
-
-            $lista[] = [
-                'clave'    => $clave,
-                'etiqueta' => $etiqueta,
-                'rango'    => CarbonImmutable::parse($desde)->format('d/m').' – '.CarbonImmutable::parse($hasta)->format('d/m'),
-                'activo'   => $desde === $this->desdeEfectivo() && $hasta === $this->hastaEfectivo(),
-            ];
-        }
-
-        return $lista;
-    }
-
-    public function usarPeriodo(string $clave): void
-    {
-        if (! array_key_exists($clave, self::ATAJOS)) {
-            return;
-        }
-
-        [$this->desde, $this->hasta] = self::rangoDelAtajo($clave);
-
-        $this->resetPage();
-    }
-
-    public function updatedDesde(): void
-    {
-        $this->ordenarElRango();
-        $this->resetPage();
-    }
-
-    public function updatedHasta(): void
-    {
-        $this->ordenarElRango();
-        $this->resetPage();
-    }
-
-    /**
-     * Cómo se lee el período: «Octubre 2026» si es un mes entero, una
-     * fecha si es un solo día, o las dos puntas.
-     */
-    public function periodo(): string
-    {
-        $desde = CarbonImmutable::parse($this->desdeEfectivo());
-        $hasta = CarbonImmutable::parse($this->hastaEfectivo());
-
-        if ($desde->day === 1 && $hasta->isSameDay($desde->endOfMonth())) {
-            return ucfirst(self::MESES[$desde->month]).' '.$desde->year;
-        }
-
-        if ($desde->isSameDay($hasta)) {
-            return $desde->format('d/m/Y');
-        }
-
-        return $desde->format('d/m/Y').' — '.$hasta->format('d/m/Y');
+        return [
+            'esta_quincena'   => 'Esta quincena',
+            'quincena_pasada' => 'Quincena pasada',
+            'este_mes'        => 'Este mes',
+            'mes_pasado'      => 'Mes pasado',
+        ];
     }
 
     // ── El médico ─────────────────────────────────────────────────────
@@ -559,66 +480,6 @@ class HonorariosPorMedico extends Page implements HasTable
     }
 
     // ── Fechas ────────────────────────────────────────────────────────
-
-    private function desdeEfectivo(): string
-    {
-        return self::fechaValida($this->desde) ?? now()->startOfMonth()->toDateString();
-    }
-
-    private function hastaEfectivo(): string
-    {
-        return self::fechaValida($this->hasta) ?? now()->endOfMonth()->toDateString();
-    }
-
-    /**
-     * Deja las dos fechas válidas y en orden: si alguien pone un «hasta»
-     * anterior al «desde», se dan vuelta en vez de mostrar una tabla
-     * vacía sin explicación.
-     */
-    private function ordenarElRango(): void
-    {
-        $desde = $this->desdeEfectivo();
-        $hasta = $this->hastaEfectivo();
-
-        if ($desde > $hasta) {
-            [$desde, $hasta] = [$hasta, $desde];
-        }
-
-        $this->desde = $desde;
-        $this->hasta = $hasta;
-    }
-
-    /**
-     * @return array{0: string, 1: string}
-     */
-    private static function rangoDelAtajo(string $clave): array
-    {
-        $mes = now()->toImmutable()->startOfMonth();
-        $anterior = $mes->subMonthNoOverflow();
-        $enLaPrimera = now()->day <= 15;
-
-        [$desde, $hasta] = match ($clave) {
-            'esta_quincena' => $enLaPrimera
-                ? [$mes, $mes->addDays(14)]
-                : [$mes->addDays(15), $mes->endOfMonth()],
-            'quincena_pasada' => $enLaPrimera
-                ? [$anterior->addDays(15), $anterior->endOfMonth()]
-                : [$mes, $mes->addDays(14)],
-            'mes_pasado' => [$anterior, $anterior->endOfMonth()],
-            default      => [$mes, $mes->endOfMonth()],
-        };
-
-        return [$desde->toDateString(), $hasta->toDateString()];
-    }
-
-    private static function fechaValida(mixed $valor): ?string
-    {
-        if (! is_string($valor) || preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $valor, $partes) !== 1) {
-            return null;
-        }
-
-        return checkdate((int) $partes[2], (int) $partes[3], (int) $partes[1]) ? $valor : null;
-    }
 
     private static function fechaCorta(mixed $fecha): string
     {

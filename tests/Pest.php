@@ -10,9 +10,11 @@ use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
+use App\Domain\ValueObjects\LineaRecibida;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Abono;
 use App\Models\Almacen;
+use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Existencia;
@@ -30,7 +32,9 @@ use App\Services\AbridorDeEncuentro;
 use App\Services\EmisorDeFactura;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDePrestamo;
+use App\Services\RegistradorDeRecepcion;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Pest\Expectation;
 use Tests\TestCase;
@@ -294,4 +298,70 @@ function facturarLaCuentaDeHonorarios(Cuenta $cuenta): Factura
         cuenta: $cuenta->refresh(),
         cliente: ClienteDeFactura::consumidorFinal(),
     );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Stock infinito y consumo de productos (13-oct-2026)
+|--------------------------------------------------------------------------
+|
+| Acá y no en `StockInfinitoTest`: con `--parallel` cada proceso carga
+| solo sus archivos, y `ConsumoDeProductosTest` no encontraría las
+| funciones si vivieran en el otro.
+*/
+
+function unaCuentaDeStockInfinito(): Cuenta
+{
+    $contado = Convenio::query()->where('codigo', Convenio::CODIGO_CONTADO)->first()
+        ?? Convenio::factory()->contado()->create();
+
+    return unaCuentaCon($contado);
+}
+
+function unMedicamentoDeStockInfinito(bool $infinito = true): Item
+{
+    $item = Item::factory()->medicamento()->create([
+        'se_almacena'               => true,
+        'stock_infinito'            => $infinito,
+        'regimen_isv'               => RegimenIsv::Exento,
+        'categoria_legal_descuento' => CategoriaLegalDeDescuento::SinDescuentoLegal,
+    ]);
+
+    Tarifario::factory()->delItem($item)->a('10.0000')->create();
+
+    return $item;
+}
+
+/**
+ * @param numeric-string $cantidad
+ */
+function recibirParaElStockInfinito(Item $item, Almacen $almacen, string $cantidad): void
+{
+    app(RegistradorDeRecepcion::class)->registrar(
+        almacen: $almacen,
+        lineas: [new LineaRecibida(
+            item: $item,
+            presentacion: null,
+            cantidadPresentacion: Decimal::de($cantidad),
+            unidadesPorPresentacion: Decimal::de('1'),
+            costoPorPresentacion: Decimal::de('5'),
+            numeroLote: 'L-INF',
+            vencimiento: now()->addYear(),
+        )],
+    );
+}
+
+/**
+ * @param numeric-string $cantidad
+ *
+ * @return Collection<int, Cargo>
+ */
+function cargarConStockInfinito(Cuenta $cuenta, Item $item, string $cantidad, ?Almacen $almacen = null): Collection
+{
+    return app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
+        item: $item,
+        cantidad: Decimal::de($cantidad),
+        claveIdempotencia: (string) Str::uuid(),
+        almacen: $almacen,
+    ));
 }

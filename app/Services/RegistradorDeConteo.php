@@ -364,6 +364,15 @@ final class RegistradorDeConteo
             throw ConteoException::laCantidadNoPuedeSerNegativa($item->etiqueta());
         }
 
+        /*
+         * Un producto en stock infinito no tiene existencia que cuadrar, y
+         * el cierre no podría asentar la diferencia: el kardex le rechaza
+         * cualquier entrada mientras lo sea (Mauricio, 13-oct-2026).
+         */
+        if ($item->tieneStockInfinito()) {
+            throw ConteoException::tieneStockInfinito($item->etiqueta());
+        }
+
         if ($item->requiere_lote && ! $lote instanceof Lote) {
             throw ConteoException::faltaElLote($item->etiqueta());
         }

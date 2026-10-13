@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Productos\Pages;
 
-use App\Domain\Exceptions\FormasDeVentaException;
+use App\Domain\Exceptions\SihlaException;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Schemas\FormasDeVenta;
 use App\Filament\Resources\Productos\ProductoResource;
 use App\Models\Item;
+use App\Services\CambiadorDeStockInfinito;
 use App\Services\SincronizadorDeFormasDeVenta;
 use App\Services\SincronizadorDePrincipiosActivos;
+use App\Services\UbicadorDeProducto;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Illuminate\Database\Eloquent\Model;
@@ -29,7 +31,8 @@ class EditProducto extends EditItem
 
     /**
      * Las formas de venta no son columnas del producto: son sus
-     * presentaciones, y se leen al abrir la ficha.
+     * presentaciones, y se leen al abrir la ficha. Tampoco «Dónde hay»,
+     * que son sus lugares mientras es infinito.
      *
      * @param array<string, mixed> $data
      *
@@ -41,6 +44,18 @@ class EditProducto extends EditItem
 
         if ($producto instanceof Item) {
             $data = [...$data, ...FormasDeVenta::estadoDe($producto)];
+
+            /*
+             * Un infinito sin lugares anotados —de antes del 13-oct— abre
+             * con farmacia marcada: así guardar la ficha lo deja ubicado,
+             * en vez de trabarla con «marque al menos un almacén».
+             */
+            $ubicador = app(UbicadorDeProducto::class);
+            $donde = $ubicador->dondeEsta($producto);
+
+            $data['ubicaciones'] = $donde === [] && $producto->tieneStockInfinito()
+                ? $ubicador->porDefecto()
+                : $donde;
         }
 
         return $data;
@@ -58,19 +73,61 @@ class EditProducto extends EditItem
         $formas = FormasDeVenta::paraGuardar($data[FormasDeVenta::CAMPO] ?? null);
         $sueltaPrincipal = FormasDeVenta::esSi($data[FormasDeVenta::SUELTA_PRINCIPAL] ?? null);
 
-        unset($data[FormasDeVenta::CAMPO], $data[FormasDeVenta::SUELTA_PRINCIPAL]);
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * EL STOCK INFINITO NO SE GUARDA COMO UN CAMPO MÁS (13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Marcarlo da de baja lo que había y quitarlo lo deja en cero:
+         * mueve el kardex. Eso pasa por `CambiadorDeStockInfinito`, el
+         * mismo de la acción en bloque, y no por el `update()` de la ficha.
+         */
+        $infinito = array_key_exists('stock_infinito', $data) ? (bool) $data['stock_infinito'] : null;
+
+        /*
+         * «Dónde hay» solo llega cuando el campo está a la vista —con el
+         * infinito prendido—. Sin él, los lugares quedan como estaban.
+         */
+        $lugares = array_key_exists('ubicaciones', $data)
+            ? UbicadorDeProducto::idsDelFormulario($data['ubicaciones'])
+            : null;
+
+        unset(
+            $data[FormasDeVenta::CAMPO],
+            $data[FormasDeVenta::SUELTA_PRINCIPAL],
+            $data['stock_infinito'],
+            $data['ubicaciones'],
+        );
 
         try {
-            return DB::transaction(function () use ($record, $data, $formas, $sueltaPrincipal): Model {
+            return DB::transaction(function () use ($record, $data, $formas, $sueltaPrincipal, $infinito, $lugares): Model {
                 $guardado = parent::handleRecordUpdate($record, $data);
 
                 if ($guardado instanceof Item) {
                     app(SincronizadorDeFormasDeVenta::class)->sincronizar($guardado, $formas, $sueltaPrincipal);
+
+                    if ($infinito !== null && (bool) $guardado->stock_infinito !== $infinito) {
+                        app(CambiadorDeStockInfinito::class)->cambiar([$guardado], $infinito);
+                    }
+
+                    /*
+                     * Después del cambio de bandera: al marcarlo, el
+                     * cambiador ya lo dejó donde tenía existencia, y lo que
+                     * se marcó en la ficha es la última palabra.
+                     */
+                    if ($lugares !== null && $lugares !== [] && $guardado->tieneStockInfinito()) {
+                        app(UbicadorDeProducto::class)->dejarEn($guardado, $lugares);
+                    }
                 }
 
                 return $guardado;
             });
-        } catch (FormasDeVentaException $e) {
+        } catch (SihlaException $e) {
+            /*
+             * Las formas de venta y, desde el 13-oct-2026, el stock
+             * infinito: dar de baja lo que había puede fallar con un error
+             * de inventario, y tiene que verse igual que el de las formas.
+             */
             Notification::make()
                 ->danger()
                 ->title('No se guardaron los cambios')

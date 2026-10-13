@@ -125,6 +125,14 @@ final readonly class LineaRecibida
             throw RecepcionException::elItemNoMueveInventario($this->item->etiqueta());
         }
 
+        /*
+         * Mientras tenga stock infinito no lleva existencia: recibirle
+         * algo sería empezar a contar a medias (13-oct-2026).
+         */
+        if ($this->item->tieneStockInfinito()) {
+            throw RecepcionException::tieneStockInfinito($this->item->etiqueta());
+        }
+
         if ($this->cantidadPresentacion->esCero() || $this->cantidadPresentacion->esNegativo()) {
             throw RecepcionException::laCantidadDebeSerPositiva($this->item->etiqueta());
         }

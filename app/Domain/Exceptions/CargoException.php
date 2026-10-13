@@ -197,6 +197,14 @@ final class CargoException extends SihlaException
         );
     }
 
+    public static function noEstaEnEseAlmacen(string $item, string $almacen): self
+    {
+        return new self(
+            "«{$item}» no está en {$almacen}. Elija uno de los almacenes donde está, o muévalo "
+            .'primero desde Existencias para que quede claro de dónde sale.'
+        );
+    }
+
     public static function yaNoSeAnula(string $estado): self
     {
         return new self(

@@ -241,7 +241,7 @@ final class ItemsTable
                     ->alignCenter()
                     ->grow(false)
                     ->tooltip(fn (Item $record): string => $record->tieneStockInfinito()
-                        ? 'Se carga aunque no haya existencia. Apagalo cuando el inventario de este producto esté cuadrado.'
+                        ? 'No lleva existencia: se carga sin descontar y queda registrado lo que se usó.'
                         : 'Se vende solo lo que hay en existencia.')
                     ->visible($esFarmacia)
                     ->toggleable(),
@@ -405,8 +405,9 @@ final class ItemsTable
                 ->requiresConfirmation()
                 ->modalHeading('¿Poner stock infinito?')
                 ->modalDescription(
-                    'Los productos elegidos se van a poder cargar a las cuentas aunque no haya existencia. '
-                    .'Los estupefacientes y psicotrópicos se saltan: su libro exige existencia real.'
+                    'Lo que tengan en existencia se da de baja, y desde ahí se cargan a las cuentas sin '
+                    .'descontar nada (queda registrado lo que se usó). Mientras estén así no se les recibe '
+                    .'mercadería. Los estupefacientes y psicotrópicos se saltan: su libro exige existencia real.'
                 )
                 ->modalSubmitActionLabel('Sí, poner infinito')
                 ->deselectRecordsAfterCompletion()
@@ -421,8 +422,8 @@ final class ItemsTable
                 ->requiresConfirmation()
                 ->modalHeading('¿Pasar a stock real?')
                 ->modalDescription(
-                    'Desde ahora se va a vender solo lo que haya en existencia. Hacelo cuando el inventario '
-                    .'de estos productos ya esté cuadrado.'
+                    'Arrancan en cero: desde ahora se vende solo lo que haya en existencia, así que recibí lo '
+                    .'contado justo después.'
                 )
                 ->modalSubmitActionLabel('Sí, pasar a real')
                 ->deselectRecordsAfterCompletion()

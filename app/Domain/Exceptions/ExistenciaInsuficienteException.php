@@ -55,6 +55,14 @@ final class ExistenciaInsuficienteException extends SihlaException
         );
     }
 
+    public static function tieneStockInfinito(string $item): self
+    {
+        return new self(
+            "{$item} tiene stock infinito: mientras lo tenga no se le carga existencia. Para empezar "
+            .'a llevar su inventario, pasalo a stock real en Productos y después recibí la mercadería.'
+        );
+    }
+
     public static function faltaElMotivo(string $tipo): self
     {
         return new self(

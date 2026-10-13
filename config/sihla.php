@@ -195,6 +195,22 @@ return [
         'horas_caducidad_post_apertura_por_defecto' => 24,
 
         /*
+         * ¿El producto nuevo arranca con stock infinito? (13-oct-2026)
+         *
+         * Mauricio: «por defecto que el infinito esté marcado». Mientras
+         * el inventario del hospital se cuadra, casi todo lo que se crea
+         * todavía no tiene existencia cargada, y olvidarse de marcarlo
+         * deja el producto sin poder cargarse a las cuentas.
+         *
+         * Es configuración y no un `true` en el formulario porque el día
+         * que el inventario esté cuadrado esto tiene que pasar a false
+         * sin tocar código: desde ahí, lo nuevo entra con stock real.
+         * Solo propone el interruptor de la ficha; no cambia los que ya
+         * existen.
+         */
+        'stock_infinito_al_crear' => filter_var(env('SIHLA_STOCK_INFINITO_AL_CREAR', true), FILTER_VALIDATE_BOOL),
+
+        /*
         |----------------------------------------------------------------
         | Conteo físico y ajustes
         |----------------------------------------------------------------

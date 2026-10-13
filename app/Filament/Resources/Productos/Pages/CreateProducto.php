@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Productos\Pages;
 
-use App\Domain\Exceptions\FormasDeVentaException;
+use App\Domain\Exceptions\SihlaException;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Schemas\FormasDeVenta;
 use App\Filament\Resources\Productos\ProductoResource;
 use App\Models\Item;
 use App\Services\SincronizadorDeFormasDeVenta;
 use App\Services\SincronizadorDePrincipiosActivos;
+use App\Services\UbicadorDeProducto;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Illuminate\Database\Eloquent\Model;
@@ -47,6 +48,9 @@ class CreateProducto extends CreateItem
      * en el mismo formulario y se guardan juntos con el producto, o no
      * se guarda nada (`SincronizadorDeFormasDeVenta`).
      *
+     * Y, si nace con stock infinito, con sus lugares —«Dónde hay»—
+     * (13-oct-2026): por defecto farmacia, o lo que se haya marcado.
+     *
      * @param array<string, mixed> $data
      */
     protected function handleRecordCreation(array $data): Model
@@ -54,19 +58,26 @@ class CreateProducto extends CreateItem
         $formas = FormasDeVenta::paraGuardar($data[FormasDeVenta::CAMPO] ?? null);
         $sueltaPrincipal = FormasDeVenta::esSi($data[FormasDeVenta::SUELTA_PRINCIPAL] ?? null);
 
-        unset($data[FormasDeVenta::CAMPO], $data[FormasDeVenta::SUELTA_PRINCIPAL]);
+        $lugares = UbicadorDeProducto::idsDelFormulario($data['ubicaciones'] ?? null);
+
+        unset($data[FormasDeVenta::CAMPO], $data[FormasDeVenta::SUELTA_PRINCIPAL], $data['ubicaciones']);
 
         try {
-            $producto = DB::transaction(function () use ($data, $formas, $sueltaPrincipal): Model {
+            $producto = DB::transaction(function () use ($data, $formas, $sueltaPrincipal, $lugares): Model {
                 $creado = parent::handleRecordCreation($data);
 
                 if ($creado instanceof Item) {
                     app(SincronizadorDeFormasDeVenta::class)->sincronizar($creado, $formas, $sueltaPrincipal);
+
+                    if ($creado->tieneStockInfinito()) {
+                        $ubicador = app(UbicadorDeProducto::class);
+                        $ubicador->dejarEn($creado, $lugares !== [] ? $lugares : $ubicador->porDefecto());
+                    }
                 }
 
                 return $creado;
             });
-        } catch (FormasDeVentaException $e) {
+        } catch (SihlaException $e) {
             Notification::make()
                 ->danger()
                 ->title('No se creó el producto')

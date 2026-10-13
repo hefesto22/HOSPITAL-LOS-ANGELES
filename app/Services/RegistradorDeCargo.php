@@ -92,6 +92,7 @@ final class RegistradorDeCargo
         private readonly CalculadoraDeCostoPromedio $costos,
         private readonly ConsultorDeExistencias $existencias,
         private readonly FormasDeCobro $formas,
+        private readonly UbicadorDeProducto $ubicaciones,
     ) {}
 
     /**
@@ -121,6 +122,19 @@ final class RegistradorDeCargo
             && ! $linea->almacen instanceof Almacen
             && ! $this->seCargaSinInventario($linea)) {
             throw CargoException::necesitaAlmacen($linea->item->nombre);
+        }
+
+        /*
+         * Stock infinito: sale de un almacén donde ESTÁ (13-oct-2026). La
+         * pantalla solo ofrece esos; esto es para el que llega por otro
+         * lado. La línea rehecha queda afuera: sale de donde salió el
+         * original, aunque después lo hayan movido.
+         */
+        if ($linea->almacen instanceof Almacen
+            && $linea->item->tieneStockInfinito()
+            && ! $linea->mismoPrecioQue instanceof Cargo
+            && ! $this->ubicaciones->sePuedeSacarDe($linea->item, $linea->almacen)) {
+            throw CargoException::noEstaEnEseAlmacen($linea->item->nombre, $linea->almacen->nombre);
         }
 
         /** @var Collection<int, Cargo> $cargos */
@@ -243,9 +257,9 @@ final class RegistradorDeCargo
      * Asienta UNA fila: la de un lote, o la única si el ítem no mueve
      * inventario.
      *
-     * `$sinExistencia`: la parte de un producto con stock infinito que no
-     * alcanzó en el estante. Se cobra igual, pero no mueve el kardex: no
-     * hay de dónde sacarla.
+     * `$sinExistencia`: un producto con stock infinito. Se cobra igual,
+     * pero no mueve el kardex; el almacén se guarda igual, porque «de dónde
+     * se sacó» es la mitad del reporte de consumo.
      */
     private function asentar(
         Cuenta $cuenta,
@@ -358,8 +372,12 @@ final class RegistradorDeCargo
              * ítem que no mueve inventario con `almacen_id` puesto
              * atribuye una consulta médica a la bodega central, y ese
              * ruido después no se limpia.
+             *
+             * El stock infinito SÍ salió de ese estante, aunque no se
+             * descuente: es lo que contesta «de dónde se sacó» en el
+             * reporte de consumo (13-oct-2026).
              */
-            'almacen_id'    => $movimiento instanceof MovimientoKardex ? $linea->almacen?->id : null,
+            'almacen_id'    => $movimiento instanceof MovimientoKardex || $sinExistencia ? $linea->almacen?->id : null,
             'lote_id'       => $lote?->id,
             'movimiento_id' => $movimiento instanceof MovimientoKardex ? $movimiento->id : null,
             'unidad_id'     => $item->unidad_dispensacion_id,
@@ -468,13 +486,36 @@ final class RegistradorDeCargo
      * lo que hace la devolución y lo que hará la dispensación con receta
      * en el bloque 6.
      *
-     * Con stock infinito, lo que no alcanzó va al final como una fila
-     * más, sin lote y marcada `sinExistencia`.
+     * Con stock infinito, una sola fila sin lote marcada `sinExistencia`.
      *
      * @return list<array{lote: Lote|null, cantidad: Decimal, sinExistencia?: bool}>
      */
     private function repartirPorLote(LineaDeCargo $linea): array
     {
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * STOCK INFINITO: NO SE MIRA EL ESTANTE (13-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Regla de Mauricio: mientras un producto está en infinito no
+         * tiene existencia —no se le recibe mercadería y lo que tenía se
+         * dio de baja al marcarlo—. Lo que se usa no descuenta nada: queda
+         * el cargo —qué, cuánto, cuándo y de qué almacén— y de ahí sale el
+         * reporte de consumo.
+         *
+         * Antes que el lote elegido a mano: una línea rehecha de un cargo
+         * viejo trae su lote, y ese lote ya no tiene de dónde sacar.
+         *
+         * ⚠️ Y la línea REHECHA de un cargo que no sacó nada tampoco saca
+         * nada, aunque el producto ya no sea infinito: trae el almacén del
+         * original (ahora se guarda) y, sin esta guarda, iría al FEFO de un
+         * estante en cero y el descuento a toda la cuenta reventaría por
+         * «no hay existencia» de algo que el paciente ya se llevó.
+         */
+        if ($this->seCargaSinInventario($linea)) {
+            return [['lote' => null, 'cantidad' => $linea->cantidad, 'sinExistencia' => true]];
+        }
+
         if (! $linea->mueveInventario()) {
             return [['lote' => null, 'cantidad' => $linea->cantidad]];
         }
@@ -573,25 +614,6 @@ final class RegistradorDeCargo
          * escribir —el UPDATE condicional de `RegistradorDeMovimiento` la
          * detiene, así que no hay sobregiro; lo que hay es un reintento.
          */
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * STOCK INFINITO: LO QUE NO ALCANZÓ SE CARGA IGUAL (13-oct-2026)
-         * ─────────────────────────────────────────────────────────────
-         *
-         * Mientras el inventario de este producto no esté cuadrado, se
-         * cobra aunque el estante no alcance. Lo que sí había ya salió
-         * arriba, de su lote y con su kardex —así, cuando se apague el
-         * infinito, la existencia ya es la de verdad—. El resto va como
-         * una fila más, sin lote y sin movimiento.
-         *
-         * Nunca para un controlado: `tieneStockInfinito()` lo descarta.
-         */
-        if (! $pendiente->esCero() && ! $pendiente->esNegativo() && $linea->item->tieneStockInfinito()) {
-            $repartos[] = ['lote' => null, 'cantidad' => $pendiente, 'sinExistencia' => true];
-
-            return $repartos;
-        }
-
         if (! $pendiente->esCero() && ! $pendiente->esNegativo()) {
             throw CargoException::sinExistenciaSuficiente(
                 $linea->item->nombre,
@@ -605,11 +627,12 @@ final class RegistradorDeCargo
     }
 
     /**
-     * ¿Se asienta sin tocar el inventario, aunque el ítem se almacene y no
-     * venga almacén?
+     * ¿Se asienta sin tocar el inventario, aunque el ítem se almacene?
      *
-     *   · Producto con stock infinito y sin estante elegido: no hay en
-     *     ningún lado, y mientras se cuadra el inventario se cobra igual.
+     *   · Producto con stock infinito: no tiene existencia en ningún
+     *     estante, y mientras se cuadra el inventario se cobra igual. El
+     *     almacén, si viene, solo queda anotado para el reporte de
+     *     consumo.
      *   · Línea REHECHA de un cargo que no movió el kardex —un descuento
      *     aplicado a algo que se vendió sin existencia—. Rehacerla no es
      *     volver a venderla: si el original no sacó nada del estante, el

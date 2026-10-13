@@ -19,6 +19,14 @@ final class PrestamoException extends SihlaException
         return new self('La cantidad prestada tiene que ser mayor que cero.');
     }
 
+    public static function tieneStockInfinito(string $item): self
+    {
+        return new self(
+            "{$item} tiene stock infinito: se carga a la cuenta aunque no haya, así que no hace falta "
+            .'pedirlo prestado. Si ya lleva inventario real, pasalo a stock real en Productos.'
+        );
+    }
+
     public static function faltaQuienPresto(): self
     {
         return new self(

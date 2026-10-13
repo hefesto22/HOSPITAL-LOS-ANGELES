@@ -83,6 +83,15 @@ final class RegistradorDePrestamo
             throw PrestamoException::sinCantidad();
         }
 
+        /*
+         * Con stock infinito no hace falta pedir prestado: se carga a la
+         * cuenta aunque no haya, y un préstamo le metería existencia a un
+         * producto que no la lleva (13-oct-2026).
+         */
+        if ($item->tieneStockInfinito()) {
+            throw PrestamoException::tieneStockInfinito($item->nombre);
+        }
+
         if (mb_strlen($nombre) < 3) {
             throw PrestamoException::faltaQuienPresto();
         }

@@ -10,16 +10,20 @@ use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
 use App\Filament\Resources\PrincipiosActivos\Schemas\PrincipioActivoForm;
 use App\Filament\Schemas\Components\CampoMayusculas;
+use App\Models\Almacen;
 use App\Models\CategoriaItem;
 use App\Models\Descuento;
+use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\PrincipioActivo;
 use App\Models\Unidad;
 use App\Services\AsignadorDeCodigoDeItem;
+use App\Services\UbicadorDeProducto;
 use App\Support\CodigoDeBarras;
 use Closure;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
@@ -224,6 +228,7 @@ final class ItemForm
             ...FormasDeVenta::componentes(),
 
             self::campoStockInfinito(),
+            self::campoDondeHay(),
 
             self::campoSeAlmacena(AmbitoCatalogo::Productos),
         ];
@@ -506,6 +511,11 @@ final class ItemForm
      * En la primera pestaña y no en «Farmacia»: se decide al crear el
      * producto, y ahí es donde se crea.
      *
+     * Arranca MARCADO mientras el inventario se cuadra (Mauricio,
+     * 13-oct-2026): sale de `sihla.inventario.stock_infinito_al_crear`,
+     * que se pasa a false el día que el inventario esté al día. Solo
+     * cuenta al crear; en la edición manda lo que ya tiene el producto.
+     *
      * Deshabilitado para un controlado, con el porqué a la vista: su
      * libro exige saldo real ante ARSA (§9.F11). El modelo y la base lo
      * vuelven a impedir.
@@ -514,14 +524,82 @@ final class ItemForm
     {
         return Toggle::make('stock_infinito')
             ->label('Stock infinito mientras se cuadra el inventario')
-            ->default(false)
+            ->default(fn (): bool => config('sihla.inventario.stock_infinito_al_crear') === true)
             ->disabled(fn (Get $get): bool => $get('es_controlado') === true)
             ->dehydrated()
+            ->live()
+            /*
+             * Al prenderlo en la ficha, «Dónde hay» arranca en los
+             * almacenes donde tiene existencia —«si tenía stock pasa a
+             * infinito», y queda donde estaba— o en farmacia si no tiene
+             * en ninguno.
+             */
+            ->afterStateUpdated(function (mixed $state, Set $set, Get $get, ?Item $record): void {
+                if ($state === true && blank($get('ubicaciones'))) {
+                    $set('ubicaciones', self::dondeHayAhora($record));
+                }
+            })
             ->helperText(fn (Get $get): string => $get('es_controlado') === true
                 ? 'Un estupefaciente o psicotrópico no puede: su libro exige existencia real ante ARSA.'
-                : 'Se puede cargar a las cuentas aunque no haya existencia. Si hay en el estante sale de '
-                    .'ahí primero. Apagalo cuando el inventario de este producto ya esté cuadrado.')
+                : 'Se carga a las cuentas sin llevar existencia: no descuenta nada y queda registrado lo '
+                    .'que se usó y de dónde. Mientras esté marcado no se le recibe mercadería. Al marcarlo, '
+                    .'lo que había se da de baja; al quitarlo, arranca en cero y ya se le puede recibir.')
             ->columnSpanFull();
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * DÓNDE HAY, MIENTRAS ES INFINITO (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «al crear un producto, por defecto va a farmacia, pero se
+     * debe poder seleccionar si se crea en farmacia y bodega. Así, al
+     * vender, saben de dónde lo sacaron».
+     *
+     * El infinito no se cuenta, pero sí se sabe dónde está: al cargarlo a
+     * una cuenta solo se ofrecen estos almacenes, y el cargo guarda de
+     * cuál salió. Después se cambia desde Existencias con «Mover», o acá.
+     *
+     * No es una columna del producto: lo guarda `UbicadorDeProducto`
+     * desde las páginas de alta y de edición.
+     */
+    private static function campoDondeHay(): CheckboxList
+    {
+        return CheckboxList::make('ubicaciones')
+            ->label('Dónde hay')
+            ->options(fn (): array => Almacen::query()
+                ->vigentes()
+                ->orderBy('nombre')
+                ->pluck('nombre', 'id')
+                ->all())
+            ->default(fn (): array => app(UbicadorDeProducto::class)->porDefecto())
+            ->visible(fn (Get $get): bool => $get('stock_infinito') === true && $get('es_controlado') !== true)
+            ->required(fn (Get $get): bool => $get('stock_infinito') === true && $get('es_controlado') !== true)
+            ->validationMessages(['required' => 'Marque al menos un almacén: si no, nadie sabría de dónde sale.'])
+            ->columns(['default' => 2, 'lg' => 4])
+            ->helperText('Al cargarlo a una cuenta solo se ofrecen estos almacenes, y queda de cuál se sacó.')
+            ->columnSpanFull();
+    }
+
+    /**
+     * Dónde arranca «Dónde hay» al prender el infinito en la ficha: donde
+     * tiene existencia hoy, o farmacia.
+     *
+     * @return list<int>
+     */
+    private static function dondeHayAhora(?Item $producto): array
+    {
+        $donde = $producto instanceof Item && $producto->exists
+            ? array_values(Existencia::query()
+                ->where('item_id', $producto->id)
+                ->conSaldo()
+                ->distinct()
+                ->pluck('almacen_id')
+                ->map(fn (mixed $id): int => (int) $id)
+                ->all())
+            : [];
+
+        return $donde !== [] ? $donde : app(UbicadorDeProducto::class)->porDefecto();
     }
 
     /**

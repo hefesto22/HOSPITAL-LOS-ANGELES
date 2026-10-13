@@ -51,6 +51,15 @@ final class ConteoException extends SihlaException
         );
     }
 
+    public static function tieneStockInfinito(string $item): self
+    {
+        return new self(
+            "{$item} tiene stock infinito: no lleva existencia, así que no hay nada que cuadrar. "
+            .'Para contarlo, pásenlo primero a stock real en Productos —arranca en cero— y '
+            .'después cuéntenlo: la diferencia entra como ajuste.'
+        );
+    }
+
     public static function elLoteNoEsDelItem(string $item, string $lote): self
     {
         return new self(

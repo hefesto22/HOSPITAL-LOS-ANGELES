@@ -738,10 +738,11 @@ class Item extends Model
     /**
      * ¿Se puede cargar aunque no haya existencia? (13-oct-2026)
      *
-     * Bandera de TRANSICIÓN mientras se cuadra el inventario: lo que hay
-     * en el estante sale primero, con su lote y su kardex, y lo que no
-     * alcance se carga igual, sin tocar inventario. Se apaga producto
-     * por producto cuando su existencia ya es la real.
+     * Bandera de TRANSICIÓN mientras se cuadra el inventario: el producto
+     * no lleva existencia —no se le recibe mercadería— y lo que se usa se
+     * carga sin descontar nada, quedando en el cargo para el reporte de
+     * consumo. Se marca y se quita con `CambiadorDeStockInfinito`, que da
+     * de baja lo que hubiera; al quitarlo arranca en cero.
      *
      * Se vuelve a mirar `se_almacena` y `es_controlado` aunque el modelo
      * y la base ya lo impidan: una fila vieja leída antes de la regla no

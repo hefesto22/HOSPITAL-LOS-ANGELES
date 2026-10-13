@@ -2,26 +2,19 @@
 
 declare(strict_types=1);
 
-use App\Domain\Enums\CategoriaLegalDeDescuento;
-use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoAlmacen;
+use App\Domain\Enums\TipoMovimiento;
 use App\Domain\Exceptions\CargoException;
+use App\Domain\Exceptions\RecepcionException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\LineaDeCargo;
-use App\Domain\ValueObjects\LineaRecibida;
 use App\Models\Almacen;
-use App\Models\Cargo;
-use App\Models\Convenio;
-use App\Models\Cuenta;
 use App\Models\Item;
 use App\Models\MovimientoKardex;
-use App\Models\Tarifario;
 use App\Services\AnuladorDeCargo;
 use App\Services\CambiadorDeStockInfinito;
 use App\Services\RegistradorDeCargo;
-use App\Services\RegistradorDeRecepcion;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -35,68 +28,16 @@ use Illuminate\Support\Str;
 | tardarán en cuadrar el inventario; irán agregando stock de uno o dos
 | productos y ahí desactivarán el infinito y pasarán al real».
 |
-| Lo que importa probar: que se carga sin existencia, que lo que SÍ hay
-| sale primero (así, al apagarlo, la existencia ya es la real), que sin
-| la bandera todo sigue igual, y que un controlado nunca la tiene.
+| Y la regla de cómo convive con el inventario: «mientras esté en
+| infinito no se puede ingresar mercadería; se va tomando cuánto se va
+| usando, pero solo para reportaje… y de dónde se sacó». Si tenía stock,
+| pasa a infinito; si se le quita, arranca en cero.
+|
+| El reporte de lo que se usó se prueba en `ConsumoDeProductosTest`. Los
+| ayudantes de los dos archivos viven en `tests/Pest.php`.
 */
 
-function unaCuentaDeStockInfinito(): Cuenta
-{
-    $contado = Convenio::query()->where('codigo', Convenio::CODIGO_CONTADO)->first()
-        ?? Convenio::factory()->contado()->create();
-
-    return unaCuentaCon($contado);
-}
-
-function unMedicamentoDeStockInfinito(bool $infinito = true): Item
-{
-    $item = Item::factory()->medicamento()->create([
-        'se_almacena'               => true,
-        'stock_infinito'            => $infinito,
-        'regimen_isv'               => RegimenIsv::Exento,
-        'categoria_legal_descuento' => CategoriaLegalDeDescuento::SinDescuentoLegal,
-    ]);
-
-    Tarifario::factory()->delItem($item)->a('10.0000')->create();
-
-    return $item;
-}
-
-/**
- * @param numeric-string $cantidad
- */
-function recibirParaElStockInfinito(Item $item, Almacen $almacen, string $cantidad): void
-{
-    app(RegistradorDeRecepcion::class)->registrar(
-        almacen: $almacen,
-        lineas: [new LineaRecibida(
-            item: $item,
-            presentacion: null,
-            cantidadPresentacion: Decimal::de($cantidad),
-            unidadesPorPresentacion: Decimal::de('1'),
-            costoPorPresentacion: Decimal::de('5'),
-            numeroLote: 'L-INF',
-            vencimiento: now()->addYear(),
-        )],
-    );
-}
-
-/**
- * @param numeric-string $cantidad
- *
- * @return Collection<int, Cargo>
- */
-function cargarConStockInfinito(Cuenta $cuenta, Item $item, string $cantidad, ?Almacen $almacen = null): Collection
-{
-    return app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
-        item: $item,
-        cantidad: Decimal::de($cantidad),
-        claveIdempotencia: (string) Str::uuid(),
-        almacen: $almacen,
-    ));
-}
-
-it('🔴 sin existencia y sin estante elegido se carga igual, sin tocar el inventario', function (): void {
+it('🔴 sin estante elegido se carga igual, sin tocar el inventario', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
     $item = unMedicamentoDeStockInfinito();
 
@@ -110,7 +51,7 @@ it('🔴 sin existencia y sin estante elegido se carga igual, sin tocar el inven
         ->and(MovimientoKardex::query()->count())->toBe(0);
 });
 
-it('con un estante elegido que está vacío también se carga', function (): void {
+it('🔴 con un estante elegido no descuenta nada, pero deja anotado de dónde salió', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
     $item = unMedicamentoDeStockInfinito();
     $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
@@ -119,29 +60,90 @@ it('con un estante elegido que está vacío también se carga', function (): voi
 
     expect($cargos)->toHaveCount(1)
         ->and($cargos->first()?->movimiento_id)->toBeNull()
+        ->and($cargos->first()?->almacen_id)->toBe($farmacia->id)
+        ->and(MovimientoKardex::query()->count())->toBe(0)
+        ->and(elSaldoDe($item, $farmacia))->toBe('0.0000');
+})->note('El almacén es lo que contesta «de dónde se sacó» en el reporte de consumo.');
+
+it('🔴 al marcarlo infinito, lo que tenía se da de baja con su línea en el kardex', function (): void {
+    $item = unMedicamentoDeStockInfinito(infinito: false);
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
+
+    recibirParaElStockInfinito($item, $farmacia, '5');
+
+    $resultado = app(CambiadorDeStockInfinito::class)->cambiar([$item], true);
+
+    $baja = MovimientoKardex::query()
+        ->where('item_id', $item->id)
+        ->where('tipo', TipoMovimiento::AjusteNegativo->value)
+        ->first();
+
+    expect($resultado['cambiados'])->toBe(1)
+        ->and($item->refresh()->stock_infinito)->toBeTrue()
+        ->and(elSaldoDe($item, $farmacia))->toBe('0.0000')
+        ->and($baja)->toBeInstanceOf(MovimientoKardex::class)
+        ->and($baja?->cantidad)->toBe('-5.0000')
+        ->and($baja?->motivo)->toBe(CambiadorDeStockInfinito::MOTIVO_AL_MARCAR);
+})->note('Así un producto en infinito nunca tiene existencia: no hay dos números distintos diciendo cuánto hay.');
+
+it('marcar otra vez uno que ya es infinito limpia lo que le haya quedado', function (): void {
+    $item = unMedicamentoDeStockInfinito(infinito: false);
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
+
+    recibirParaElStockInfinito($item, $farmacia, '4');
+
+    /*
+     * Como quedaron los que se marcaron antes de esta regla: la bandera
+     * puesta y la existencia viva.
+     */
+    DB::table('items')->where('id', $item->id)->update(['stock_infinito' => true]);
+
+    $resultado = app(CambiadorDeStockInfinito::class)->cambiar([$item->refresh()], true);
+
+    expect($resultado['cambiados'])->toBe(1)
         ->and(elSaldoDe($item, $farmacia))->toBe('0.0000');
 });
 
-it('🔴 lo que hay en el estante sale primero, y solo el resto va sin existencia', function (): void {
+it('🔴 mientras es infinito no se le recibe mercadería', function (): void {
+    $item = unMedicamentoDeStockInfinito();
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
+
+    expect(fn () => recibirParaElStockInfinito($item, $farmacia, '10'))->toThrow(RecepcionException::class)
+        ->and(elSaldoDe($item, $farmacia))->toBe('0.0000');
+});
+
+it('🔴 al quitarle el infinito arranca en cero, y desde ahí se recibe y se descuenta', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
     $item = unMedicamentoDeStockInfinito();
     $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
 
-    recibirParaElStockInfinito($item, $farmacia, '2');
+    app(CambiadorDeStockInfinito::class)->cambiar([$item], false);
 
-    $cargos = cargarConStockInfinito($cuenta, $item, '5', $farmacia);
-
-    $delEstante = $cargos->first(fn (Cargo $cargo): bool => $cargo->movimiento_id !== null);
-    $sinExistencia = $cargos->first(fn (Cargo $cargo): bool => $cargo->movimiento_id === null);
-
-    expect($cargos)->toHaveCount(2)
-        ->and($delEstante?->cantidad)->toBe('2.0000')
-        ->and($delEstante?->lote_id)->not->toBeNull()
-        ->and($sinExistencia?->cantidad)->toBe('3.0000')
-        ->and($sinExistencia?->lote_id)->toBeNull()
+    expect($item->refresh()->stock_infinito)->toBeFalse()
         ->and(elSaldoDe($item, $farmacia))->toBe('0.0000')
-        ->and($cuenta->refresh()->total)->toBe('50.00');
-})->note('Así, cuando se apague el infinito, la existencia ya es la de verdad: lo que había se descontó.');
+        ->and(fn () => cargarConStockInfinito($cuenta, $item, '1', $farmacia))->toThrow(CargoException::class);
+
+    recibirParaElStockInfinito($item, $farmacia, '3');
+
+    $cargo = cargarConStockInfinito($cuenta, $item->refresh(), '2', $farmacia)->firstOrFail();
+
+    expect($cargo->movimiento_id)->not->toBeNull()
+        ->and(elSaldoDe($item, $farmacia))->toBe('1.0000');
+});
+
+it('🔴 quitar el infinito en bloque no toca lo que ya estaba en real', function (): void {
+    $real = unMedicamentoDeStockInfinito(infinito: false);
+    $infinito = unMedicamentoDeStockInfinito();
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
+
+    recibirParaElStockInfinito($real, $farmacia, '7');
+
+    $resultado = app(CambiadorDeStockInfinito::class)->cambiar([$real, $infinito], false);
+
+    expect($resultado['cambiados'])->toBe(1)
+        ->and(elSaldoDe($real, $farmacia))->toBe('7.0000')
+        ->and($infinito->refresh()->stock_infinito)->toBeFalse();
+})->note('La acción en bloque se aplica a una selección: lo contado no puede darse de baja por estar en ella.');
 
 it('🔴 sin stock infinito, lo que no hay sigue sin poder cargarse', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
@@ -164,39 +166,48 @@ it('🔴 un estupefaciente o psicotrópico nunca queda con stock infinito', func
         ->toThrow(QueryException::class);
 })->note('§9.F11: su libro exige saldo corrido real ante ARSA. El modelo lo corrige y la base lo rechaza.');
 
-it('anular un cargo sin existencia no devuelve nada al estante', function (): void {
+it('anular un cargo de stock infinito no devuelve nada al estante', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
     $item = unMedicamentoDeStockInfinito();
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
 
-    $cargo = cargarConStockInfinito($cuenta, $item, '4')->firstOrFail();
+    $cargo = cargarConStockInfinito($cuenta, $item, '4', $farmacia)->firstOrFail();
 
     $reversa = app(AnuladorDeCargo::class)->anular($cargo, 'SE CARGO AL PACIENTE EQUIVOCADO');
 
     expect($reversa->movimiento_id)->toBeNull()
         ->and(MovimientoKardex::query()->count())->toBe(0)
+        ->and(elSaldoDe($item, $farmacia))->toBe('0.0000')
         ->and($cuenta->refresh()->total)->toBe('0.00');
 });
 
-it('🔴 apagar el infinito no traba rehacer lo que ya se vendió sin existencia', function (): void {
+it('🔴 apagar el infinito no traba rehacer lo que ya se usó sin existencia', function (): void {
     $cuenta = unaCuentaDeStockInfinito();
     $item = unMedicamentoDeStockInfinito();
+    $farmacia = Almacen::factory()->de(TipoAlmacen::FarmaciaVenta)->create();
 
-    $cargo = cargarConStockInfinito($cuenta, $item, '4')->firstOrFail();
+    $cargo = cargarConStockInfinito($cuenta, $item, '4', $farmacia)->firstOrFail();
 
-    $item->update(['stock_infinito' => false]);
+    app(CambiadorDeStockInfinito::class)->cambiar([$item], false);
 
     app(AnuladorDeCargo::class)->anular($cargo, 'SE REHACE CON EL DESCUENTO DEL HOSPITAL');
 
+    /*
+     * Como lo rehace el descuento a toda la cuenta: con el almacén del
+     * original, que ahora sí viene anotado, y un estante en cero.
+     */
     $rehecho = app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
         item: $item->refresh(),
         cantidad: Decimal::de('4'),
         claveIdempotencia: (string) Str::uuid(),
+        almacen: $cargo->almacen,
         mismoPrecioQue: $cargo,
     ))->firstOrFail();
 
     expect($rehecho->movimiento_id)->toBeNull()
+        ->and($rehecho->almacen_id)->toBe($farmacia->id)
         ->and($rehecho->cantidad)->toBe('4.0000');
-})->note('Es lo que hace aplicar un descuento a toda la cuenta: anula y rehace. Si el original no sacó nada del estante, el rehecho tampoco.');
+})->note('Si el original no sacó nada del estante, el rehecho tampoco, aunque el producto ya esté en real.');
 
 it('el cambio en bloque salta los controlados y dice cuántos', function (): void {
     $uno = unMedicamentoDeStockInfinito(infinito: false);

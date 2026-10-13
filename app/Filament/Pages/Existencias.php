@@ -14,31 +14,38 @@ use App\Models\Existencia;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
+use App\Models\UbicacionDeProducto;
 use App\Models\Unidad;
 use App\Services\TrasladadorDeExistencias;
+use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\NumeroDeFormulario;
 use BackedEnum;
+use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\Component;
+use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
-use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
-use Filament\Tables\Enums\FiltersLayout;
-use Filament\Tables\Filters\Filter;
-use Filament\Tables\Filters\SelectFilter;
-use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as ConsultaBase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Livewire\Attributes\Locked;
 
 /**
  * Qué hay, dónde está, y el botón para moverlo.
@@ -52,35 +59,67 @@ use Illuminate\Support\Facades\Gate;
  * en el carrito rojo 1 y 1 en el carrito rojo 2, y la pregunta que
  * importa a las tres de la mañana no es cuántas hay sino DÓNDE.
  *
- * El dato ya estaba —`existencias` es (ítem, lote, almacén) desde el
- * primer día—, pero no había dónde verlo: se llegaba a él por el kardex
- * de un ítem, un ítem por vez. Acá se ve el estante entero.
- *
  * ─────────────────────────────────────────────────────────────────────
- * AGRUPADA POR PRODUCTO, NO POR ALMACÉN
+ * UN RENGLÓN POR PRODUCTO (13-oct-2026, tercera vuelta)
  * ─────────────────────────────────────────────────────────────────────
  *
- * Agrupar por almacén contesta «qué hay en bodega», que se puede filtrar.
- * Agrupar por producto contesta «dónde está el fentanilo», que es la
- * pregunta con la que se entra: las tres filas quedan juntas, se ven los
- * tres lugares de un vistazo y se elige cuál mover. Quien quiera lo otro
- * cambia el agrupador, que está arriba.
+ * Mauricio: «se arma una lista demasiado extensa cuando sean muchos
+ * medicamentos». Con un renglón por lote —y por lugar, en lo infinito—
+ * trescientos productos eran mil renglones. Ahora es uno por producto:
+ *
+ *   · DÓNDE ESTÁ: un chip por almacén, con cuánto hay en cada uno —o sin
+ *     cantidad, si es infinito—.
+ *   · VENCE: el lote que vence primero.
+ *   · CANTIDAD: lo que hay en el almacén elegido arriba, o en todos.
+ *
+ * El detalle lote por lote está a un clic, en «Lotes». Y «Mover» pide
+ * el lote adentro del modal: se elige de dónde sale mirando la lista,
+ * con su vencimiento, en vez de buscarlo entre renglones repetidos.
+ *
+ * Arriba, los almacenes en el orden en que se despacha —farmacia
+ * primero, «Todos» al final— y la pantalla abre en el primero (Mauricio:
+ * «el primero en aparecer debe ser farmacia, todos debe estar de
+ * último»).
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * LO QUE TIENE STOCK INFINITO
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * No se cuenta: no tiene lote, ni vencimiento, ni cantidad. Tiene LUGARES
+ * (`UbicadorDeProducto`), y eso es lo que muestra su renglón. Su «Mover»
+ * anota que ahora también hay en otro almacén —o que se llevó todo—, y
+ * «Lugares» corrige la lista entera.
+ *
+ * 🔴 Si le quedó existencia de antes de esta regla, NO se muestra: un
+ * infinito no tiene lotes que vencer. `sihla:ordenar-stock-infinito` la
+ * da de baja en el kardex.
  *
  * ─────────────────────────────────────────────────────────────────────
  * NO ES UN RESOURCE (§9.A10)
  * ─────────────────────────────────────────────────────────────────────
  *
  * `Existencia` es un SALDO y se escribe únicamente desde
- * `RegistradorDeMovimiento`. Un Resource traería crear, editar y borrar,
- * y las tres son exactamente lo que no puede pasar: un saldo tecleado a
- * mano deja el kardex diciendo otra cosa, y el kardex es la verdad.
- *
- * Lo único que se puede hacer desde acá es MOVER, que no cambia el
- * número: lo pasa de un estante a otro asentando las dos líneas.
+ * `RegistradorDeMovimiento`. Lo único que se puede hacer desde acá es
+ * MOVER, que no cambia el número: lo pasa de un estante a otro asentando
+ * las dos líneas.
  */
 class Existencias extends Page implements HasTable
 {
     use InteractsWithTable;
+
+    /**
+     * Lo que se ve, en el orden del control. `por_vencer` es en los
+     * próximos 90 días y sin contar lo ya vencido.
+     */
+    public const VISTAS = [
+        'todo'        => 'Todo',
+        'por_vencer'  => 'Por vencer',
+        'vencido'     => 'Vencido',
+        'controlados' => 'Controlados',
+        'infinito'    => 'Stock infinito',
+    ];
+
+    private const DIAS_POR_VENCER = 90;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
 
@@ -89,6 +128,51 @@ class Existencias extends Page implements HasTable
     protected static ?int $navigationSort = 0;
 
     protected string $view = 'filament.pages.existencias';
+
+    /**
+     * `#[Locked]`: solo lo cambian `verAlmacen()` y `verTodosLosAlmacenes()`.
+     * Nulo = todos.
+     */
+    #[Locked]
+    public ?int $almacen = null;
+
+    /**
+     * `#[Locked]`: solo lo cambia `verVista()`, que además lo valida
+     * contra `VISTAS`.
+     */
+    #[Locked]
+    public string $vista = 'todo';
+
+    /**
+     * Cuántos productos tiene cada almacén. Privada: Livewire no la guarda
+     * entre pedidos, y así nunca queda vieja.
+     *
+     * @var array<int, int>|null
+     */
+    private ?array $productosPorAlmacen = null;
+
+    /**
+     * Los almacenes de la sede, por id. Son pocos: se cargan una vez por
+     * pintada y de ahí salen los nombres, los colores y el orden.
+     *
+     * @var Collection<array-key, Almacen>|null
+     */
+    private ?Collection $almacenesPorId = null;
+
+    /**
+     * Lo que hay de cada producto de la página, almacén por almacén. Lo
+     * leen las columnas: dos consultas por pintada, no una por renglón.
+     *
+     * @var array{reales: array<int, list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>>, infinitos: array<int, list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>>}|null
+     */
+    private ?array $lugares = null;
+
+    /**
+     * Las existencias ya cargadas para el modal de mover, por id.
+     *
+     * @var array<int, Existencia|null>
+     */
+    private array $existenciasCargadas = [];
 
     public static function getNavigationLabel(): string
     {
@@ -107,8 +191,8 @@ class Existencias extends Page implements HasTable
 
     public function getSubheading(): string
     {
-        return 'Qué hay en cada estante, lote por lote. El botón «Mover» lo baja a otro almacén '
-            .'sin sacarlo del inventario.';
+        return 'Qué hay de cada producto y en qué almacén. «Lotes» muestra el detalle; «Mover» lo '
+            .'pasa a otro almacén sin sacarlo del inventario.';
     }
 
     public static function canAccess(): bool
@@ -116,112 +200,145 @@ class Existencias extends Page implements HasTable
         return Gate::allows('viewAny', Almacen::class);
     }
 
+    /**
+     * `?almacen=` y `?vista=` se leen a mano y no con `#[Url]`: Livewire
+     * asignaría el valor crudo a la propiedad tipada, y un enlace mal
+     * pegado reventaría con un TypeError en vez de ignorarse.
+     *
+     * Sin `?almacen=`, abre en el primero de la lista —farmacia—.
+     * `?almacen=todos` abre en todos.
+     */
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
+
+        $vista = request()->query('vista');
+        $this->vista = is_string($vista) && array_key_exists($vista, self::VISTAS) ? $vista : 'todo';
+
+        $almacen = request()->query('almacen');
+
+        $this->almacen = match (true) {
+            $almacen === 'todos'                         => null,
+            is_string($almacen) && ctype_digit($almacen) => (int) $almacen,
+            default                                      => $this->almacenes()[0]['id'] ?? null,
+        };
     }
 
-    // ── La cinta de estantes ──────────────────────────────────────────
+    // ── Dónde ─────────────────────────────────────────────────────────
+
+    public function verAlmacen(int $almacenId): void
+    {
+        $this->almacen = $almacenId;
+        $this->lugares = null;
+
+        $this->resetPage();
+    }
+
+    public function verTodosLosAlmacenes(): void
+    {
+        $this->almacen = null;
+        $this->lugares = null;
+
+        $this->resetPage();
+    }
 
     /**
-     * Un renglón por almacén con saldo: cuántas filas tiene y cuántas
-     * están por vencer.
+     * Los almacenes con algo, en el orden en que se despacha: farmacia,
+     * después los carritos y stocks de servicio, bodega al final.
      *
-     * ⚠️ DOS CONSULTAS AGRUPADAS, NO UNA POR ALMACÉN. Con un conteo por
-     * tarjeta serían cinco consultas cada vez que Livewire repinta la
-     * pantalla, y esto se repinta con cada tecla del buscador — el N+1
-     * invisible del §13.2.
-     *
-     * @return list<array{id: int, nombre: string, tipo: string, renglones: int, porVencer: int, activo: bool}>
+     * @return list<array{id: int, nombre: string, productos: int, activo: bool}>
      */
-    public function estantes(): array
+    public function almacenes(): array
     {
-        $renglones = Existencia::query()
-            ->conSaldo()
-            ->selectRaw('almacen_id, count(*) as cuantos')
-            ->groupBy('almacen_id')
-            ->pluck('cuantos', 'almacen_id');
+        $productos = $this->productosPorAlmacen();
+        $elegido = $this->almacenElegido();
 
-        $porVencer = Existencia::query()
-            ->conSaldo()
-            ->whereHas(
-                'lote',
-                fn (Builder $lote): Builder => $lote
-                    ->whereNotNull('fecha_vencimiento')
-                    ->whereDate('fecha_vencimiento', '<=', now()->addDays(90)->toDateString()),
-            )
-            ->selectRaw('almacen_id, count(*) as cuantos')
-            ->groupBy('almacen_id')
-            ->pluck('cuantos', 'almacen_id');
+        $lista = [];
 
-        if ($renglones->isEmpty()) {
-            return [];
+        foreach ($this->almacenesEnOrden() as $almacen) {
+            if (! isset($productos[$almacen->id])) {
+                continue;
+            }
+
+            $lista[] = [
+                'id'        => (int) $almacen->id,
+                'nombre'    => $almacen->nombre,
+                'productos' => $productos[$almacen->id],
+                'activo'    => $elegido === (int) $almacen->id,
+            ];
         }
 
-        $elegido = $this->almacenFiltrado();
-
-        /*
-         * ⚠️ `array_values()` aunque la colección ya venga en orden:
-         * `Collection::all()` devuelve `array<int, …>`, que NO es lo
-         * mismo que una `list` —puede tener huecos en las claves— y el
-         * analizador no lo da por sentado. Sin esto no compila a nivel 7.
-         */
-        return array_values(Almacen::query()
-            ->whereIn('id', $renglones->keys())
-            ->orderBy('nombre')
-            ->get()
-            ->map(fn (Almacen $almacen): array => [
-                'id'        => $almacen->id,
-                'nombre'    => $almacen->nombre,
-                'tipo'      => $almacen->tipo->etiqueta(),
-                'renglones' => (int) ($renglones[$almacen->id] ?? 0),
-                'porVencer' => (int) ($porVencer[$almacen->id] ?? 0),
-                'activo'    => $elegido === $almacen->id,
-            ])
-            ->all());
+        return $lista;
     }
 
     /**
-     * La tarjeta es un atajo al filtro, no un estado aparte.
-     *
-     * Escribe en el filtro de la tabla en vez de guardar el almacén en
-     * una propiedad propia: si fueran dos estados, la tarjeta marcada y
-     * la tabla filtrada podrían discrepar, y una pantalla de inventario
-     * que dice «BODEGA» arriba mostrando filas de farmacia es peor que no
-     * tener la cinta.
-     *
-     * Apretar la que ya está activa la apaga: es el gesto que la gente
-     * intenta para volver a ver todo.
+     * Cuántos productos distintos hay en algún almacén.
      */
-    public function verSoloEste(int $almacenId): void
+    public function totalDeProductos(): int
     {
-        $this->tableFilters['almacen_id']['value'] = $this->almacenFiltrado() === $almacenId
-            ? null
-            : $almacenId;
-
-        /*
-         * ⚠️ `fill($this->tableFilters)` y NO `resetTableFiltersForm()`:
-         * ese último llama a `fill()` sin argumentos, que vuelve a los
-         * valores POR DEFECTO — es decir, borra el filtro que acabamos de
-         * poner. El select de arriba quedaría vacío y la tabla sin
-         * filtrar, con la tarjeta pintada como activa. Peor que no tener
-         * el atajo.
-         */
-        $this->getTableFiltersForm()->fill($this->tableFilters);
-
-        /*
-         * Y esto es lo que guarda el filtro en la sesión y devuelve la
-         * paginación a la página uno. Sin él, apretar BODEGA estando en
-         * la página 4 muestra una tabla vacía.
-         */
-        $this->updatedTableFilters();
+        return $this->productosConAlgo(null)->count();
     }
 
-    private function almacenFiltrado(): ?int
-    {
-        $valor = $this->tableFilters['almacen_id']['value'] ?? null;
+    // ── Qué ───────────────────────────────────────────────────────────
 
-        return is_numeric($valor) ? (int) $valor : null;
+    public function verVista(string $vista): void
+    {
+        if (! array_key_exists($vista, self::VISTAS)) {
+            return;
+        }
+
+        $this->vista = $vista;
+
+        $this->resetPage();
+    }
+
+    /**
+     * Las vistas con cuántos productos tiene cada una en el almacén
+     * elegido. Todas las cuentas salen de UNA consulta con `count(*)
+     * filter (…)`.
+     *
+     * @return list<array{clave: string, etiqueta: string, cuantos: int, alerta: bool, activo: bool}>
+     */
+    public function vistas(): array
+    {
+        $almacen = $this->almacenElegido();
+        $hoy = now()->toDateString();
+        $limite = now()->addDays(self::DIAS_POR_VENCER)->toDateString();
+
+        $enElAlmacen = $almacen === null ? '' : ' and e.almacen_id = ?';
+        $delAlmacen = $almacen === null ? [] : [$almacen];
+
+        $loteQueVence = 'not items.stock_infinito and exists (select 1 from existencias e '
+            .'join lotes l on l.id = e.lote_id '
+            .'where e.item_id = items.id and e.cantidad > 0'.$enElAlmacen.' and %s)';
+
+        $fila = $this->productosConAlgo($almacen)
+            ->toBase()
+            ->selectRaw(
+                'count(*) as todo, '
+                .'count(*) filter (where '.sprintf($loteQueVence, 'l.fecha_vencimiento >= ? and l.fecha_vencimiento <= ?').') as por_vencer, '
+                .'count(*) filter (where '.sprintf($loteQueVence, 'l.fecha_vencimiento < ?').') as vencido, '
+                .'count(*) filter (where items.es_controlado) as controlados, '
+                .'count(*) filter (where items.stock_infinito) as infinito',
+                [...$delAlmacen, $hoy, $limite, ...$delAlmacen, $hoy],
+            )
+            ->first();
+
+        $lista = [];
+
+        foreach (self::VISTAS as $clave => $etiqueta) {
+            $cuantos = is_object($fila) && isset($fila->{$clave}) ? (int) $fila->{$clave} : 0;
+
+            $lista[] = [
+                'clave'    => $clave,
+                'etiqueta' => $etiqueta,
+                'cuantos'  => $cuantos,
+                'alerta'   => $cuantos > 0 && in_array($clave, ['por_vencer', 'vencido'], true),
+                'activo'   => $this->vista === $clave,
+            ];
+        }
+
+        return $lista;
     }
 
     // ── La tabla ──────────────────────────────────────────────────────
@@ -229,79 +346,228 @@ class Existencias extends Page implements HasTable
     public function table(Table $tabla): Table
     {
         return $tabla
-            ->query($this->consulta())
-            ->defaultGroup('item.nombre')
-            ->groups([
-                Group::make('item.nombre')->label('Producto')->collapsible(),
-                Group::make('almacen.nombre')->label('Almacén')->collapsible(),
-            ])
+            /*
+             * ⚠️ La consulta en un closure: el almacén y la vista cambian
+             * con un clic, y la tabla se arma antes de que la acción
+             * corra. Evaluada recién al pintar, ya ve el valor nuevo.
+             */
+            ->query(fn (): Builder => $this->consulta())
+            ->defaultSort('nombre')
             ->striped()
-            ->defaultSort('lote.fecha_vencimiento')
             ->paginated([25, 50, 100])
+            ->searchable()
+            ->searchPlaceholder('Escaneá, o escribí código o nombre')
+            /*
+             * La misma búsqueda del catálogo (`Item::scopeBuscar`): sin
+             * tildes, tolerante a errores de tecleo, y el código de barras
+             * de la caja del fabricante también encuentra.
+             */
+            ->searchUsing(function (Builder $query, string $search): void {
+                self::buscarEn($query, $search);
+            })
             ->columns($this->columnas())
-            ->filters($this->filtros())
-            ->filtersLayout(FiltersLayout::AboveContent)
-            ->recordActions([$this->moverAction()])
-            ->emptyStateHeading('No hay nada en existencia')
-            ->emptyStateDescription(
-                'Lo que entra por recepción aparece acá. Si acaba de recibir mercadería y no la '
-                .'ve, revise que la recepción se haya guardado.'
-            );
+            ->recordActions([
+                $this->lotesAction(),
+                $this->moverAction(),
+                $this->moverInfinitoAction(),
+                $this->lugaresAction(),
+            ])
+            ->emptyStateIcon('heroicon-o-squares-2x2')
+            ->emptyStateHeading(fn (): string => match ($this->vista) {
+                'por_vencer'  => 'Nada por vencer en los próximos '.self::DIAS_POR_VENCER.' días',
+                'vencido'     => 'No hay nada vencido',
+                'controlados' => 'No hay controlados en existencia',
+                'infinito'    => 'Nada con stock infinito acá',
+                default       => 'No hay nada acá',
+            })
+            ->emptyStateDescription(fn (): string => $this->vista === 'todo'
+                ? 'Lo que entra por recepción aparece acá, y lo que tiene stock infinito en cada almacén donde está.'
+                : 'Elegí «Todo» arriba para ver el resto.');
     }
 
     /**
-     * ⚠️ NINGÚN JOIN A MANO.
+     * Los productos con algo en el almacén elegido —o en cualquiera—,
+     * filtrados por la vista de arriba.
      *
-     * La tentación es unir `items` y `lotes` acá para poder ordenar y
-     * filtrar por sus columnas. No: Filament también une esas mismas
-     * tablas cuando una columna de relación es `sortable()` o
-     * `searchable()`, y PostgreSQL corta la consulta con «table name
-     * "items" specified more than once».
-     *
-     * Los filtros que miran el lote o el ítem van por `whereHas`, que es
-     * subconsulta y no agrega tablas al FROM.
-     *
-     * Solo las filas con saldo: un estante que quedó en cero no es un
-     * renglón que alguien tenga que leer, y son la mayoría después de
-     * unos meses.
-     *
-     * @return Builder<Existencia>
+     * @return Builder<Item>
      */
     private function consulta(): Builder
     {
-        return Existencia::query()
-            /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 SIN ENUMERAR COLUMNAS. TRES VECES BASTÓ.
-             * ─────────────────────────────────────────────────────────
-             *
-             * Esta pantalla cargaba solo las columnas que usaba, y esa
-             * micro-optimización rompió la pantalla TRES veces en un día,
-             * siempre igual: alguien —yo— suma un dato al renglón, la
-             * columna que ese dato necesita no está en la lista, y
-             * Eloquent devuelve NULO sin decir nada.
-             *
-             *   · `item` sin `unidad_dispensacion_id` → la cantidad se
-             *     quedaba sin unidad.
-             *   · `item` sin `nombre` → `trim(null)`, TypeError, pantalla
-             *     en blanco al abrir «Mover».
-             *   · `almacen` sin `sede_id` → `where('sede_id', null)`, y
-             *     el desplegable de destino decía «No hay opciones
-             *     disponibles» teniendo dos almacenes al lado.
-             *
-             * El último es el peor de los tres porque NO parece un error:
-             * parece que el hospital no tiene a dónde mover.
-             *
-             * Son veinticinco filas por página. Lo que se ahorraba no
-             * pagaba ni el primero de los tres.
-             */
-            ->with([
-                'item.unidadDispensacion',
-                'lote.presentacion.unidad',
-                'almacen',
-            ])
-            ->conSaldo();
+        $almacen = $this->almacenElegido();
+        $consulta = $this->productosConAlgo($almacen)->with('unidadDispensacion');
+
+        $hoy = now()->toDateString();
+
+        if ($this->vista === 'por_vencer') {
+            $this->conLoteQueVence(
+                $consulta,
+                $almacen,
+                fn (ConsultaBase $lotes): ConsultaBase => $lotes
+                    ->whereDate('lotes.fecha_vencimiento', '>=', $hoy)
+                    ->whereDate('lotes.fecha_vencimiento', '<=', now()->addDays(self::DIAS_POR_VENCER)->toDateString()),
+            );
+        } elseif ($this->vista === 'vencido') {
+            $this->conLoteQueVence(
+                $consulta,
+                $almacen,
+                fn (ConsultaBase $lotes): ConsultaBase => $lotes->whereDate('lotes.fecha_vencimiento', '<', $hoy),
+            );
+        } elseif ($this->vista === 'controlados') {
+            $consulta->where('items.es_controlado', true);
+        } elseif ($this->vista === 'infinito') {
+            $consulta->where('items.stock_infinito', true);
+        }
+
+        return $consulta;
     }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * QUÉ PRODUCTOS TIENEN ALGO, Y DÓNDE
+     * ─────────────────────────────────────────────────────────────────
+     *
+     *   · Lo que lleva existencia real: si tiene saldo en el almacén.
+     *   · Lo que es infinito: si tiene un lugar abierto en el almacén. Su
+     *     existencia vieja —si le quedó— no cuenta: un infinito no tiene
+     *     lotes.
+     *
+     * @return Builder<Item>
+     */
+    private function productosConAlgo(?int $almacen): Builder
+    {
+        return Item::query()
+            ->where('items.se_almacena', true)
+            ->where(function (Builder $consulta) use ($almacen): void {
+                $consulta
+                    ->where(function (Builder $real) use ($almacen): void {
+                        $real->where('items.stock_infinito', false)
+                            ->whereExists(function (ConsultaBase $existencias) use ($almacen): void {
+                                $existencias->selectRaw('1')
+                                    ->from('existencias')
+                                    ->whereColumn('existencias.item_id', 'items.id')
+                                    ->where('existencias.cantidad', '>', 0)
+                                    ->when($almacen !== null, fn (ConsultaBase $sub): ConsultaBase => $sub
+                                        ->where('existencias.almacen_id', $almacen));
+                            });
+                    })
+                    ->orWhere(function (Builder $infinito) use ($almacen): void {
+                        $infinito->where('items.stock_infinito', true)
+                            ->whereExists(function (ConsultaBase $lugares) use ($almacen): void {
+                                $lugares->selectRaw('1')
+                                    ->from('ubicaciones_de_producto')
+                                    ->whereColumn('ubicaciones_de_producto.item_id', 'items.id')
+                                    ->whereNull('ubicaciones_de_producto.hasta')
+                                    ->when($almacen !== null, fn (ConsultaBase $sub): ConsultaBase => $sub
+                                        ->where('ubicaciones_de_producto.almacen_id', $almacen));
+                            });
+                    });
+            });
+    }
+
+    /**
+     * @param Builder<Item> $consulta
+     * @param callable(ConsultaBase): ConsultaBase $condicion
+     */
+    private function conLoteQueVence(Builder $consulta, ?int $almacen, callable $condicion): void
+    {
+        $consulta
+            ->where('items.stock_infinito', false)
+            ->whereExists(function (ConsultaBase $existencias) use ($almacen, $condicion): void {
+                $existencias->selectRaw('1')
+                    ->from('existencias')
+                    ->join('lotes', 'lotes.id', '=', 'existencias.lote_id')
+                    ->whereColumn('existencias.item_id', 'items.id')
+                    ->where('existencias.cantidad', '>', 0)
+                    ->when($almacen !== null, fn (ConsultaBase $sub): ConsultaBase => $sub
+                        ->where('existencias.almacen_id', $almacen));
+
+                $condicion($existencias);
+            });
+    }
+
+    /**
+     * Cuántos productos distintos tiene cada almacén: existencia real con
+     * saldo, o lugar abierto de un infinito. Una consulta.
+     *
+     * @return array<int, int>
+     */
+    private function productosPorAlmacen(): array
+    {
+        if ($this->productosPorAlmacen !== null) {
+            return $this->productosPorAlmacen;
+        }
+
+        $lugares = DB::table('ubicaciones_de_producto')
+            ->join('items', 'items.id', '=', 'ubicaciones_de_producto.item_id')
+            ->whereNull('ubicaciones_de_producto.hasta')
+            ->where('items.stock_infinito', true)
+            ->select(['ubicaciones_de_producto.almacen_id', 'ubicaciones_de_producto.item_id']);
+
+        $todo = DB::table('existencias')
+            ->join('items', 'items.id', '=', 'existencias.item_id')
+            ->where('existencias.cantidad', '>', 0)
+            ->where('items.stock_infinito', false)
+            ->where('items.se_almacena', true)
+            ->select(['existencias.almacen_id', 'existencias.item_id'])
+            ->union($lugares);
+
+        $cuentas = [];
+
+        foreach (DB::query()
+            ->fromSub($todo, 'lugares')
+            ->selectRaw('almacen_id, count(distinct item_id) as cuantos')
+            ->groupBy('almacen_id')
+            ->get() as $fila) {
+            $cuentas[(int) $fila->almacen_id] = (int) $fila->cuantos;
+        }
+
+        return $this->productosPorAlmacen = $cuentas;
+    }
+
+    /**
+     * El almacén elegido, si todavía tiene algo. Si se vació, se ven
+     * todos: si no, la tabla quedaría vacía sin nada arriba que explique
+     * por qué.
+     */
+    private function almacenElegido(): ?int
+    {
+        return $this->almacen !== null && array_key_exists($this->almacen, $this->productosPorAlmacen())
+            ? $this->almacen
+            : null;
+    }
+
+    /**
+     * @return Collection<array-key, Almacen>
+     */
+    private function almacenesPorId(): Collection
+    {
+        return $this->almacenesPorId ??= Almacen::query()->get()->keyBy('id');
+    }
+
+    /**
+     * Farmacia primero, después los carritos y stocks de servicio, bodega
+     * al final; y por nombre entre iguales.
+     *
+     * @return Collection<int, Almacen>
+     */
+    private function almacenesEnOrden(): Collection
+    {
+        return $this->almacenesPorId()
+            ->sortBy(fn (Almacen $almacen): string => self::ordenDelTipo($almacen->tipo).' '.$almacen->nombre)
+            ->values();
+    }
+
+    private static function ordenDelTipo(TipoAlmacen $tipo): int
+    {
+        return match ($tipo) {
+            TipoAlmacen::FarmaciaVenta, TipoAlmacen::AlmacenUnico => 0,
+            TipoAlmacen::FarmaciaInterna                          => 1,
+            TipoAlmacen::StockDeServicio                          => 2,
+            TipoAlmacen::BodegaCentral                            => 3,
+        };
+    }
+
+    // ── Las columnas ──────────────────────────────────────────────────
 
     /**
      * @return list<TextColumn>
@@ -310,154 +576,331 @@ class Existencias extends Page implements HasTable
     {
         return [
             /*
-             * 🔴 SOLO EL NOMBRE CRECE.
-             *
-             * Filament reparte el ancho sobrante entre TODAS las columnas
-             * que pueden crecer. Con dos o más creciendo, el resultado es
-             * una tabla con huecos entre columnas cortas. `grow(false)` en
-             * todo lo demás es lo que la deja apretada y legible.
+             * 🔴 SOLO EL NOMBRE CRECE: con dos o más columnas creciendo,
+             * Filament reparte el ancho y deja huecos entre las cortas.
              */
-            /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 EL ENVASE VA EN EL RENGLÓN, NO SOLO EL PRODUCTO
-             * ─────────────────────────────────────────────────────────
-             *
-             * El jarabe de acetaminofén se compra en frasco de 60, de 80
-             * y de 120 ML, y cada envase lleva su propio lote. Con solo
-             * el nombre del producto, las tres filas se leen idénticas
-             * —mismo nombre, mismo código, hasta el mismo número de
-             * lote— y lo único distinto es la cantidad. Ahí alguien mueve
-             * el frasco que no era, y el error recién aparece en el
-             * conteo.
-             *
-             * Por eso la segunda línea es «CÓDIGO · FRASCO X 120 ML».
-             */
-            TextColumn::make('item.nombre')
+            TextColumn::make('nombre')
                 ->label('Producto')
-                ->searchable()
                 ->sortable()
                 ->weight('medium')
-                ->description(fn (Existencia $record): string => self::comoSeEnvasa($record)),
-
-            TextColumn::make('almacen.nombre')
-                ->label('Dónde está')
-                ->badge()
-                ->grow(false)
-                ->sortable()
-                ->color(fn (Existencia $record): string => $record->almacen?->tipo->color() ?? 'gray')
-                ->description(fn (Existencia $record): ?string => $record->almacen?->tipo->etiqueta()),
-
-            TextColumn::make('lote.numero')
-                ->label('Lote')
-                ->grow(false)
-                ->searchable()
-                ->fontFamily(FontFamily::Mono)
-                ->placeholder('Sin lote'),
+                ->wrap()
+                ->description(fn (Item $record): string => (string) $record->codigo),
 
             /*
-             * El vencimiento va al lado de la cantidad y no escondido en
-             * el lote: es lo que decide QUÉ fila mover. Primero se vacía
-             * lo que vence, y para eso hay que verlo sin abrir nada.
+             * Un chip por almacén: «FARMACIA · 458 TAB». Lo infinito, sin
+             * cantidad. En el orden en que se despacha.
              */
-            TextColumn::make('lote.fecha_vencimiento')
-                ->label('Vence')
-                ->date('d/m/Y')
-                ->grow(false)
-                ->sortable()
-                ->placeholder('—')
+            TextColumn::make('donde')
+                ->label('Dónde está')
+                ->state(fn (Item $record): array => $this->chipsDe($record))
                 ->badge()
-                ->color(fn (Existencia $record): string => self::colorDelVencimiento($record))
-                ->description(fn (Existencia $record): ?string => self::cuantoLeQueda($record)),
+                ->color(fn (Item $record, string $state): string => $this->colorDelChip($record, $state))
+                ->grow(false),
 
             /*
-             * 🔴 «1200» a secas no dice nada: pueden ser 1.200 mililitros
-             * o 1.200 frascos, y son dos hechos con dos dígitos de
-             * diferencia. Va la unidad de dispensación al lado del
-             * número, y debajo la traducción a envases —«= 10 FRASCO»—,
-             * que es como lo cuenta quien está frente al estante.
+             * El lote que vence primero. Lo infinito no tiene: la columna
+             * ni se dibuja en su vista.
+             */
+            TextColumn::make('vence')
+                ->label('Vence')
+                ->state(fn (Item $record): ?string => $this->venceDe($record))
+                ->date('d/m/Y')
+                ->badge()
+                ->placeholder('—')
+                ->color(fn (Item $record): string => self::colorPorDias(self::diasHasta($this->venceDe($record))))
+                ->description(fn (Item $record): ?string => self::textoPorDias(self::diasHasta($this->venceDe($record))))
+                ->visible(fn (): bool => $this->vista !== 'infinito')
+                ->grow(false),
+
+            /*
+             * Cuánto hay en el almacén elegido, o en todos. «1200» a secas
+             * no dice nada: va con la unidad del kardex.
              */
             TextColumn::make('cantidad')
-                ->label('Cantidad')
-                ->grow(false)
+                ->label(fn (): string => $this->almacenElegido() === null ? 'Total' : 'Aquí')
+                ->state(fn (Item $record): string => $this->cantidadDe($record))
+                ->description(fn (Item $record): string => $this->detalleDeLaCantidad($record))
                 ->alignEnd()
                 ->weight('bold')
-                ->formatStateUsing(fn (Existencia $record): string => self::cuantoHay($record))
-                ->description(fn (Existencia $record): ?string => self::enCuantosEnvases($record)),
+                ->grow(false),
         ];
     }
 
     /**
-     * @return list<Filter|SelectFilter>
+     * Los almacenes donde está cada producto de la página. Dos consultas
+     * —saldos de lo real, lugares de lo infinito— para toda la página.
+     *
+     * @return array{reales: array<int, list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>>, infinitos: array<int, list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>>}
      */
-    private function filtros(): array
+    private function lugaresDeLaPagina(): array
     {
-        return [
-            SelectFilter::make('almacen_id')
-                ->label('Almacén')
-                ->options(fn (): array => Almacen::query()
-                    ->orderBy('nombre')
-                    ->pluck('nombre', 'id')
-                    ->all()),
+        if ($this->lugares !== null) {
+            return $this->lugares;
+        }
 
-            SelectFilter::make('tipo_almacen')
-                ->label('Tipo de estante')
-                ->options(fn (): array => collect(TipoAlmacen::cases())
-                    ->mapWithKeys(fn (TipoAlmacen $t): array => [$t->value => $t->etiqueta()])
-                    ->all())
-                ->query(fn (Builder $query, array $data): Builder => blank($data['value'] ?? null)
-                    ? $query
-                    : $query->whereHas(
-                        'almacen',
-                        fn (Builder $almacen): Builder => $almacen->where('tipo', $data['value']),
-                    )),
+        /*
+         * Los de la página que se está pintando. `getTableRecords()` ya
+         * los tiene en memoria: no es otra consulta. Puede venir como
+         * colección o como paginador, y los dos saben dar `items()`… salvo
+         * la colección, que se recorre directo.
+         */
+        $registros = $this->getTableRecords();
+        $lista = $registros instanceof Collection ? $registros->all() : $registros->items();
 
-            /*
-             * Los tres filtros que de verdad se usan, y ninguno es
-             * decorativo: por vencer es lo que hay que mover o vender
-             * primero, vencido es lo que ARSA encuentra en el estante, y
-             * los controlados son el libro que se revisa a diario.
-             */
-            Filter::make('por_vencer')
-                ->label('Por vencer en 90 días')
-                ->toggle()
-                ->query(fn (Builder $query): Builder => $query->whereHas(
-                    'lote',
-                    fn (Builder $lote): Builder => $lote
-                        ->whereNotNull('fecha_vencimiento')
-                        ->whereDate('fecha_vencimiento', '>=', now()->toDateString())
-                        ->whereDate('fecha_vencimiento', '<=', now()->addDays(90)->toDateString()),
-                )),
+        $ids = [];
 
-            Filter::make('vencido')
-                ->label('Ya vencido')
-                ->toggle()
-                ->query(fn (Builder $query): Builder => $query->whereHas(
-                    'lote',
-                    fn (Builder $lote): Builder => $lote
-                        ->whereNotNull('fecha_vencimiento')
-                        ->whereDate('fecha_vencimiento', '<', now()->toDateString()),
-                )),
+        foreach ($lista as $registro) {
+            if ($registro instanceof Item) {
+                $ids[] = (int) $registro->id;
+            }
+        }
 
-            Filter::make('controlados')
-                ->label('Solo controlados')
-                ->toggle()
-                ->query(fn (Builder $query): Builder => $query->whereHas(
-                    'item',
-                    fn (Builder $item): Builder => $item->where('es_controlado', true),
-                )),
-        ];
+        $reales = [];
+        $infinitos = [];
+
+        if ($ids !== []) {
+            $saldos = Existencia::query()
+                ->leftJoin('lotes', 'lotes.id', '=', 'existencias.lote_id')
+                ->whereIn('existencias.item_id', $ids)
+                ->where('existencias.cantidad', '>', 0)
+                ->selectRaw(
+                    'existencias.item_id, existencias.almacen_id, sum(existencias.cantidad) as cantidad, '
+                    .'count(*) as lotes, min(lotes.fecha_vencimiento) as vence'
+                )
+                ->groupBy('existencias.item_id', 'existencias.almacen_id')
+                ->toBase()
+                ->get();
+
+            foreach ($saldos as $fila) {
+                $reales[(int) $fila->item_id][] = [
+                    'almacen'  => (int) $fila->almacen_id,
+                    'cantidad' => Decimal::de(is_numeric($fila->cantidad) ? (string) $fila->cantidad : '0'),
+                    'lotes'    => (int) $fila->lotes,
+                    'vence'    => is_string($fila->vence) ? mb_substr($fila->vence, 0, 10) : null,
+                ];
+            }
+
+            $abiertas = UbicacionDeProducto::query()
+                ->abiertas()
+                ->whereIn('item_id', $ids)
+                ->get(['item_id', 'almacen_id']);
+
+            foreach ($abiertas as $lugar) {
+                $infinitos[$lugar->item_id][] = [
+                    'almacen'  => $lugar->almacen_id,
+                    'cantidad' => null,
+                    'lotes'    => 0,
+                    'vence'    => null,
+                ];
+            }
+        }
+
+        return $this->lugares = ['reales' => $reales, 'infinitos' => $infinitos];
     }
 
-    // ── Mover ─────────────────────────────────────────────────────────
+    /**
+     * Los lugares del producto, en el orden de los almacenes de arriba.
+     *
+     * @return list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>
+     */
+    private function lugaresDe(Item $item): array
+    {
+        $todos = $this->lugaresDeLaPagina();
+
+        /*
+         * Un infinito muestra sus lugares, nunca su existencia vieja: no
+         * tiene lotes que vencer.
+         */
+        $lugares = $item->tieneStockInfinito()
+            ? ($todos['infinitos'][$item->id] ?? [])
+            : ($todos['reales'][$item->id] ?? []);
+
+        $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
+
+        usort($lugares, fn (array $uno, array $otro): int => ($orden[$uno['almacen']] ?? PHP_INT_MAX) <=> ($orden[$otro['almacen']] ?? PHP_INT_MAX));
+
+        return $lugares;
+    }
+
+    /**
+     * Solo lo del almacén elegido, o todo.
+     *
+     * @return list<array{almacen: int, cantidad: Decimal|null, lotes: int, vence: string|null}>
+     */
+    private function lugaresAContar(Item $item): array
+    {
+        $almacen = $this->almacenElegido();
+
+        return array_values(array_filter(
+            $this->lugaresDe($item),
+            fn (array $lugar): bool => $almacen === null || $lugar['almacen'] === $almacen,
+        ));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function chipsDe(Item $item): array
+    {
+        return array_keys($this->chipsConColor($item));
+    }
+
+    private function colorDelChip(Item $item, string $chip): string
+    {
+        return $this->chipsConColor($item)[$chip] ?? 'gray';
+    }
+
+    /**
+     * «FARMACIA · 458 TAB» => color. El almacén elegido arriba,
+     * resaltado; los demás, grises.
+     *
+     * @return array<string, string>
+     */
+    private function chipsConColor(Item $item): array
+    {
+        $chips = [];
+        $elegido = $this->almacenElegido();
+
+        foreach ($this->lugaresDe($item) as $lugar) {
+            $almacen = $this->almacenesPorId()->get($lugar['almacen']);
+            $nombre = $almacen instanceof Almacen ? $almacen->nombre : 'OTRA SEDE';
+
+            $chip = $lugar['cantidad'] instanceof Decimal
+                ? $nombre.' · '.self::conUnidad($lugar['cantidad'], $item)
+                : $nombre;
+
+            $chips[$chip] = $lugar['almacen'] === $elegido ? 'primary' : 'gray';
+        }
+
+        return $chips;
+    }
+
+    private function venceDe(Item $item): ?string
+    {
+        $fechas = array_filter(array_column($this->lugaresAContar($item), 'vence'));
+
+        return $fechas === [] ? null : min($fechas);
+    }
+
+    private function cantidadDe(Item $item): string
+    {
+        if ($item->tieneStockInfinito()) {
+            return '∞';
+        }
+
+        $total = Decimal::cero();
+
+        foreach ($this->lugaresAContar($item) as $lugar) {
+            if ($lugar['cantidad'] instanceof Decimal) {
+                $total = $total->sumar($lugar['cantidad']);
+            }
+        }
+
+        return self::conUnidad($total, $item);
+    }
+
+    private function detalleDeLaCantidad(Item $item): string
+    {
+        if ($item->tieneStockInfinito()) {
+            return 'Stock infinito';
+        }
+
+        $lotes = array_sum(array_column($this->lugaresAContar($item), 'lotes'));
+
+        return $lotes === 1 ? '1 lote' : $lotes.' lotes';
+    }
+
+    /**
+     * «458 TAB»: sin ceros de más y con la unidad del kardex.
+     */
+    private static function conUnidad(Decimal $cantidad, Item $item): string
+    {
+        $numero = ItemPresentacion::sinCerosDeMas($cantidad->redondeado(2));
+        $unidad = $item->unidadDispensacion;
+
+        return $unidad instanceof Unidad ? $numero.' '.$unidad->codigo : $numero;
+    }
+
+    /**
+     * La búsqueda del catálogo. En un método aparte y no en el closure:
+     * ahí el analizador no sabe que la consulta es de `Item` y no ve el
+     * `scopeBuscar` (la misma vuelta que da `ItemsTable`).
+     *
+     * @param Builder<Item> $consulta
+     */
+    private static function buscarEn(Builder $consulta, string $termino): void
+    {
+        $consulta->buscar($termino);
+    }
+
+    // ── Lotes ─────────────────────────────────────────────────────────
+
+    /**
+     * El detalle lote por lote de un producto que lleva existencia: dónde,
+     * qué envase, cuándo vence y cuánto. Solo para leer; para mover está
+     * el botón de al lado.
+     */
+    private function lotesAction(): Action
+    {
+        return Action::make('lotes')
+            ->label('Lotes')
+            ->icon(Heroicon::OutlinedQueueList)
+            ->color('gray')
+            ->link()
+            ->modalHeading(fn (Item $record): string => $record->nombre)
+            ->modalDescription('Lote por lote, lo que vence primero arriba.')
+            ->modalWidth('3xl')
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel('Cerrar')
+            ->visible(fn (Item $record): bool => ! $record->tieneStockInfinito())
+            ->modalContent(fn (Item $record): View => view('filament.pages.partials.lotes-del-producto', [
+                'lotes' => $this->lotesDe($record),
+            ]));
+    }
+
+    /**
+     * @return list<array{almacen: string, lote: string, envase: string|null, vence: string|null, color: string, cuanto: string|null, cantidad: string, enEnvases: string|null}>
+     */
+    private function lotesDe(Item $item): array
+    {
+        $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
+
+        return array_values(Existencia::query()
+            ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
+            ->where('item_id', $item->id)
+            ->conSaldo()
+            ->get()
+            ->sortBy(fn (Existencia $fila): string => sprintf(
+                '%05d %s',
+                $orden[$fila->almacen_id] ?? 99999,
+                $fila->lote?->fecha_vencimiento?->format('Y-m-d') ?? '9999-12-31',
+            ))
+            ->map(fn (Existencia $fila): array => [
+                'almacen'   => $fila->almacen instanceof Almacen ? $fila->almacen->nombre : 'OTRA SEDE',
+                'lote'      => $fila->lote instanceof Lote ? $fila->lote->numero : 'Sin lote',
+                'envase'    => self::nombreDelEnvase($fila),
+                'vence'     => $fila->lote?->fecha_vencimiento?->format('d/m/Y'),
+                'color'     => self::colorDelVencimiento($fila),
+                'cuanto'    => self::cuantoLeQueda($fila),
+                'cantidad'  => self::cuantoHay($fila),
+                'enEnvases' => self::enCuantosEnvases($fila),
+            ])
+            ->all());
+    }
+
+    // ── Mover lo que tiene existencia ─────────────────────────────────
 
     /**
      * El botón que contesta «de dónde sale y a dónde va».
      *
-     * Actúa sobre la FILA, no sobre el producto: la fila ya trae el lote
-     * y el almacén de origen, y su vencimiento está a la vista de quien
-     * la eligió. Un botón a nivel de producto obligaría a la pantalla a
-     * decidir qué lote baja, y esa decisión la toma quien está frente al
-     * estante.
+     * El lote se elige ADENTRO del modal: la lista dice almacén, lote,
+     * envase, vencimiento y cuánto hay, y quien está frente al estante
+     * elige cuál baja —primero lo que vence, normalmente—. Solo se
+     * ofrecen los lotes de los estantes que esa persona opera: farmacia
+     * ve lo de bodega en «Lotes», pero no puede sacarle nada.
+     *
+     * El permiso es el de ajustar: un traslado toca el kardex igual,
+     * aunque no cambie el total del hospital.
      */
     private function moverAction(): Action
     {
@@ -468,149 +911,518 @@ class Existencias extends Page implements HasTable
             ->outlined()
             ->color('primary')
             ->modalHeading('Mover a otro almacén')
-            /*
-             * 🔴 El encabezado nombra el RENGLÓN, no la acción. Con tres
-             * frascos del mismo jarabe en la tabla, «Mover a otro
-             * almacén» a secas no confirma cuál se apretó — y el modal
-             * tapa justo la fila que lo diría.
-             */
-            ->modalDescription(fn (Existencia $record): string => self::comoSeLlamaEsteRenglon($record))
+            ->modalDescription(fn (Item $record): string => $record->nombre)
             ->modalWidth('2xl')
             ->modalSubmitActionLabel('Mover')
-            /*
-             * ─────────────────────────────────────────────────────────
-             * VER ES LIBRE; MOVER, SOLO DESDE TU ESTANTE
-             * ─────────────────────────────────────────────────────────
-             *
-             * La tabla muestra el inventario ENTERO a cualquiera que
-             * pueda entrar, y eso es a propósito: farmacia tiene que
-             * poder ver que bodega tiene cuarenta cajas para pedir la
-             * reposición. Esconderlo obligaría a preguntar por teléfono
-             * lo que el sistema ya sabe.
-             *
-             * El botón es otra cosa. Aparece solo en las filas del
-             * estante del que esa persona responde —el mismo mapa que
-             * gobierna conteos y ajustes—, así que farmacia ve el
-             * renglón de bodega pero no puede sacarle nada.
-             *
-             * El permiso de acción es el de ajustar: un traslado toca el
-             * kardex igual, aunque no cambie el total del hospital.
-             */
-            ->visible(fn (Existencia $record): bool => Gate::allows('create', Ajuste::class)
-                && AlmacenesDelUsuario::puedeOperarEn($record->almacen))
-            ->fillForm(fn (Existencia $record): array => [
-                'origen' => $record->almacen?->etiqueta() ?? '—',
+            ->visible(fn (Item $record): bool => ! $record->tieneStockInfinito()
+                && Gate::allows('create', Ajuste::class)
+                && $this->tieneAlgoQuePuedaMover($record))
+            ->fillForm(fn (Item $record): array => [
+                'existencia_id' => $this->loteSugerido($record),
             ])
-            ->schema(fn (Existencia $record): array => [
-                TextInput::make('origen')
-                    ->label('Sale de')
-                    ->disabled()
-                    ->dehydrated(false)
-                    ->helperText(self::dondeMasHay($record)),
+            ->schema(fn (Item $record): array => $this->camposParaMover($record))
+            ->action(function (array $data, Item $record, Action $action): void {
+                $existencia = $this->existenciaElegida($data['existencia_id'] ?? null);
 
                 /*
-                 * ⚠️ SIN `searchable()`.
-                 *
-                 * Con `options()` y búsqueda encendida, Filament manda el
-                 * término al servidor y busca con `getSearchResultsUsing`
-                 * — que acá no existe—, así que escribir «BODEGA»
-                 * devolvía «No se encontraron coincidencias» ESTANDO
-                 * BODEGA en la lista. Un hospital tiene cinco estantes,
-                 * no quinientos: se eligen mirando.
+                 * 🔴 Se vuelve a mirar acá: el lote llega del navegador.
+                 * Tiene que ser de ESTE producto y de un estante que esta
+                 * persona opere.
                  */
-                Select::make('destino_id')
-                    ->label('Entra a')
-                    ->required()
-                    ->native(false)
-                    ->options(fn (): array => self::destinosPara($record))
-                    ->helperText(
-                        'Si el carrito no aparece en la lista, se crea primero en Inventario → '
-                        .'Almacenes.'
-                    ),
+                if (! $existencia instanceof Existencia
+                    || $existencia->item_id !== $record->id
+                    || ! $existencia->almacen instanceof Almacen
+                    || ! AlmacenesDelUsuario::puedeOperarEn($existencia->almacen)) {
+                    Notification::make()
+                        ->title('No se pudo mover')
+                        ->body('Elija uno de los lotes de la lista.')
+                        ->danger()
+                        ->send();
 
-                /*
-                 * ─────────────────────────────────────────────────────
-                 * 🔴 SE MUEVEN ENVASES, NO UNIDADES DE DISPENSACIÓN
-                 * ─────────────────────────────────────────────────────
-                 *
-                 * La primera versión pedía la cantidad en la unidad del
-                 * kardex —mililitros— porque es lo que el kardex guarda.
-                 * Fue un error, y se vio al primer intento: alguien
-                 * escribió «5» queriendo bajar 5 FRASCOS y bajó 5 ML.
-                 * La bodega quedó con 0.08 de un frasco, que es una
-                 * cantidad que en el estante no existe.
-                 *
-                 * Un traslado es un hecho FÍSICO: alguien levanta frascos
-                 * y los lleva. Se pide en frascos y el sistema convierte,
-                 * que es exactamente para lo que las presentaciones
-                 * existen. El kardex sigue en mililitros — eso no cambia,
-                 * pero deja de ser problema de quien mueve.
-                 */
-                TextInput::make('cantidad')
-                    ->label(self::comoSePideLaCantidad($record))
-                    ->required()
-                    ->numeric()
-                    ->live(onBlur: true)
-                    /*
-                     * Paso fino aunque casi siempre se teclee un entero:
-                     * devolver el resto de un frasco abierto —0.0833
-                     * FRASCO— tiene que ser posible, y con `step` en 0.01
-                     * el navegador rechaza ese número antes de que llegue
-                     * al servidor.
-                     */
-                    ->minValue('0.0001')
-                    ->step('0.0001')
-                    /*
-                     * El tope como CADENA y no como float: §8.6.2 prohíbe
-                     * que una cantidad de inventario pase por punto
-                     * flotante, y un tope mal redondeado deja fuera el
-                     * último envase justo cuando se quiere vaciar.
-                     *
-                     * Igual no es el candado: el candado es el `UPDATE`
-                     * condicional del movimiento. Esto es para que el
-                     * error se vea antes de apretar.
-                     */
-                    ->maxValue(fn (): string => self::topeParaMover($record))
-                    /*
-                     * ─────────────────────────────────────────────────
-                     * «MOVER TODO» NO ES UN ATAJO, ES LO QUE EVITA UN
-                     * SALDO IMPOSIBLE
-                     * ─────────────────────────────────────────────────
-                     *
-                     * Vaciar un renglón es de las cosas que más se hacen:
-                     * devolver lo que se bajó de más, sacar el lote que
-                     * vence, mudar un estante entero. Y cuando el saldo
-                     * no es un número redondo de envases —5 ML de un
-                     * frasco de 60 son 0.0833 FRASCO— teclearlo a mano es
-                     * pedir un error de dedo que deja un resto pegado al
-                     * estante equivocado.
-                     *
-                     * El botón pone el tope exacto, que es el número que
-                     * el servicio interpreta como «todo».
-                     */
-                    ->hintAction(
-                        Action::make('mover_todo')
-                            ->label('Mover todo')
-                            ->icon(Heroicon::OutlinedArrowsRightLeft)
-                            ->action(fn (Set $set) => $set('cantidad', self::topeParaMover($record))),
-                    )
-                    ->helperText(fn (Get $get): string => self::cuantoQuedaEnEsteLote(
-                        $record,
-                        $get('cantidad'),
-                    )),
+                    $action->halt();
 
-                CampoMayusculas::area('motivo')
-                    ->label('Nota (opcional)')
-                    ->rows(2)
-                    ->maxLength(200)
-                    ->placeholder('Reposición del carro, préstamo a quirófano…')
-                    ->helperText('Queda escrita en las dos líneas del kardex.'),
-            ])
-            ->action(function (array $data, Existencia $record, Action $action): void {
-                if (! $this->mover($record, $data)) {
+                    return;
+                }
+
+                if (! $this->mover($existencia, $data)) {
                     $action->halt();
                 }
             });
+    }
+
+    /**
+     * @return list<Component>
+     */
+    private function camposParaMover(Item $producto): array
+    {
+        return [
+            Select::make('existencia_id')
+                ->label('Qué lote, y de dónde sale')
+                ->required()
+                ->native(false)
+                ->live()
+                ->options(fn (): array => $this->lotesParaMover($producto))
+                ->afterStateUpdated(function (Set $set): void {
+                    $set('destino_id', null);
+                    $set('cantidad', null);
+                }),
+
+            /*
+             * «Entra a» y «cuánto», uno al lado del otro. En el celular,
+             * uno debajo del otro.
+             */
+            Grid::make(['default' => 1, 'sm' => 2])
+                ->schema([
+                    /*
+                     * ⚠️ SIN `searchable()`: con `options()` y búsqueda
+                     * encendida, Filament busca en el servidor con
+                     * `getSearchResultsUsing` —que acá no existe— y
+                     * «BODEGA» devolvía «sin coincidencias» estando en la
+                     * lista. Son cinco estantes: se eligen mirando.
+                     */
+                    Select::make('destino_id')
+                        ->label('Entra a')
+                        ->required()
+                        ->native(false)
+                        ->options(function (Get $get): array {
+                            $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                            return $existencia instanceof Existencia ? self::destinosPara($existencia) : [];
+                        })
+                        ->helperText('¿No está el carrito? Se crea en Inventario → Almacenes.'),
+
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 SE MUEVEN ENVASES, NO UNIDADES DE DISPENSACIÓN
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Alguien escribió «5» queriendo bajar 5 FRASCOS y
+                     * bajó 5 ML. Un traslado es un hecho físico: se pide
+                     * en el envase del lote y el sistema convierte. El
+                     * tope va como cadena (§8.6.2), y el candado de verdad
+                     * es el UPDATE condicional del movimiento.
+                     */
+                    TextInput::make('cantidad')
+                        ->label(function (Get $get): string {
+                            $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                            return $existencia instanceof Existencia
+                                ? self::comoSePideLaCantidad($existencia)
+                                : 'Cuánto se mueve';
+                        })
+                        ->required()
+                        ->numeric()
+                        ->live(onBlur: true)
+                        ->minValue('0.0001')
+                        ->step('0.0001')
+                        ->disabled(fn (Get $get): bool => ! $this->existenciaElegida($get('existencia_id')) instanceof Existencia)
+                        ->maxValue(function (Get $get): ?string {
+                            $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                            return $existencia instanceof Existencia ? self::topeParaMover($existencia) : null;
+                        })
+                        /*
+                         * «Mover todo» pone el tope exacto, que el servicio
+                         * entiende como «todo»: teclear 0.0833 FRASCO a
+                         * mano deja restos que nadie puede mover ni contar.
+                         */
+                        ->hintAction(
+                            Action::make('mover_todo')
+                                ->label('Mover todo')
+                                ->icon(Heroicon::OutlinedArrowsRightLeft)
+                                ->action(function (Get $get, Set $set): void {
+                                    $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                                    if ($existencia instanceof Existencia) {
+                                        $set('cantidad', self::topeParaMover($existencia));
+                                    }
+                                }),
+                        )
+                        ->helperText(function (Get $get): ?string {
+                            $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                            return $existencia instanceof Existencia
+                                ? self::cuantoQuedaEnEsteLote($existencia, $get('cantidad'))
+                                : null;
+                        }),
+                ]),
+
+            /*
+             * «Además hay 3 en BODEGA…»: lo que evita el viaje de más.
+             */
+            Text::make(function (Get $get): string {
+                $existencia = $this->existenciaElegida($get('existencia_id'));
+
+                return $existencia instanceof Existencia ? self::dondeMasHay($existencia) : '';
+            })
+                ->color('gray')
+                ->icon(Heroicon::OutlinedMapPin)
+                ->visible(fn (Get $get): bool => $this->existenciaElegida($get('existencia_id')) instanceof Existencia),
+
+            CampoMayusculas::area('motivo')
+                ->label('Nota (opcional)')
+                ->rows(2)
+                ->maxLength(200)
+                ->placeholder('Reposición del carro, préstamo a quirófano…')
+                ->helperText('Queda escrita en las dos líneas del kardex.'),
+        ];
+    }
+
+    /**
+     * Los lotes que esta persona puede mover, en el orden de los
+     * almacenes de arriba y, dentro de cada uno, lo que vence primero.
+     *
+     * @return array<int, string>
+     */
+    private function lotesParaMover(Item $producto): array
+    {
+        $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
+
+        return Existencia::query()
+            ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
+            ->where('item_id', $producto->id)
+            ->conSaldo()
+            ->get()
+            ->filter(fn (Existencia $fila): bool => $fila->almacen instanceof Almacen
+                && AlmacenesDelUsuario::puedeOperarEn($fila->almacen))
+            ->sortBy(fn (Existencia $fila): string => sprintf(
+                '%05d %s',
+                $orden[$fila->almacen_id] ?? 99999,
+                $fila->lote?->fecha_vencimiento?->format('Y-m-d') ?? '9999-12-31',
+            ))
+            ->mapWithKeys(fn (Existencia $fila): array => [$fila->id => self::etiquetaDelLote($fila)])
+            ->all();
+    }
+
+    /**
+     * El lote que el modal trae elegido: el primero del almacén de arriba,
+     * o el primero de la lista.
+     */
+    private function loteSugerido(Item $producto): ?int
+    {
+        $lotes = $this->lotesParaMover($producto);
+        $almacen = $this->almacenElegido();
+
+        if ($almacen !== null) {
+            foreach (array_keys($lotes) as $id) {
+                if ($this->existenciaElegida($id)?->almacen_id === $almacen) {
+                    return $id;
+                }
+            }
+        }
+
+        $primero = array_key_first($lotes);
+
+        return $primero === null ? null : (int) $primero;
+    }
+
+    /**
+     * ¿Tiene algún lote en un estante que esta persona opera? Sale de lo
+     * que ya se leyó para la página: no cuesta una consulta por renglón.
+     */
+    private function tieneAlgoQuePuedaMover(Item $producto): bool
+    {
+        foreach ($this->lugaresDe($producto) as $lugar) {
+            $almacen = $this->almacenesPorId()->get($lugar['almacen']);
+
+            if ($almacen instanceof Almacen && AlmacenesDelUsuario::puedeOperarEn($almacen)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * La existencia que eligió el modal, cargada una vez por pedido.
+     */
+    private function existenciaElegida(mixed $id): ?Existencia
+    {
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        $clave = (int) $id;
+
+        if (! array_key_exists($clave, $this->existenciasCargadas)) {
+            $this->existenciasCargadas[$clave] = Existencia::query()
+                ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
+                ->whereKey($clave)
+                ->conSaldo()
+                ->first();
+        }
+
+        return $this->existenciasCargadas[$clave];
+    }
+
+    /**
+     * «FARMACIA · LOT-2 · CAJA X 100 TABLETAS · vence 30/10/2026 — hay 458 TAB».
+     */
+    private static function etiquetaDelLote(Existencia $existencia): string
+    {
+        $vence = $existencia->lote?->fecha_vencimiento;
+
+        $partes = array_filter([
+            $existencia->almacen instanceof Almacen ? $existencia->almacen->nombre : null,
+            $existencia->lote instanceof Lote ? $existencia->lote->numero : 'sin lote',
+            self::nombreDelEnvase($existencia),
+            $vence === null ? null : 'vence '.$vence->format('d/m/Y'),
+        ]);
+
+        return implode(' · ', $partes).' — hay '.self::cuantoHay($existencia);
+    }
+
+    // ── Lo que tiene stock infinito ───────────────────────────────────
+
+    /**
+     * El «Mover» de un producto con stock infinito: no pasa una cantidad
+     * —no hay—, anota que ahora también hay en el destino. Si se llevó
+     * todo, el origen se cierra. Lo de siempre es llevar una parte (unas
+     * ampollas al carrito rojo), así que «sigue habiendo» viene marcado.
+     */
+    private function moverInfinitoAction(): Action
+    {
+        return Action::make('moverInfinito')
+            ->label('Mover')
+            ->icon(Heroicon::OutlinedArrowsRightLeft)
+            ->button()
+            ->outlined()
+            ->color('primary')
+            ->modalHeading('Mover a otro almacén')
+            ->modalDescription(fn (Item $record): string => $record->nombre
+                .' — stock infinito: no se cuenta, se anota dónde hay.')
+            ->modalWidth('2xl')
+            ->modalSubmitActionLabel('Mover')
+            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
+                && Gate::allows('create', Ajuste::class)
+                && $this->tieneAlgoQuePuedaMover($record))
+            ->fillForm(fn (Item $record): array => [
+                'origen_id'       => array_key_first($this->origenesDelInfinito($record)),
+                'queda_en_origen' => true,
+            ])
+            ->schema(fn (Item $record): array => [
+                Grid::make(['default' => 1, 'sm' => 2])
+                    ->schema([
+                        Select::make('origen_id')
+                            ->label('Sale de')
+                            ->required()
+                            ->native(false)
+                            ->live()
+                            ->options(fn (): array => $this->origenesDelInfinito($record))
+                            ->afterStateUpdated(fn (Set $set): mixed => $set('destino_id', null)),
+
+                        Select::make('destino_id')
+                            ->label('Entra a')
+                            ->required()
+                            ->native(false)
+                            ->options(fn (Get $get): array => $this->destinosDelInfinito($record, $get('origen_id')))
+                            ->helperText('¿No está el carrito? Se crea en Inventario → Almacenes.'),
+                    ]),
+
+                Toggle::make('queda_en_origen')
+                    ->label('Sigue habiendo en el almacén de donde sale')
+                    ->helperText('Déjelo marcado si se llevó una parte. Apáguelo si se llevó todo: ahí deja de aparecer.'),
+            ])
+            ->action(function (array $data, Item $record, Action $action): void {
+                if (! $this->moverInfinito($record, $data)) {
+                    $action->halt();
+                }
+            });
+    }
+
+    /**
+     * «Lugares»: la lista entera de dónde hay, para corregir de una vez
+     * —sumar un carrito, quitar un almacén mal anotado—.
+     */
+    private function lugaresAction(): Action
+    {
+        return Action::make('lugares')
+            ->label('Lugares')
+            ->icon(Heroicon::OutlinedMapPin)
+            ->color('gray')
+            ->link()
+            ->modalHeading(fn (Item $record): string => 'Dónde hay '.$record->nombre)
+            ->modalDescription(
+                'Al cargarlo a una cuenta solo se ofrecen estos almacenes. Lo que ya se cargó no cambia.'
+            )
+            ->modalWidth('2xl')
+            ->modalSubmitActionLabel('Guardar')
+            ->visible(fn (Item $record): bool => $record->tieneStockInfinito()
+                && Gate::allows('create', Ajuste::class))
+            ->fillForm(fn (Item $record): array => [
+                'ubicaciones' => app(UbicadorDeProducto::class)->dondeEsta($record),
+            ])
+            ->schema([
+                CheckboxList::make('ubicaciones')
+                    ->hiddenLabel()
+                    ->required()
+                    ->validationMessages(['required' => 'Marque al menos un almacén: si no, nadie sabría de dónde sale.'])
+                    ->options(fn (): array => $this->almacenesEnOrden()
+                        ->filter(fn (Almacen $almacen): bool => $almacen->estaVigente())
+                        ->mapWithKeys(fn (Almacen $almacen): array => [$almacen->id => $almacen->nombre])
+                        ->all())
+                    ->columns(['default' => 1, 'sm' => 2]),
+            ])
+            ->action(function (array $data, Item $record, Action $action): void {
+                if (! $this->guardarLugares($record, $data)) {
+                    $action->halt();
+                }
+            });
+    }
+
+    /**
+     * Los almacenes donde está, que esta persona opera.
+     *
+     * @return array<int, string>
+     */
+    private function origenesDelInfinito(Item $producto): array
+    {
+        $donde = app(UbicadorDeProducto::class)->dondeEsta($producto);
+
+        return $this->almacenesEnOrden()
+            ->filter(fn (Almacen $almacen): bool => in_array((int) $almacen->id, $donde, true)
+                && AlmacenesDelUsuario::puedeOperarEn($almacen))
+            ->mapWithKeys(fn (Almacen $almacen): array => [$almacen->id => $almacen->nombre])
+            ->all();
+    }
+
+    /**
+     * Los almacenes de la misma sede a los que se puede llevar, diciendo
+     * en cuáles ya está.
+     *
+     * @return array<int, string>
+     */
+    private function destinosDelInfinito(Item $producto, mixed $origenId): array
+    {
+        $origen = is_numeric($origenId) ? $this->almacenesPorId()->get((int) $origenId) : null;
+
+        if (! $origen instanceof Almacen) {
+            return [];
+        }
+
+        $yaEsta = app(UbicadorDeProducto::class)->dondeEsta($producto);
+
+        return $this->almacenesEnOrden()
+            ->filter(fn (Almacen $almacen): bool => (int) $almacen->id !== (int) $origen->id
+                && (int) $almacen->sede_id === (int) $origen->sede_id
+                && $almacen->estaVigente())
+            ->mapWithKeys(fn (Almacen $almacen): array => [
+                $almacen->id => $almacen->nombre.(in_array((int) $almacen->id, $yaEsta, true) ? ' · ya está' : ''),
+            ])
+            ->all();
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function moverInfinito(Item $producto, array $data): bool
+    {
+        /*
+         * 🔴 Se vuelve a preguntar acá: `visible()` decide qué se dibuja,
+         * no qué se puede llamar.
+         */
+        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
+
+        $origenes = $this->origenesDelInfinito($producto);
+        $origenId = is_numeric($data['origen_id'] ?? null) ? (int) $data['origen_id'] : null;
+
+        $origen = $origenId !== null && array_key_exists($origenId, $origenes)
+            ? $this->almacenesPorId()->get($origenId)
+            : null;
+
+        $destino = is_numeric($data['destino_id'] ?? null)
+            ? Almacen::query()->find((int) $data['destino_id'])
+            : null;
+
+        if (! $origen instanceof Almacen || ! $destino instanceof Almacen) {
+            Notification::make()
+                ->title('No se pudo mover')
+                ->body('Elija de qué almacén sale y a cuál entra.')
+                ->danger()
+                ->send();
+
+            return false;
+        }
+
+        $quedaEnOrigen = (bool) ($data['queda_en_origen'] ?? true);
+
+        try {
+            app(UbicadorDeProducto::class)->mover($producto, $origen, $destino, $quedaEnOrigen);
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->title('No se pudo mover')
+                ->body($e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        $this->olvidarLoLeido();
+
+        Notification::make()
+            ->title('Movido')
+            ->body($quedaEnOrigen
+                ? "{$producto->nombre} ahora también está en {$destino->nombre}."
+                : "{$producto->nombre} pasó de {$origen->nombre} a {$destino->nombre}.")
+            ->success()
+            ->send();
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function guardarLugares(Item $producto, array $data): bool
+    {
+        abort_unless(static::canAccess() && Gate::allows('create', Ajuste::class), 403);
+
+        $lugares = UbicadorDeProducto::idsDelFormulario($data['ubicaciones'] ?? null);
+
+        if ($lugares === []) {
+            Notification::make()
+                ->title('Marque al menos un almacén')
+                ->body('Si no, al cargarlo a una cuenta nadie sabría de dónde sale.')
+                ->danger()
+                ->send();
+
+            return false;
+        }
+
+        try {
+            app(UbicadorDeProducto::class)->dejarEn($producto, $lugares);
+        } catch (SihlaException $e) {
+            Notification::make()
+                ->title('No se guardó')
+                ->body($e->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        $this->olvidarLoLeido();
+
+        Notification::make()
+            ->title('Guardado')
+            ->success()
+            ->send();
+
+        return true;
+    }
+
+    /**
+     * Después de mover, las cuentas de arriba y los chips se vuelven a
+     * leer al pintar: se habían leído antes, para encontrar el renglón.
+     */
+    private function olvidarLoLeido(): void
+    {
+        $this->productosPorAlmacen = null;
+        $this->lugares = null;
+        $this->existenciasCargadas = [];
     }
 
     /**
@@ -679,6 +1491,12 @@ class Existencias extends Page implements HasTable
 
             return false;
         }
+
+        /*
+         * Las cuentas de arriba se leyeron antes de mover —para encontrar
+         * el renglón—; se vuelven a leer al pintar.
+         */
+        $this->olvidarLoLeido();
 
         Notification::make()
             ->title('Movido')
@@ -793,39 +1611,7 @@ class Existencias extends Page implements HasTable
         return 'Además: '.$donde.'.';
     }
 
-    /**
-     * «ACETAMINOFEN JARABE · FRASCO X 120 ML · lote L0TE-1».
-     *
-     * Es la frase que confirma qué se está por mover, con las tres cosas
-     * que distinguen un renglón de otro cuando el producto se repite.
-     */
-    private static function comoSeLlamaEsteRenglon(Existencia $existencia): string
-    {
-        $partes = array_filter([
-            (string) $existencia->item->nombre,
-            self::nombreDelEnvase($existencia),
-            $existencia->lote === null ? null : 'lote '.$existencia->lote->numero,
-        ]);
-
-        return implode(' · ', $partes).' — hay '.self::cuantoHay($existencia).'.';
-    }
-
     // ── Cómo se lee cada renglón ──────────────────────────────────────
-
-    /**
-     * La segunda línea del producto: «MED-705 · FRASCO X 120 ML».
-     *
-     * ⚠️ Solo el ENVASE, no el nombre completo de la presentación:
-     * repetir el producto debajo del producto ocupa el ancho sin agregar
-     * nada, y lo que hace falta distinguir es justamente el envase.
-     */
-    private static function comoSeEnvasa(Existencia $existencia): string
-    {
-        $codigo = (string) $existencia->item->codigo;
-        $envase = self::nombreDelEnvase($existencia);
-
-        return $envase === null ? $codigo : $codigo.' · '.$envase;
-    }
 
     /**
      * «1200.00 ML». Sin la unidad, el número no significa nada.
@@ -1135,31 +1921,43 @@ class Existencias extends Page implements HasTable
 
     private static function colorDelVencimiento(Existencia $existencia): string
     {
-        $dias = $existencia->lote?->diasParaVencerDesde(now());
-
-        if ($dias === null) {
-            return 'gray';
-        }
-
-        return match (true) {
-            $dias <= 30 => 'danger',
-            $dias <= 90 => 'warning',
-            default     => 'success',
-        };
+        return self::colorPorDias($existencia->lote?->diasParaVencerDesde(now()));
     }
 
     private static function cuantoLeQueda(Existencia $existencia): ?string
     {
-        $dias = $existencia->lote?->diasParaVencerDesde(now());
+        return self::textoPorDias($existencia->lote?->diasParaVencerDesde(now()));
+    }
 
-        if ($dias === null) {
+    /**
+     * Cuántos días faltan para una fecha `Y-m-d`; negativo si ya pasó.
+     */
+    private static function diasHasta(?string $fecha): ?int
+    {
+        if ($fecha === null) {
             return null;
         }
 
+        return (int) round(now()->startOfDay()->diffInDays(CarbonImmutable::parse($fecha)->startOfDay(), false));
+    }
+
+    private static function colorPorDias(?int $dias): string
+    {
         return match (true) {
-            $dias < 0   => 'Vencido hace '.abs($dias).' d',
-            $dias === 0 => 'Vence hoy',
-            default     => 'En '.$dias.' d',
+            $dias === null => 'gray',
+            $dias <= 30    => 'danger',
+            $dias <= 90    => 'warning',
+            default        => 'success',
+        };
+    }
+
+    private static function textoPorDias(?int $dias): ?string
+    {
+        return match (true) {
+            $dias === null => null,
+            $dias < 0      => 'Vencido hace '.abs($dias).' d',
+            $dias === 0    => 'Vence hoy',
+            default        => 'En '.$dias.' d',
         };
     }
 }

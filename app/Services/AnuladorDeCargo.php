@@ -162,6 +162,16 @@ final class AnuladorDeCargo
         }
 
         $item = $cargo->item;
+
+        /*
+         * Un cargo viejo, con existencia, de un producto que después pasó
+         * a stock infinito: lo que vuelve no tiene a dónde volver. Al
+         * marcarlo infinito su existencia se dio de baja, y mientras lo sea
+         * no se le carga nada (13-oct-2026).
+         */
+        if ($item->tieneStockInfinito()) {
+            return null;
+        }
         $almacen = $cargo->almacen;
         $lote = $cargo->lote_id === null ? null : $cargo->lote;
 

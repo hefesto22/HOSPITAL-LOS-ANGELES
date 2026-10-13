@@ -179,6 +179,17 @@ final class RegistradorDeMovimiento
             throw ExistenciaInsuficienteException::faltaElLote($item->codigo);
         }
 
+        /*
+         * 🔴 Ninguna entrada para un producto con stock infinito
+         * (13-oct-2026): ni recepción, ni préstamo, ni ajuste, ni traslado,
+         * ni devolución. Mientras lo sea no tiene existencia. Es el único
+         * lugar por el que pasan todas, así que la regla vive acá. Las
+         * salidas sí: con una se da de baja lo que tenía al marcarlo.
+         */
+        if ($tipo->esEntrada() && $item->tieneStockInfinito()) {
+            throw ExistenciaInsuficienteException::tieneStockInfinito($item->nombre);
+        }
+
         if ($lote instanceof Lote && $lote->item_id !== $item->id) {
             throw ExistenciaInsuficienteException::elLoteNoEsDelItem($item->codigo, $lote->numero);
         }

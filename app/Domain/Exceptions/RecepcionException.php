@@ -30,6 +30,15 @@ final class RecepcionException extends SihlaException
         );
     }
 
+    public static function tieneStockInfinito(string $item): self
+    {
+        return new self(
+            "{$item} tiene stock infinito, y mientras lo tenga no se le recibe mercadería: no lleva "
+            .'existencia. Cuando lo cuenten, pásenlo a stock real en Productos —arranca en cero— y '
+            .'reciban lo contado.'
+        );
+    }
+
     public static function laCantidadDebeSerPositiva(string $item): self
     {
         return new self(

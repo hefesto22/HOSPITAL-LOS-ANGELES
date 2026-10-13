@@ -74,6 +74,7 @@ use App\Services\RegistradorDeDiagnostico;
 use App\Services\RegistradorDePrestamo;
 use App\Services\ResolutorDeHonorario;
 use App\Services\ResolutorDePrecio;
+use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
 use App\Support\NumeroDeFormulario;
@@ -339,6 +340,15 @@ class CuentasAbiertas extends Page
      * @var array<string, Collection<int, array{almacen: Almacen, hay: Decimal}>>
      */
     private array $estantesPorItem = [];
+
+    /**
+     * Memoria por pintada de los almacenes donde está cada producto con
+     * stock infinito (`UbicadorDeProducto`). Por la misma razón que la de
+     * arriba: se pregunta en cada pintada del modal.
+     *
+     * @var array<int, list<int>>
+     */
+    private array $dondeEstaPorItem = [];
 
     /**
      * Memoria por pintada de las presentaciones de cada ítem.
@@ -2296,6 +2306,32 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * Los estantes de quien carga donde está un producto con stock
+     * infinito, en el mismo orden que `estantesDe()`.
+     *
+     * Un producto sin ningún lugar anotado —los que se marcaron antes del
+     * 13-oct-2026— sale de cualquiera: antes que no poder cargarlo, se
+     * elige y queda anotado de dónde salió.
+     *
+     * @return Collection<int, array{almacen: Almacen, hay: Decimal}>
+     */
+    private function estantesDelInfinito(Item $item): Collection
+    {
+        $donde = $this->dondeEstaPorItem[$item->id]
+            ??= app(UbicadorDeProducto::class)->dondeEsta($item);
+
+        $estantes = $this->estantesDe($item);
+
+        if ($donde === []) {
+            return $estantes;
+        }
+
+        return $estantes
+            ->filter(fn (array $estante): bool => in_array($estante['almacen']->id, $donde, true))
+            ->values();
+    }
+
+    /**
      * Cuánto hay del envase sin abrir en cada estante, en unidades del
      * kardex.
      *
@@ -2708,6 +2744,20 @@ class CuentasAbiertas extends Page
     {
         if (! $item instanceof Item) {
             return [];
+        }
+
+        /*
+         * Stock infinito: los almacenes donde ESTÁ, porque no se descuenta
+         * de ninguno pero sí se sabe dónde hay (13-oct-2026). Se elige
+         * igual para que quede «de dónde se sacó» en el reporte de
+         * consumo.
+         */
+        if ($item->tieneStockInfinito()) {
+            return $this->estantesDelInfinito($item)
+                ->mapWithKeys(fn (array $estante): array => [
+                    $estante['almacen']->id => $estante['almacen']->nombre.' · stock infinito',
+                ])
+                ->all();
         }
 
         $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
@@ -3253,6 +3303,14 @@ class CuentasAbiertas extends Page
             return null;
         }
 
+        /*
+         * Stock infinito: el primero de los almacenes donde está, en el
+         * orden de preferencia —farmacia antes que bodega—.
+         */
+        if ($item->tieneStockInfinito()) {
+            return $this->estantesDelInfinito($item)->first()['almacen'] ?? null;
+        }
+
         $presentacion = $this->presentacionDeLaUnidad($item, $unidadDeCobro);
 
         $primero = $this->estantesDe($item, $presentacion?->id)->first();
@@ -3261,18 +3319,24 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * El estante es obligatorio para lo que se almacena, salvo el stock
-     * infinito: ese se carga aunque no haya en ningún lado (13-oct-2026).
+     * El estante es obligatorio para lo que se almacena. También con stock
+     * infinito —es «de dónde se sacó» en el reporte de consumo—, salvo que
+     * quien carga no tenga ningún estante: ahí se carga sin almacén antes
+     * que no poder cargar (13-oct-2026).
      */
     private function exigeEstante(?Item $item): bool
     {
-        return $item instanceof Item && $item->mueveInventario() && ! $item->tieneStockInfinito();
+        if (! $item instanceof Item || ! $item->mueveInventario()) {
+            return false;
+        }
+
+        return ! $item->tieneStockInfinito() || $this->estantesConLoQueHay($item) !== [];
     }
 
     /**
-     * Y se muestra para lo que se almacena, salvo un stock infinito que no
-     * está en ningún estante: ahí no hay nada que elegir, y un desplegable
-     * vacío diciendo «no hay» haría creer que no se puede cargar.
+     * Y se muestra para lo que se almacena, salvo un stock infinito sin
+     * ningún estante a la vista: un desplegable vacío diciendo «no hay»
+     * haría creer que no se puede cargar.
      */
     private function muestraEstante(?Item $item, ?string $forma): bool
     {
@@ -7816,18 +7880,18 @@ class CuentasAbiertas extends Page
             }
         }
 
+        /*
+         * Stock infinito: no hay lote que buscar ni existencia que falte.
+         * Se dice qué pasa con lo que se carga (13-oct-2026).
+         */
+        if ($item->tieneStockInfinito()) {
+            $partes[] = 'stock infinito: no descuenta del inventario, queda registrado lo que se usó';
+
+            return self::recuadro(implode(' · ', $partes));
+        }
+
         if ($item->mueveInventario()) {
             if ($this->estantesConLoQueHay($item, $forma) === []) {
-                /*
-                 * Con stock infinito no es una alerta: se carga igual,
-                 * sin descontar del inventario (13-oct-2026).
-                 */
-                if ($item->tieneStockInfinito()) {
-                    $partes[] = 'stock infinito: se carga sin descontar del inventario';
-
-                    return self::recuadro(implode(' · ', $partes));
-                }
-
                 return self::recuadro($this->porQueNoHay($item, $forma), esAlerta: true);
             }
 
