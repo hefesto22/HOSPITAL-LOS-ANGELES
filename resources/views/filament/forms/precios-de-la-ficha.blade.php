@@ -8,7 +8,9 @@
 
       · Lo que cambia se marca: «antes L 300.00», o «nuevo» si ese seguro
         no tenía precio propio.
-      · Un seguro sin precio propio dice cuánto paga: el de lista.
+      · Un seguro vacío paga el de lista, y su campo lo muestra mientras
+        se escribe el de lista. Borrar el número de un seguro lo pasa al de
+        lista: se marca «pasa al de lista».
       · El L 10 que nadie fijó no se muestra como precio: el campo queda
         vacío y dice «pendiente».
 
@@ -52,21 +54,34 @@
 
                 return valor !== '' && this.numero(valor) === null
             },
+            tieneActual(clave) {
+                const actual = this.actuales[clave]
+
+                return actual !== null && actual !== undefined
+            },
+            quita(clave) {
+                return clave !== 'lista' && this.valor(clave).trim() === '' && this.tieneActual(clave)
+            },
             cambia(clave) {
                 const valor = this.valor(clave).trim()
+
+                if (this.quita(clave)) {
+                    return true
+                }
 
                 if (valor === '' || this.malo(clave)) {
                     return false
                 }
 
-                const actual = this.actuales[clave]
-
-                return actual === null || actual === undefined || this.numero(valor) !== this.numero(actual)
+                return ! this.tieneActual(clave) || this.numero(valor) !== this.numero(this.actuales[clave])
             },
             esNuevo(clave) {
-                const actual = this.actuales[clave]
+                return this.cambia(clave) && ! this.tieneActual(clave)
+            },
+            deLista() {
+                const lista = this.valor('lista').trim()
 
-                return this.cambia(clave) && (actual === null || actual === undefined)
+                return lista !== '' && ! this.malo('lista') ? lista + ' (lista)' : 'igual al de lista'
             },
             cuantosCambian() {
                 return Object.keys(this.todo()).filter((clave) => this.cambia(clave)).length
@@ -100,7 +115,8 @@
 
                     <div class="pf-cuanto">
                         <span class="pf-antes" x-show="cambia('{{ $fila['clave'] }}')" x-cloak>
-                            <span x-show="! esNuevo('{{ $fila['clave'] }}')">antes L {{ $fila['actual'] }}</span>
+                            <span x-show="quita('{{ $fila['clave'] }}')">pasa al de lista</span>
+                            <span x-show="! quita('{{ $fila['clave'] }}') && ! esNuevo('{{ $fila['clave'] }}')">antes L {{ $fila['actual'] }}</span>
                             <span x-show="esNuevo('{{ $fila['clave'] }}')">nuevo</span>
                         </span>
 
@@ -112,7 +128,11 @@
                                 autocomplete="off"
                                 class="pf-input"
                                 aria-label="Precio de {{ $fila['nombre'] }}"
-                                placeholder="{{ $fila['lista'] ? ($fila['pendiente'] ? 'Escriba el precio' : '0.00') : 'de lista' }}"
+                                @if ($fila['lista'])
+                                    placeholder="{{ $fila['pendiente'] ? 'Escriba el precio' : '0.00' }}"
+                                @else
+                                    x-bind:placeholder="deLista()"
+                                @endif
                                 x-bind:value="valor('{{ $fila['clave'] }}')"
                                 x-on:input="poner('{{ $fila['clave'] }}', $event.target.value)"
                             />
@@ -124,9 +144,9 @@
 
         <p class="pf-pie">
             <span x-show="cuantosCambian() === 0">
-                Vacío en un seguro = paga el precio de lista.
+                Un seguro vacío paga el precio de lista; borrar el número de un seguro lo pasa al de lista.
                 @if ($variantes > 0)
-                    Las variantes ({{ $variantes }}) tienen su propio precio: se fijan en la lista de precios de abajo.
+                    Este servicio tiene {{ $variantes }} variante(s) de antes con precio propio: esos no se tocan acá.
                 @endif
             </span>
             <span class="pf-pie-cambia" x-show="cuantosCambian() > 0" x-cloak>

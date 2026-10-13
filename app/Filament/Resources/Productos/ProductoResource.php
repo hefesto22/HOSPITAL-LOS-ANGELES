@@ -75,7 +75,7 @@ class ProductoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Farmacia';
+        return 'Farmacia y servicios';
     }
 
     /**

@@ -32,6 +32,12 @@ use Illuminate\Support\Facades\DB;
  * convenio vigente— con su precio de hoy escrito. Se cambia el número y
  * se guarda; lo que no se tocó no se toca.
  *
+ * Un seguro VACÍO paga el precio de lista (Mauricio: «en caso de que el
+ * seguro esté vacío, significa que es el mismo precio de lista»). Así que
+ * borrar el número de un seguro que tenía precio propio le cierra ese
+ * precio: desde hoy paga el de lista. El precio de lista no se puede
+ * dejar vacío.
+ *
  * ─────────────────────────────────────────────────────────────────────
  * 🔴 CAMBIAR SIGUE SIENDO FIJAR, CON FECHA
  * ─────────────────────────────────────────────────────────────────────
@@ -40,9 +46,9 @@ use Illuminate\Support\Facades\DB;
  * precio vigente de ese pagador se cierra ayer y el nuevo rige desde hoy.
  * Las facturas ya emitidas no cambian —cada cargo guarda su número—.
  *
- * Solo las filas BASE: sin sede y sin envase. Un precio de una sede o de
- * una variante —el del Dr. Fulano— se fija en la lista de precios de
- * abajo, con su modal completo.
+ * Solo las filas BASE: sin sede y sin envase, que es lo que tiene un
+ * servicio. Un precio por sede o por variante —de antes de esta ficha—
+ * queda como estaba.
  *
  * ─────────────────────────────────────────────────────────────────────
  * EL ERROR DE TECLEO DEL MISMO DÍA
@@ -54,8 +60,10 @@ use Illuminate\Support\Facades\DB;
  *
  * Si la fila de hoy todavía no se usó en ningún cargo ni presupuesto, se
  * corrige ahí mismo y el motivo lo dice —«CORREGIDO EL MISMO DÍA, ANTES
- * L 3,000.00»—: no hay factura que explicar con el número viejo. Si ya se
- * cobró con ella, no se toca: el cambio tiene que esperar a mañana.
+ * L 3,000.00»—: no hay factura que explicar con el número viejo. Quitarle
+ * a un seguro el precio que se le puso hoy, igual: la fila se da de baja
+ * (borrado suave, queda en la base). Si ya se cobró con ella, no se toca:
+ * el cambio tiene que esperar a mañana.
  *
  * ─────────────────────────────────────────────────────────────────────
  * EL CENTINELA DE L 10
@@ -169,9 +177,12 @@ final class PreciosDeLaFicha
     /**
      * Fija los precios que cambiaron. Devuelve a quién, por nombre.
      *
-     *   · Vacío no cambia nada. Para el precio de lista, vacío solo vale
-     *     si ya tiene uno: un servicio sin precio de lista no se puede
-     *     cobrar a nadie.
+     *   · Un pagador que no vino en `$precios` no se toca.
+     *   · Un seguro vacío paga el de lista: si tenía precio propio, se le
+     *     cierra.
+     *   · El precio de lista no se deja vacío, salvo el centinela de L 10
+     *     —ahí vacío es «todavía no»—. Un servicio sin precio de lista no
+     *     se puede cobrar a nadie.
      *   · Al crear, rige desde que arranca el servicio; al editar, desde
      *     hoy.
      *
@@ -196,12 +207,34 @@ final class PreciosDeLaFicha
             foreach ($this->pagadores() as $pagador) {
                 $convenio = $pagador['convenio'];
                 $nombre = $convenio instanceof Convenio ? $convenio->nombre : 'el precio de lista';
-                $escrito = $precios[$pagador['clave']] ?? null;
                 $fila = $vigentes[$pagador['clave']] ?? null;
 
-                if (! is_scalar($escrito) || trim((string) $escrito) === '') {
+                if (! array_key_exists($pagador['clave'], $precios)) {
                     if (! $convenio instanceof Convenio && ! $fila instanceof Tarifario) {
                         throw PrecioNoFijableException::faltaElDeLista($item->nombre);
+                    }
+
+                    continue;
+                }
+
+                $escrito = $precios[$pagador['clave']];
+
+                if (! is_scalar($escrito) || trim((string) $escrito) === '') {
+                    if (! $convenio instanceof Convenio) {
+                        if (! $fila instanceof Tarifario) {
+                            throw PrecioNoFijableException::faltaElDeLista($item->nombre);
+                        }
+
+                        if (! self::esPendiente($fila)) {
+                            throw PrecioNoFijableException::noSeQuitaElDeLista($item->nombre);
+                        }
+
+                        continue;
+                    }
+
+                    if ($fila instanceof Tarifario) {
+                        self::quitar($item, $fila, $desde, $nombre);
+                        $hechos[] = $convenio->nombre.' (paga el de lista)';
                     }
 
                     continue;
@@ -257,6 +290,39 @@ final class PreciosDeLaFicha
     }
 
     /**
+     * El seguro deja de tener precio propio: desde `$desde` paga el de
+     * lista. Su fila se cierra el día anterior; si arrancó ese mismo día
+     * —se puso hoy— y nadie la usó, se da de baja.
+     *
+     * @throws PrecioNoFijableException
+     */
+    private static function quitar(Item $item, Tarifario $fila, CarbonInterface $desde, string $nombre): void
+    {
+        Tarifario::query()->whereKey($fila->id)->lockForUpdate()->first(['id']);
+
+        if (! $fila->vigencia_desde->isSameDay($desde)) {
+            $fila->forceFill(['vigencia_hasta' => $desde->copy()->subDay()->toDateString()])->save();
+
+            return;
+        }
+
+        if (self::seUso($fila)) {
+            throw PrecioNoFijableException::yaSeUsoHoy($item->nombre, $nombre, Monto::de($fila->precio)->formateado());
+        }
+
+        $fila->delete();
+    }
+
+    /**
+     * ¿Ya se cobró o se presupuestó con este precio?
+     */
+    private static function seUso(Tarifario $fila): bool
+    {
+        return DB::table('cargos')->where('tarifario_id', $fila->id)->exists()
+            || DB::table('presupuesto_lineas')->where('tarifario_id', $fila->id)->exists();
+    }
+
+    /**
      * El precio que ya arrancó hoy y está mal tecleado: se corrige ahí
      * mismo si todavía nadie lo usó.
      *
@@ -268,10 +334,7 @@ final class PreciosDeLaFicha
 
         $antes = Monto::de($fila->precio)->formateado();
 
-        $usado = DB::table('cargos')->where('tarifario_id', $fila->id)->exists()
-            || DB::table('presupuesto_lineas')->where('tarifario_id', $fila->id)->exists();
-
-        if ($usado) {
+        if (self::seUso($fila)) {
             throw PrecioNoFijableException::yaSeUsoHoy($item->nombre, $nombre, $antes);
         }
 

@@ -8,6 +8,7 @@ use App\Filament\Resources\Items\RelationManagers\ExistenciasRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Models\Existencia;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
 use App\Models\Unidad;
 use Illuminate\Database\QueryException;
 
@@ -107,13 +108,20 @@ it('las existencias solo se ofrecen en lo que se almacena', function (): void {
         ->and(ExistenciasRelationManager::canViewForRecord($honorario, 'cualquiera'))->toBeFalse();
 })->note('Es literalmente lo que se pidió: si no se almacena, no tiene ningún sentido que aparezca con stock.');
 
-it('🔴 las presentaciones se ofrecen tambien en lo que no se almacena', function (): void {
+it('🔴 un servicio no tiene variantes: la lista solo se ve en el que ya tenía de antes', function (): void {
     $honorario = Item::factory()
         ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral)
         ->create();
 
-    expect(PresentacionesRelationManager::canViewForRecord($honorario, 'cualquiera'))->toBeTrue();
-})->note('🔴 Una presentación no es solo un envase: es una VARIANTE. HONORARIO DE CONSULTA → «Dr. Carlos», «Dr. Miguel». Sin esto, el catálogo termina con cuarenta filas de honorarios que solo se distinguen por el apellido al final del nombre — que es donde alguien elige el equivocado con el paciente enfrente.');
+    $conVariantes = Item::factory()
+        ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaGeneral)
+        ->create();
+
+    ItemPresentacion::factory()->create(['item_id' => $conVariantes->id]);
+
+    expect(PresentacionesRelationManager::canViewForRecord($honorario, 'cualquiera'))->toBeFalse()
+        ->and(PresentacionesRelationManager::canViewForRecord($conVariantes, 'cualquiera'))->toBeTrue();
+})->note('Mauricio (13-oct-2026), mirando ALIMENTACIÓN POR DÍA: «¿variantes? ¿por qué tendría variantes?». Las de antes no se esconden; a uno nuevo ya no se le agregan.');
 
 /*
 |--------------------------------------------------------------------------

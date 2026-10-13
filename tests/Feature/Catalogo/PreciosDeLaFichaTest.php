@@ -180,3 +180,43 @@ it('un número que no se entiende no fija nada, ni lo demás', function (): void
         ->and(precioDeLaFichaHoy($item))->toBe('400.00')
         ->and(precioDeLaFichaHoy($item, $palig))->toBeNull();
 })->note('Todo o nada: si un precio no se puede fijar, no queda ninguno a medias.');
+
+it('🔴 borrar el número de un seguro lo pasa al precio de lista desde hoy', function (): void {
+    $item = unServicioParaLaFicha();
+    $palig = unSeguroParaLaFicha('PALIG');
+
+    Tarifario::factory()->delItem($item)->a('400.0000')->create();
+    $propio = Tarifario::factory()->delItem($item)->paraElConvenio($palig)->a('300.0000')->create();
+
+    $cambiados = fichaDePrecios()->aplicar($item, [
+        PreciosDeLaFicha::LISTA => '400',
+        'c'.$palig->id          => '',
+    ], null, esAlta: false);
+
+    expect($cambiados)->toBe(['PALIG (paga el de lista)'])
+        ->and($propio->refresh()->vigencia_hasta?->toDateString())->toBe(now()->subDay()->toDateString())
+        ->and(precioDeLaFichaHoy($item, $palig))->toBeNull();
+})->note('Mauricio: «en caso de que el seguro esté vacío, significa que es el mismo precio de lista».');
+
+it('quitarle a un seguro el precio que se le puso hoy lo da de baja, si nadie lo usó', function (): void {
+    $item = unServicioParaLaFicha();
+    $palig = unSeguroParaLaFicha('PALIG');
+
+    Tarifario::factory()->delItem($item)->a('400.0000')->create();
+
+    fichaDePrecios()->aplicar($item, ['c'.$palig->id => '350'], null, esAlta: false);
+    fichaDePrecios()->aplicar($item, ['c'.$palig->id => ''], null, esAlta: false);
+
+    expect(precioDeLaFichaHoy($item, $palig))->toBeNull()
+        ->and(Tarifario::onlyTrashed()->where('item_id', $item->id)->where('convenio_id', $palig->id)->count())->toBe(1);
+});
+
+it('el precio de lista no se deja vacío', function (): void {
+    $item = unServicioParaLaFicha();
+
+    Tarifario::factory()->delItem($item)->a('400.0000')->create();
+
+    expect(fn () => fichaDePrecios()->aplicar($item, [PreciosDeLaFicha::LISTA => ''], null, esAlta: false))
+        ->toThrow(PrecioNoFijableException::class)
+        ->and(precioDeLaFichaHoy($item))->toBe('400.00');
+});

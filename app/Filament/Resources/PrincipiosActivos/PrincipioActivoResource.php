@@ -36,7 +36,7 @@ class PrincipioActivoResource extends Resource
 
     protected static ?string $slug = 'farmacia/principios-activos';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 7;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -62,7 +62,7 @@ class PrincipioActivoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Farmacia';
+        return 'Farmacia y servicios';
     }
 
     public static function form(Schema $schema): Schema

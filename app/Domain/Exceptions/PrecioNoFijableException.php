@@ -67,8 +67,15 @@ final class PrecioNoFijableException extends SihlaException
     {
         return new self(
             "El precio de «{$item}» para {$paraQuien} ya se cambió hoy a {$antes} y ya se cobró con él. "
-            .'El cambio nuevo tiene que regir desde mañana: fíjelo en la lista de precios de abajo, con '
-            .'fecha de mañana.'
+            .'Un precio con el que ya se cobró no se corrige el mismo día: el cambio nuevo se hace mañana.'
+        );
+    }
+
+    public static function noSeQuitaElDeLista(string $item): self
+    {
+        return new self(
+            "El precio de lista de «{$item}» no se puede dejar vacío: es el que paga el particular y "
+            .'todo seguro sin precio propio. Escriba el precio nuevo.'
         );
     }
 

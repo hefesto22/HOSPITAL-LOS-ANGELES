@@ -717,7 +717,7 @@ final class RecepcionForm
                 ->body(
                     'El código arranca con «'.PrincipioActivo::PREFIJO.'», así que es una etiqueta '
                     .'de gaveta, pero ningún principio activo la tiene. Puede ser de una gaveta '
-                    .'vieja: reimprimí la etiqueta desde Farmacia → Principios activos.'
+                    .'vieja: reimprimí la etiqueta desde Farmacia y servicios → Principios activos.'
                 )
                 ->persistent()
                 ->send();

@@ -380,7 +380,19 @@ class PresentacionesRelationManager extends RelationManager
 
     /**
      * ─────────────────────────────────────────────────────────────────
-     * SE OFRECE SIEMPRE, TAMBIÉN EN LO QUE NO SE ALMACENA
+     * 🔴 UN SERVICIO NO TIENE VARIANTES (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio, mirando ALIMENTACIÓN POR DÍA: «¿variantes? ¿por qué
+     * tendría variantes?». Lo que se envasa vive en farmacia, con sus
+     * formas de venta, y el honorario se carga con el médico en la línea.
+     * La lista se ve solo en el servicio que ya tiene variantes de antes,
+     * para no esconderlas; a uno nuevo ya no se le agregan.
+     *
+     * Lo de abajo es por qué existió.
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * SE OFRECÍA SIEMPRE, TAMBIÉN EN LO QUE NO SE ALMACENA
      * ─────────────────────────────────────────────────────────────────
      *
      * Antes se escondía en todo lo que no movía inventario, con el
@@ -399,7 +411,7 @@ class PresentacionesRelationManager extends RelationManager
      */
     public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
     {
-        return $ownerRecord instanceof Item;
+        return $ownerRecord instanceof Item && $ownerRecord->presentaciones()->exists();
     }
 
     // ── Textos que dependen del ítem ──────────────────────────────────

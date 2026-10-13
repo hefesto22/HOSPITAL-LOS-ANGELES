@@ -395,6 +395,12 @@ final class ItemForm
     {
         return CampoMayusculas::make('precios_motivo')
             ->label('Por qué cambian los precios (opcional)')
+            /*
+             * Sin autocompletar: al recargar, el navegador «restauraba» en
+             * este campo lo que había en otro —salía «HOS-001», el código—
+             * y eso habría quedado escrito como motivo del precio.
+             */
+            ->autocomplete(false)
             ->maxLength(150)
             ->placeholder('Tarifa nueva firmada con el seguro, ajuste de dirección…')
             ->visibleOn('edit')

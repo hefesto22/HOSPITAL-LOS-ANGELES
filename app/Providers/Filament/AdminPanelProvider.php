@@ -70,7 +70,7 @@ class AdminPanelProvider extends PanelProvider
             ->navigationGroups([
                 'Atención',
                 'Consultas',
-                'Farmacia',
+                'Farmacia y servicios',
                 'Inventario',
                 'Catálogos y precios',
                 'Configuración del hospital',

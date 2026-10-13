@@ -7425,7 +7425,7 @@ class CuentasAbiertas extends Page
 
         if (! $principio instanceof PrincipioActivo) {
             $this->avisoDelBuscador = 'Ningún principio activo tiene la etiqueta «'.$codigo.'». Si es de una '
-                .'gaveta vieja, reimprimila desde Farmacia → Principios activos.';
+                .'gaveta vieja, reimprimila desde Farmacia y servicios → Principios activos.';
 
             return;
         }

@@ -8,11 +8,18 @@ use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Filament\Resources\Items\Actions\CalcularPrecioAction;
 use App\Filament\Resources\Items\Actions\MoverDeAmbitoAction;
 use App\Filament\Resources\Items\ItemResource;
+use App\Models\Convenio;
 use App\Models\Item;
+use App\Models\ItemPresentacion;
+use App\Models\Sede;
+use App\Models\Tarifario;
 use App\Services\PreciosDeLaFicha;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Exceptions\Halt;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
@@ -57,6 +64,24 @@ class EditItem extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            /*
+             * El historial de precios, a un clic y sin pestañas debajo de
+             * la ficha (13-oct-2026): es lo que contesta «¿por qué esta
+             * factura de marzo dice L 29.33?».
+             */
+            Action::make('historialDePrecios')
+                ->label('Historial de precios')
+                ->icon(Heroicon::OutlinedClock)
+                ->color('gray')
+                ->modalHeading(fn (Item $record): string => 'Historial de precios · '.$record->nombre)
+                ->modalDescription('Cada precio, desde cuándo rigió, hasta cuándo y por qué. Las facturas guardan el suyo: cambiarlo no las toca.')
+                ->modalWidth('5xl')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Cerrar')
+                ->modalContent(fn (Item $record): View => view('filament.pages.partials.historial-de-precios', [
+                    'filas' => self::historialDe($record),
+                ])),
+
             /*
              * `true` = con botón de guardar. Llegar a esta pantalla ya
              * exige permiso para modificar el ítem, así que la
@@ -121,6 +146,46 @@ class EditItem extends EditRecord
         }
 
         return $guardado;
+    }
+
+    /**
+     * Todos los precios del ítem, el más nuevo arriba.
+     *
+     * @return list<array{pagador: string, donde: string|null, precio: string, desde: string, hasta: string|null, motivo: string}>
+     */
+    private static function historialDe(Item $item): array
+    {
+        $filas = [];
+
+        $precios = Tarifario::query()
+            ->with(['convenio:id,nombre', 'sede:id,nombre', 'presentacion:id,item_id,nombre'])
+            ->where('item_id', $item->id)
+            ->orderByDesc('vigencia_desde')
+            ->orderBy('convenio_id')
+            ->limit(300)
+            ->get();
+
+        foreach ($precios as $precio) {
+            $convenio = $precio->convenio_id === null ? null : $precio->convenio;
+            $sede = $precio->sede_id === null ? null : $precio->sede;
+            $variante = $precio->item_presentacion_id === null ? null : $precio->presentacion;
+
+            $donde = array_filter([
+                $sede instanceof Sede ? $sede->nombre : null,
+                $variante instanceof ItemPresentacion ? $variante->envase() : null,
+            ]);
+
+            $filas[] = [
+                'pagador' => $convenio instanceof Convenio ? $convenio->nombre : 'Precio de lista',
+                'donde'   => $donde === [] ? null : implode(' · ', $donde),
+                'precio'  => $precio->monto()->formateado(),
+                'desde'   => $precio->vigencia_desde->format('d/m/Y'),
+                'hasta'   => $precio->vigencia_hasta?->format('d/m/Y'),
+                'motivo'  => $precio->motivo,
+            ];
+        }
+
+        return $filas;
     }
 
     protected function getSavedNotificationTitle(): ?string

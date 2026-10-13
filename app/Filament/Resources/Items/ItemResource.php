@@ -7,7 +7,6 @@ namespace App\Filament\Resources\Items;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Pages\ListItems;
-use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PresentacionesRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
 use App\Filament\Resources\Items\Tables\ItemsTable;
@@ -48,7 +47,7 @@ class ItemResource extends Resource
 
     protected static ?string $slug = 'catalogo';
 
-    protected static ?int $navigationSort = 10;
+    protected static ?int $navigationSort = 6;
 
     /**
      * Buscar por nombre en la barra global de Filament. El código y el
@@ -77,9 +76,16 @@ class ItemResource extends Resource
         return 'servicios del catálogo';
     }
 
+    /**
+     * Junto a los productos de farmacia y no en «Catálogos y precios»
+     * (Mauricio, 13-oct-2026): es donde se registra lo importante —lo que
+     * se cobra—, y ahí está también el precio de cada seguro. «Catálogos y
+     * precios» queda para lo que se configura una vez: categorías,
+     * unidades, márgenes, convenios.
+     */
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return 'Farmacia y servicios';
     }
 
     /**
@@ -128,19 +134,20 @@ class ItemResource extends Resource
     }
 
     /**
-     * Presentaciones y precios. Existencias no: acá no hay stock.
+     * ─────────────────────────────────────────────────────────────────
+     * SIN PESTAÑAS DEBAJO DE LA FICHA (13-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
      *
-     * 🔴 Las presentaciones SÍ van de este lado, aunque nada se
-     * almacene. Una presentación no es solo un envase: es una VARIANTE.
-     * «HONORARIO DE CONSULTA» → «Dr. Carlos», «Dr. Miguel». Sin eso, el
-     * catálogo termina con cuarenta filas de honorarios que solo se
-     * distinguen por el apellido al final del nombre, que es donde
-     * alguien elige el equivocado con el paciente enfrente.
+     * Mauricio: «ese toggle de precios no debería estar; en automático
+     * deben listarse los seguros ahí». Los precios de cada pagador se
+     * escriben en la ficha misma (`PreciosDeLaFicha`), así que la lista
+     * de precios de abajo sobraba. Lo que contestaba —«¿por qué esta
+     * factura de marzo dice L 29.33?»— sigue a mano en «Historial de
+     * precios», arriba a la derecha.
      *
-     * Los precios son el otro panel obligatorio: es el único sitio donde
-     * se le pone precio a lo que no se compra —un honorario, una
-     * estancia, un hemograma—, la Ruta B del §4.1, donde no hay costo
-     * del cual derivar.
+     * Las variantes se ven solo en el servicio que ya tiene de antes
+     * (`PresentacionesRelationManager::canViewForRecord()`): un servicio
+     * no tiene variantes.
      *
      * @return array<int, class-string>
      */
@@ -148,7 +155,6 @@ class ItemResource extends Resource
     {
         return [
             PresentacionesRelationManager::class,
-            PreciosRelationManager::class,
         ];
     }
 
