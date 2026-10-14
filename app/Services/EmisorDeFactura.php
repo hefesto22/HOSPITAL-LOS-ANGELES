@@ -245,7 +245,7 @@ final class EmisorDeFactura
                 'paquetes_desglosados' => $renglones['hubo'],
 
                 'nota'        => TextoCanonico::parrafoEnMayusculas($nota),
-                'comentarios' => TextoCanonico::parrafoEnMayusculas($nota),
+                'comentarios' => $this->comentariosDe($bloqueada, $totales['total'], $nota),
             ], $cliente->paraGuardar()));
 
             $orden = 1;
@@ -538,6 +538,56 @@ final class EmisorDeFactura
         $dias = $convenio?->dias_credito;
 
         return is_int($dias) && $dias > 0 ? $emision->copy()->addDays($dias) : $emision->copy();
+    }
+
+    /**
+     * Lo que sale en el recuadro «Comentarios».
+     *
+     * Con seguro, primero el reparto (Mauricio, 14-oct-2026): «en
+     * comentarios debería salir copago de X lempiras, reembolso de X
+     * lempiras y el nombre del seguro».
+     *
+     *   COPAGO: L 30.02 · REEMBOLSO: L 200.00 · PAN-AMERICAN LIFE INSURANCE GROUP
+     *
+     * y debajo la nota que se escribió al emitir, si hay. Sin seguro,
+     * solo la nota, como siempre.
+     *
+     * Sale de la cuenta bloqueada, con la autorización ya anotada: es el
+     * mismo reparto que se acaba de cobrar. El reembolso se recorta al
+     * total del papel y el copago es lo que queda, para que las dos cifras
+     * sumen exacto lo que dice «Total a pagar».
+     */
+    private function comentariosDe(Cuenta $cuenta, Decimal $total, ?string $nota): ?string
+    {
+        $nota = TextoCanonico::parrafoEnMayusculas($nota);
+
+        if (! $cuenta->convenio->tipo->pagaUnTercero()) {
+            return $nota;
+        }
+
+        $total = Decimal::de($total->redondeado(2));
+        $reembolso = Decimal::de($cuenta->total_aseguradora);
+
+        if ($reembolso->mayorQue($total)) {
+            $reembolso = $total;
+        }
+
+        $reparto = sprintf(
+            'COPAGO: %s · REEMBOLSO: %s · %s',
+            self::enLempiras($total->restar($reembolso)),
+            self::enLempiras($reembolso),
+            mb_strtoupper($cuenta->convenio->nombre),
+        );
+
+        return $nota === null ? $reparto : $reparto."\n".$nota;
+    }
+
+    /**
+     * «L 1,250.00», como se lee en el resto del papel.
+     */
+    private static function enLempiras(Decimal $monto): string
+    {
+        return 'L '.number_format((float) $monto->redondeado(2), 2);
     }
 
     /**

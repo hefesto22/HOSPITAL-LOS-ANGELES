@@ -101,6 +101,7 @@ use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
+use Filament\Support\Enums\Alignment;
 use Filament\Support\Enums\Size;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Builder;
@@ -4009,6 +4010,12 @@ class CuentasAbiertas extends Page
 
         $cajas = [self::cajaDeResumen('Total de la cuenta', self::enLempiras($reparto['total']))];
 
+        /*
+         * La franja es el único lugar donde se lee el reparto (14-oct-2026):
+         * lo del seguro con su porcentaje y su plazo, lo del paciente con
+         * el suyo. Antes había además dos tarjetas abajo que repetían lo
+         * mismo y empujaban el botón fuera de la pantalla.
+         */
         if ($conSeguro) {
             $cajas[] = $reparto['por_decidir']
                 ? self::cajaDeResumen('Seguro · a crédito', 'Por decidir', 'rgb(217 119 6)', 'Escribí lo que autorizó')
@@ -4016,7 +4023,9 @@ class CuentasAbiertas extends Page
                     'Seguro · a crédito',
                     self::enLempiras($reparto['seguro']),
                     'rgb(59 130 246)',
-                    $reparto['seguro']->esCero() ? 'No pone nada en esta cuenta' : 'Se le factura y paga después',
+                    $reparto['seguro']->esCero()
+                        ? 'No pone nada en esta cuenta'
+                        : self::parteDe($reparto['seguro'], $reparto['total'])->comoPorcentaje().' · '.self::plazoCorto($cuenta->convenio),
                 );
         }
 
@@ -4036,7 +4045,9 @@ class CuentasAbiertas extends Page
                 'Cobrar hoy',
                 self::enLempiras($reparto['falta']),
                 'rgb(220 38 38)',
-                $conSeguro ? 'El copago del paciente' : null,
+                $conSeguro
+                    ? 'Copago del paciente · '.self::parteDe($reparto['paciente'], $reparto['total'])->comoPorcentaje()
+                    : null,
             );
         } elseif ($reparto['falta']->esNegativo()) {
             /*
@@ -4408,8 +4419,9 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Lo que se lee arriba de «¿Quién paga qué?»: de dónde sale lo que
-     * viene escrito, o que no viene nada y hay que escribirlo.
+     * La ayuda debajo de lo que autorizó el seguro: de dónde sale lo que
+     * viene escrito, o que no viene nada y hay que escribirlo. Una línea:
+     * el modal no puede pedir scroll (14-oct-2026).
      */
     private function comoSeDecideLaCobertura(): ?string
     {
@@ -4419,21 +4431,24 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        $convenio = $cuenta->convenio;
-
         if ($cuenta->tieneAutorizacionPropia()) {
-            return 'Ya se anotó lo que '.$convenio->nombre.' autorizó para esta cuenta. Cambialo si hace falta.';
+            return 'Ya anotado para esta cuenta. El resto es copago.';
         }
 
-        $general = $convenio->coberturaGeneral();
+        $general = $cuenta->convenio->coberturaGeneral();
 
-        if (! $general instanceof Decimal) {
-            return $convenio->nombre.' no tiene un porcentaje fijo: escribí lo que autorizó para esta cuenta. '
-                .'El resto es el copago del paciente.';
-        }
+        return $general instanceof Decimal
+            ? 'En general cubre el '.$general->comoPorcentaje().'. El resto es copago.'
+            : 'Escribí lo que autorizó. Si lo negó, 0.';
+    }
 
-        return 'Viene lo que '.$convenio->nombre.' cubre en general ('.$general->comoPorcentaje().'). '
-            .'Cambialo si para esta cuenta autorizó otra cosa.';
+    /**
+     * ¿La cuenta que se factura la paga en parte un tercero? Es lo que
+     * decide si aparece lo que autorizó el seguro.
+     */
+    private function pagaUnTerceroAlFacturar(): bool
+    {
+        return $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false;
     }
 
     /**
@@ -4597,9 +4612,10 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * La tarjeta de «¿Quién paga qué?»: la barra partida, lo del seguro a
-     * crédito y el copago del paciente. Ver la vista para el porqué del
-     * diseño.
+     * Los dos cuadros de quién paga qué: la barra partida, lo del seguro a
+     * crédito y el copago del paciente, en vivo con lo que está escrito.
+     * Compactos (14-oct-2026): «me gustaban los cuadros detallados, solo
+     * que eran muy grandes».
      */
     private function comoQuedaElReparto(Get $get): HtmlString
     {
@@ -4615,28 +4631,32 @@ class CuentasAbiertas extends Page
         $aprobado = $this->autorizacionDelFormulario($cuenta, $estado)['monto'];
 
         /*
-         * El monto se recorta al total —ver `Cuenta::repartir()`—, y eso
-         * se dice: si no, quien escribió L 5,000 ve L 3,000 y no entiende.
+         * El monto se recorta al total —ver `Cuenta::repartir()`—, y eso se
+         * dice: si no, quien escribió L 5,000 ve L 3,000 y no entiende.
          */
-        $recorte = $aprobado instanceof Monto && $aprobado->mayorQue($total)
-            ? 'Aprobó '.self::enLempiras($aprobado).' y la cuenta es de '.self::enLempiras($total).': cubre la cuenta entera.'
-            : null;
+        $notaDelSeguro = match (true) {
+            $reparto['seguro']->esCero()                              => 'No pone nada en esta cuenta.',
+            $aprobado instanceof Monto && $aprobado->mayorQue($total) => 'Aprobó '.self::enLempiras($aprobado).': cubre la cuenta entera.',
+            default                                                   => 'Se le factura; '.self::plazoCorto($cuenta->convenio).'.',
+        };
+
+        $notaDelPaciente = match (true) {
+            $reparto['paciente']->esCero()     => 'No le toca pagar nada.',
+            ! $reparto['falta']->mayorQue('0') => 'Ya lo pagó con sus abonos.',
+            $reparto['abonado']->mayorQue('0') => 'Ya abonó '.self::enLempiras($reparto['abonado']).': hoy '.self::enLempiras($reparto['falta']).'.',
+            default                            => 'Se cobra hoy, antes de emitir.',
+        };
 
         return new HtmlString(view('filament.pages.partials.quien-paga-que', [
             'porDecidir'       => $reparto['por_decidir'],
             'seguro'           => $cuenta->convenio->nombre,
-            'total'            => self::enLempiras($total),
             'delSeguro'        => self::enLempiras($reparto['seguro']),
             'delPaciente'      => self::enLempiras($reparto['paciente']),
             'parteDelSeguro'   => self::parteDe($reparto['seguro'], $total)->comoPorcentaje(),
             'parteDelPaciente' => self::parteDe($reparto['paciente'], $total)->comoPorcentaje(),
             'anchoDelSeguro'   => self::parteDe($reparto['seguro'], $total)->por('100')->redondeado(2),
-            'seguroEnCero'     => $reparto['seguro']->esCero(),
-            'plazo'            => self::plazoDelSeguro($cuenta->convenio),
-            'recorte'          => $recorte,
-            'abonado'          => $reparto['abonado']->mayorQue('0') ? self::enLempiras($reparto['abonado']) : null,
-            'falta'            => $reparto['falta']->mayorQue('0') ? self::enLempiras($reparto['falta']) : null,
-            'pacienteEnCero'   => $reparto['paciente']->esCero(),
+            'notaDelSeguro'    => $notaDelSeguro,
+            'notaDelPaciente'  => $notaDelPaciente,
         ])->render());
     }
 
@@ -4655,13 +4675,14 @@ class CuentasAbiertas extends Page
 
     /**
      * «La verdad nunca se sabe cuánto tiempo» (Mauricio, 13-oct-2026): el
-     * plazo pactado se dice como referencia, no como promesa.
+     * plazo pactado se dice como referencia, no como promesa. Corto,
+     * porque va de nota en la franja de arriba.
      */
-    private static function plazoDelSeguro(Convenio $convenio): string
+    private static function plazoCorto(Convenio $convenio): string
     {
         return $convenio->dias_credito !== null
-            ? 'Plazo pactado: '.$convenio->dias_credito.' días, aunque puede tardar más.'
-            : 'Sin plazo fijo: suele pagar a 30, 60 o 90 días.';
+            ? 'paga a '.$convenio->dias_credito.' días o más'
+            : 'paga a 30, 60 o 90 días';
     }
 
     /**
@@ -4707,45 +4728,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * La cifra grande de «Cobrar ahora»: cuánto se le cobra hoy al
-     * paciente, y de dónde sale cuando hay seguro o abonos.
-     */
-    private function loQueSeCobraHoy(Get $get): HtmlString
-    {
-        $cuenta = $this->cuentaFacturando();
-        $reparto = $this->repartoDelFormulario($get);
-
-        if (! $cuenta instanceof Cuenta || $reparto === null) {
-            return new HtmlString('');
-        }
-
-        $detalle = [];
-
-        if ($cuenta->convenio->tipo->pagaUnTercero()) {
-            $detalle[] = 'Su copago: '.self::enLempiras($reparto['paciente']);
-        }
-
-        if ($reparto['abonado']->mayorQue('0')) {
-            $detalle[] = 'ya abonó '.self::enLempiras($reparto['abonado']);
-        }
-
-        if ($cuenta->convenio->tipo->pagaUnTercero()) {
-            $detalle[] = 'lo del seguro no se cobra acá';
-        }
-
-        return new HtmlString(
-            '<div style="display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.25rem 1rem">'
-            .'<div style="font-size:.72rem;letter-spacing:.03em;text-transform:uppercase;opacity:.7">Le cobrás hoy al paciente</div>'
-            .'<div style="font-size:1.6rem;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;color:rgb(220 38 38)">'
-            .e(self::enLempiras($reparto['falta'])).'</div>'
-            .'</div>'
-            .($detalle === []
-                ? ''
-                : '<div style="font-size:.8rem;opacity:.7;margin-top:.1rem">'.e(ucfirst(implode(' · ', $detalle))).'</div>')
-        );
-    }
-
-    /**
      * Si lo que se está cobrando es exactamente lo del paciente. Nulo
      * cuando cuadra; si no, por qué no, en palabras de ventanilla.
      *
@@ -4780,31 +4762,35 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * La línea de abajo de «Cobrar ahora»: si lo tecleado cuadra con lo
-     * que le toca al paciente. Es la que la cajera mira antes del botón.
+     * Lo que no cuadra entre lo tecleado y lo que le toca al paciente, o
+     * nulo cuando cuadra. Cuando cuadra no se dice nada: el botón ya dice
+     * cuánto se cobra (14-oct-2026: la caja verde de «Cuadra» era un
+     * adorno más en una sección que tenía que ser sencilla).
      */
-    private function cuadreDelCobro(Get $get): HtmlString
+    private function cobroQueNoCuadra(Get $get): ?string
     {
         $reparto = $this->repartoDelFormulario($get);
 
-        if ($reparto === null) {
-            return new HtmlString('');
+        if ($reparto === null || $reparto['por_decidir'] || ! $reparto['falta']->mayorQue('0')) {
+            return null;
         }
 
-        $cobrado = $this->sumaDeMedios($get('medios'));
-        $problema = self::porQueNoCuadraElCobro($reparto['falta'], $cobrado);
+        $problema = self::porQueNoCuadraElCobro($reparto['falta'], $this->sumaDeMedios($get('medios')));
 
-        [$color, $titulo, $detalle] = $problema === null
-            ? ['22 163 74', 'Cuadra', 'Se cobran '.self::enLempiras($cobrado).' y se emite la factura.']
-            : ['220 38 38', $problema['titulo'], $problema['detalle']];
+        return $problema === null ? null : $problema['titulo'].'. '.$problema['detalle'];
+    }
 
-        return new HtmlString(
-            '<div style="padding:.5rem .8rem;border-radius:.6rem;border:1px solid rgb('.$color.' / .35);'
-            .'background:rgb('.$color.' / .08)">'
-            .'<span style="font-weight:700;color:rgb('.$color.');font-variant-numeric:tabular-nums">'.e($titulo).'</span>'
-            .'<span style="font-size:.85rem;opacity:.85"> · '.e($detalle).'</span>'
-            .'</div>'
-        );
+    /**
+     * El aviso de «Cobrar ahora» cuando el monto no cuadra: una línea en
+     * rojo, del tamaño de un mensaje de validación, pegada a la tabla.
+     */
+    private function avisoDelCobro(Get $get): HtmlString
+    {
+        $aviso = $this->cobroQueNoCuadra($get);
+
+        return new HtmlString($aviso === null
+            ? ''
+            : '<p style="font-size:.875rem;line-height:1.4;color:rgb(239 68 68)">'.e($aviso).'</p>');
     }
 
     /**
@@ -5090,90 +5076,206 @@ class CuentasAbiertas extends Page
                         Group::make([
                             /*
                              * ─────────────────────────────────────────────────────
-                             * 🔴 QUIÉN PAGA QUÉ: EL SEGURO A CRÉDITO, EL PACIENTE HOY
+                             * 🔴 UNA SOLA SECCIÓN: QUIÉN PAGA Y CÓMO (14-oct-2026)
                              * ─────────────────────────────────────────────────────
                              *
                              * Mauricio, 13-oct-2026: «cuando escriban el monto que
                              * cubre el seguro, el resto lo paga el cliente, y el
-                             * resto es como crédito del seguro a 30, 60 o 90 días;
-                             * la verdad nunca se sabe cuánto tiempo». Y la doctora:
-                             * es copago.
+                             * resto es como crédito del seguro a 30, 60 o 90 días».
+                             * Y el 14: «Cobrar ahora es poco práctico, y hacer
+                             * scroll en esa ventana no debería suceder: completo,
+                             * compacto, bonito y funcional».
                              *
-                             * Antes eran dos campos y una línea de texto, y lo que
-                             * se escribía no movía nada más: arriba seguía «Falta
-                             * cobrar» con la cuenta entera, «Cobrar ahora» la
-                             * proponía y el botón la cobraba. Ahora se escribe UNA
-                             * cosa —un porcentaje o un monto— y lo siguen la franja,
-                             * la tarjeta, el cobro y el botón.
+                             * Eran dos secciones —«¿Quién paga qué?» con una barra
+                             * y dos tarjetas, y «Cobrar ahora» abajo— y el botón
+                             * quedaba lejos. Las tarjetas repetían lo que ya dice la
+                             * franja de arriba, que es en vivo: cuánto queda a
+                             * crédito del seguro y cuánto se cobra hoy. Ahora es UNA
+                             * sección: arriba lo que autorizó el seguro (solo si
+                             * paga un tercero) y abajo cómo paga el paciente.
                              *
-                             * El convenio trae lo que ese pagador cubre en general,
-                             * y con eso se fue cargando la cuenta. Con la cobertura
-                             * vacía en el convenio —el Militar aprueba caso por
-                             * caso— no hay nada que proponer: el campo viene vacío y
-                             * no se emite sin llenarlo. Cero vale: es «lo negó».
+                             * El convenio trae lo que cubre en general; con la
+                             * cobertura vacía —el Militar aprueba caso por caso—
+                             * no hay nada que proponer y no se emite sin llenarla.
+                             * Cero vale: es «lo negó».
                              */
-                            Section::make('¿Quién paga qué?')
-                                ->icon(Heroicon::OutlinedShieldCheck)
+                            Section::make('Cobro')
+                                ->icon(Heroicon::OutlinedBanknotes)
                                 ->compact()
-                                ->description(fn (): ?string => $this->comoSeDecideLaCobertura())
-                                ->visible(fn (): bool => $this->cuentaFacturando()?->convenio->tipo->pagaUnTercero() ?? false)
-                                ->columns(['default' => 1, 'sm' => 2])
+                                ->visible(fn (Get $get): bool => $this->pagaUnTerceroAlFacturar() || $this->hayQueCobrarHoy($get))
                                 ->schema([
                                     /*
                                      * Uno u otro, nunca los dos: con los dos
-                                     * puestos, cuál manda lo decidiría el código
-                                     * y alguna vez elegiría mal. La base lo
-                                     * rechaza igual con un CHECK. El que no se
-                                     * elige se esconde, y lo escondido no viaja.
+                                     * puestos, cuál manda lo decidiría el código y
+                                     * alguna vez elegiría mal. La base lo rechaza
+                                     * igual con un CHECK. El que no se elige se
+                                     * esconde, y lo escondido no viaja.
                                      */
-                                    ToggleButtons::make('forma_autorizacion')
-                                        ->label('El seguro autorizó')
-                                        ->options([
-                                            self::AUTORIZA_UN_PORCENTAJE => 'Un porcentaje',
-                                            self::AUTORIZA_UN_MONTO      => 'Un monto fijo',
-                                        ])
-                                        ->grouped()
-                                        ->default(fn (): string => $this->cuentaFacturando()?->monto_autorizado !== null
-                                            ? self::AUTORIZA_UN_MONTO
-                                            : self::AUTORIZA_UN_PORCENTAJE)
-                                        ->live()
-                                        ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set)),
+                                    Grid::make(['default' => 1, 'sm' => 2])
+                                        ->visible(fn (): bool => $this->pagaUnTerceroAlFacturar())
+                                        ->schema([
+                                            ToggleButtons::make('forma_autorizacion')
+                                                ->label('El seguro autorizó')
+                                                ->options([
+                                                    self::AUTORIZA_UN_PORCENTAJE => 'Un porcentaje',
+                                                    self::AUTORIZA_UN_MONTO      => 'Un monto fijo',
+                                                ])
+                                                ->grouped()
+                                                ->default(fn (): string => $this->cuentaFacturando()?->monto_autorizado !== null
+                                                    ? self::AUTORIZA_UN_MONTO
+                                                    : self::AUTORIZA_UN_PORCENTAJE)
+                                                ->live()
+                                                ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set)),
 
-                                    TextInput::make('cobertura_autorizada')
-                                        ->label('Cubre')
-                                        ->numeric()
-                                        ->minValue(0)
-                                        ->maxValue(100)
-                                        ->step('0.01')
-                                        ->suffix('%')
-                                        ->placeholder('Ej. 80')
-                                        ->required()
-                                        ->validationMessages(['required' => 'Escribí cuánto cubre el seguro. Si lo negó, 0.'])
-                                        ->live(debounce: 600)
-                                        ->default(fn (): ?string => $this->coberturaPropuesta())
-                                        ->visible(fn (Get $get): bool => $get('forma_autorizacion') !== self::AUTORIZA_UN_MONTO)
-                                        ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set))
-                                        ->helperText('Como PALIG: 80 es el 80 %. El resto lo paga el paciente.'),
+                                            TextInput::make('cobertura_autorizada')
+                                                ->label('Cubre')
+                                                ->numeric()
+                                                ->minValue(0)
+                                                ->maxValue(100)
+                                                ->step('0.01')
+                                                ->suffix('%')
+                                                ->placeholder('Ej. 80')
+                                                ->required()
+                                                ->validationMessages(['required' => 'Escribí cuánto cubre el seguro. Si lo negó, 0.'])
+                                                ->live(debounce: 600)
+                                                ->default(fn (): ?string => $this->coberturaPropuesta())
+                                                ->visible(fn (Get $get): bool => $get('forma_autorizacion') !== self::AUTORIZA_UN_MONTO)
+                                                ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set))
+                                                ->helperText(fn (): ?string => $this->comoSeDecideLaCobertura()),
 
-                                    TextInput::make('monto_autorizado')
-                                        ->label('Aprobó')
-                                        ->numeric()
-                                        ->minValue(0)
-                                        ->step('0.01')
-                                        ->prefix('L')
-                                        ->placeholder('Lo que dice la autorización')
-                                        ->required()
-                                        ->validationMessages(['required' => 'Escribí cuánto aprobó el seguro. Si lo negó, 0.'])
-                                        ->live(debounce: 600)
-                                        ->default(fn (): ?string => $this->cuentaFacturando()?->monto_autorizado)
-                                        ->visible(fn (Get $get): bool => $get('forma_autorizacion') === self::AUTORIZA_UN_MONTO)
-                                        ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set))
-                                        ->helperText('Como el Militar: una cantidad fija. El resto lo paga el paciente.'),
+                                            TextInput::make('monto_autorizado')
+                                                ->label('Aprobó')
+                                                ->numeric()
+                                                ->minValue(0)
+                                                ->step('0.01')
+                                                ->prefix('L')
+                                                ->placeholder('Lo que dice la autorización')
+                                                ->required()
+                                                ->validationMessages(['required' => 'Escribí cuánto aprobó el seguro. Si lo negó, 0.'])
+                                                ->live(debounce: 600)
+                                                ->default(fn (): ?string => $this->cuentaFacturando()?->monto_autorizado)
+                                                ->visible(fn (Get $get): bool => $get('forma_autorizacion') === self::AUTORIZA_UN_MONTO)
+                                                ->afterStateUpdated(fn (Get $get, Set $set) => $this->ajustarElCobro($get, $set))
+                                                ->helperText(fn (): ?string => $this->comoSeDecideLaCobertura()),
 
-                                    Placeholder::make('como_queda_el_reparto')
-                                        ->hiddenLabel()
-                                        ->columnSpanFull()
-                                        ->content(fn (Get $get): HtmlString => $this->comoQuedaElReparto($get)),
+                                            Placeholder::make('como_queda_el_reparto')
+                                                ->hiddenLabel()
+                                                ->columnSpanFull()
+                                                ->content(fn (Get $get): HtmlString => $this->comoQuedaElReparto($get)),
+                                        ]),
+
+                                    /*
+                                     * ─────────────────────────────────────────
+                                     * 🔴 COBRAR Y FACTURAR SON UN SOLO ACTO
+                                     * ─────────────────────────────────────────
+                                     *
+                                     * El caso más común del mostrador: consulta,
+                                     * paga y se va. Solo aparece si al paciente le
+                                     * falta algo; lo del seguro no se cobra acá.
+                                     * Sigue a lo que se escriba arriba: el monto se
+                                     * acomoda solo y solo se avisa en rojo si lo
+                                     * tecleado no cuadra.
+                                     */
+                                    Group::make([
+                                        Repeater::make('medios')
+                                            ->label('Lo que paga hoy el paciente')
+                                            ->hiddenLabel(fn (): bool => ! $this->pagaUnTerceroAlFacturar())
+                                            ->table([
+                                                TableColumn::make('Forma de pago')->width('38%'),
+                                                TableColumn::make('Monto')->width('27%'),
+                                                TableColumn::make('¿A qué banco?')->width('35%'),
+                                            ])
+                                            /*
+                                             * Un enlace chico a la izquierda y no un
+                                             * botón centrado: casi siempre se paga
+                                             * con una sola forma, y el botón grande
+                                             * ocupaba un renglón entero.
+                                             */
+                                            ->addActionLabel('Otra forma de pago')
+                                            ->addAction(fn (Action $action): Action => $action->link()->icon(Heroicon::OutlinedPlus))
+                                            ->addActionAlignment(Alignment::Start)
+                                            ->reorderable(false)
+                                            ->defaultItems(1)
+                                            ->schema([
+                                                Select::make('forma')
+                                                    ->hiddenLabel()
+                                                    ->options(FormaDePago::paraSelector())
+                                                    ->default(FormaDePago::Efectivo->value)
+                                                    ->native(false)
+                                                    ->live(),
+
+                                                /*
+                                                 * 🔴 LA PORCIÓN DEL PACIENTE, NO EL
+                                                 * TOTAL. Con un seguro que cubre el 70 %,
+                                                 * proponer el total le cobra al paciente
+                                                 * los L 7,000 de la aseguradora — y el
+                                                 * que teclea está mirando al paciente, no
+                                                 * al número.
+                                                 */
+                                                TextInput::make('monto')
+                                                    ->hiddenLabel()
+                                                    ->prefix('L')
+                                                    ->inputMode('decimal')
+                                                    ->live(onBlur: true)
+                                                    ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->redondeado(2)),
+
+                                                Select::make('banco')
+                                                    ->hiddenLabel()
+                                                    ->options(self::bancos())
+                                                    ->native(false)
+                                                    ->searchable()
+                                                    ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
+                                                        ? 'Elegí el banco'
+                                                        : '—')
+                                                    ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
+                                                    ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
+                                            ]),
+
+                                        /*
+                                         * Solo si no cuadra, y pegado a la tabla,
+                                         * donde está el número que hay que corregir.
+                                         * Si no se corrige, la factura no sale.
+                                         */
+                                        Placeholder::make('aviso_del_cobro')
+                                            ->hiddenLabel()
+                                            ->visible(fn (Get $get): bool => $this->cobroQueNoCuadra($get) !== null)
+                                            ->content(fn (Get $get): HtmlString => $this->avisoDelCobro($get)),
+
+                                        /*
+                                         * El vuelto: paga con 50 una cuenta de 26.95
+                                         * y la pantalla dice 23.05. No se guarda —el
+                                         * recibo dice lo que se aplicó, no el
+                                         * billete—; es para que nadie haga la resta
+                                         * de cabeza con la fila esperando. Con quién
+                                         * lo entrega en la MISMA fila (12-oct-2026).
+                                         */
+                                        Grid::make(['default' => 1, 'sm' => 3])
+                                            ->schema([
+                                                TextInput::make('paga_con')
+                                                    ->label('Paga con')
+                                                    ->prefix('L')
+                                                    ->inputMode('decimal')
+                                                    ->placeholder('Lo que entrega')
+                                                    ->dehydrated(false)
+                                                    ->live(debounce: 400)
+                                                    ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
+
+                                                Placeholder::make('vuelto')
+                                                    ->label('Vuelto')
+                                                    ->content(fn (Get $get): HtmlString => $this->vueltoDe($get))
+                                                    ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
+
+                                                CampoMayusculas::make('entregado_por_factura')
+                                                    ->label('Lo entrega')
+                                                    ->placeholder('Si no es el paciente')
+                                                    ->maxLength(120)
+                                                    ->columnSpan(fn (Get $get): array => [
+                                                        'default' => 1,
+                                                        'sm'      => $this->hayEfectivoEn($get) ? 1 : 3,
+                                                    ]),
+                                            ]),
+                                    ])
+                                        ->visible(fn (Get $get): bool => $this->hayQueCobrarHoy($get)),
                                 ]),
 
                             /*
@@ -5181,144 +5283,24 @@ class CuentasAbiertas extends Page
                              * 🔴 SE TIENE QUE VER SI ABONÓ O SI SE LE COBRA
                              * ─────────────────────────────────────────────────
                              *
-                             * Mauricio, 11-oct-2026: «para que se sepa si
-                             * abonó o se le está cobrando». Los recibos vivos
-                             * de la cuenta, uno por renglón.
+                             * Mauricio, 11-oct-2026: «para que se sepa si abonó
+                             * o se le está cobrando». Cerrada, una línea con el
+                             * total: la franja de arriba ya dice «Ya abonó», y los
+                             * recibos uno por uno se abren si hace falta mirarlos
+                             * (14-oct-2026, para que el modal no pida scroll).
                              */
-                            Section::make('Ya abonó')
+                            Section::make(fn (): string => 'Ya abonó · '.self::enLempiras(
+                                $this->cuentaFacturando()?->abonado() ?? Decimal::cero()
+                            ))
                                 ->icon(Heroicon::OutlinedCheckCircle)
                                 ->compact()
-                                ->description(fn (Get $get): string => $this->hayQueCobrarHoy($get)
-                                    ? 'Lo que dejó antes. El resto se cobra abajo.'
-                                    : 'Con esto ya puso lo suyo: se emite y listo.')
+                                ->collapsible()
+                                ->collapsed()
                                 ->visible(fn (): bool => $this->cuentaFacturando()?->abonado()->mayorQue('0') ?? false)
                                 ->schema([
                                     Placeholder::make('abonos_de_la_cuenta')
                                         ->hiddenLabel()
                                         ->content(fn (): HtmlString => $this->loQueYaAbono()),
-                                ]),
-
-                            /*
-                             * ─────────────────────────────────────────────────
-                             * 🔴 COBRAR Y FACTURAR SON UN SOLO ACTO
-                             * ─────────────────────────────────────────────────
-                             *
-                             * El caso más común del mostrador: consulta, paga
-                             * y se va. Solo aparece si al paciente le falta
-                             * algo; lo del seguro no se cobra acá.
-                             *
-                             * Arriba la cifra que se cobra, grande; abajo si lo
-                             * tecleado cuadra (13-oct-2026). Sigue a lo que se
-                             * escriba en «¿Quién paga qué?»: aparece cuando el
-                             * seguro deja un copago y el monto se acomoda solo.
-                             */
-                            Section::make('Cobrar ahora')
-                                ->icon(Heroicon::OutlinedBanknotes)
-                                ->compact()
-                                ->visible(fn (Get $get): bool => $this->hayQueCobrarHoy($get))
-                                ->schema([
-                                    Placeholder::make('se_cobra_hoy')
-                                        ->hiddenLabel()
-                                        ->content(fn (Get $get): HtmlString => $this->loQueSeCobraHoy($get)),
-
-                                    Repeater::make('medios')
-                                        ->hiddenLabel()
-                                        ->table([
-                                            TableColumn::make('Forma de pago')->width('38%'),
-                                            TableColumn::make('Monto')->width('27%'),
-                                            TableColumn::make('¿A qué banco?')->width('35%'),
-                                        ])
-                                        ->addActionLabel('Agregar otra forma de pago')
-                                        ->reorderable(false)
-                                        ->defaultItems(1)
-                                        ->schema([
-                                            Select::make('forma')
-                                                ->hiddenLabel()
-                                                ->options(FormaDePago::paraSelector())
-                                                ->default(FormaDePago::Efectivo->value)
-                                                ->native(false)
-                                                ->live(),
-
-                                            /*
-                                             * Con el saldo exacto ya puesto: lo
-                                             * normal es que pague todo, y así es un
-                                             * clic en vez de teclear un número que
-                                             * la pantalla ya sabe.
-                                             */
-                                            TextInput::make('monto')
-                                                ->hiddenLabel()
-                                                ->prefix('L')
-                                                ->inputMode('decimal')
-                                                /*
-                                                 * 🔴 LA PORCIÓN DEL PACIENTE, NO EL
-                                                 * TOTAL. Con un seguro que cubre el
-                                                 * 70 %, proponer el total le cobra al
-                                                 * paciente los L 7,000 de la
-                                                 * aseguradora — y el que teclea está
-                                                 * mirando al paciente, no al número.
-                                                 */
-                                                ->live(onBlur: true)
-                                                ->default(fn (): ?string => $this->cuentaFacturando()?->saldoPendienteDelPaciente()->redondeado(2)),
-
-                                            Select::make('banco')
-                                                ->hiddenLabel()
-                                                ->options(self::bancos())
-                                                ->native(false)
-                                                ->searchable()
-                                                ->placeholder(fn (Get $get): string => $get('forma') === FormaDePago::Transferencia->value
-                                                    ? 'Elegí el banco'
-                                                    : '—')
-                                                ->required(fn (Get $get): bool => $get('forma') === FormaDePago::Transferencia->value)
-                                                ->disabled(fn (Get $get): bool => $get('forma') !== FormaDePago::Transferencia->value),
-                                        ]),
-
-                                    /*
-                                     * El vuelto: paga con 50 una cuenta de
-                                     * 26.95 y la pantalla dice 23.05. No se
-                                     * guarda —el recibo dice lo que se
-                                     * aplicó, no el billete—; es para que
-                                     * nadie haga la resta de cabeza con la
-                                     * fila esperando.
-                                     *
-                                     * Con quién lo entrega en la MISMA fila
-                                     * (12-oct-2026): uno debajo del otro
-                                     * empujaban Emitir fuera de la pantalla.
-                                     */
-                                    Grid::make(['default' => 1, 'sm' => 3])
-                                        ->schema([
-                                            TextInput::make('paga_con')
-                                                ->label('Paga con')
-                                                ->prefix('L')
-                                                ->inputMode('decimal')
-                                                ->placeholder('Lo que entrega')
-                                                ->dehydrated(false)
-                                                ->live(debounce: 400)
-                                                ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
-
-                                            Placeholder::make('vuelto')
-                                                ->label('Vuelto')
-                                                ->content(fn (Get $get): HtmlString => $this->vueltoDe($get))
-                                                ->visible(fn (Get $get): bool => $this->hayEfectivoEn($get)),
-
-                                            CampoMayusculas::make('entregado_por_factura')
-                                                ->label('Lo entrega')
-                                                ->placeholder('Si no es el paciente')
-                                                ->maxLength(120)
-                                                ->columnSpan(fn (Get $get): array => [
-                                                    'default' => 1,
-                                                    'sm'      => $this->hayEfectivoEn($get) ? 1 : 3,
-                                                ]),
-                                        ]),
-
-                                    /*
-                                     * Lo último antes del botón: si lo que se
-                                     * va a cobrar es justo lo del paciente. Si
-                                     * no cuadra, la factura no sale y lo dice
-                                     * acá en vez de después.
-                                     */
-                                    Placeholder::make('cuadre_del_cobro')
-                                        ->hiddenLabel()
-                                        ->content(fn (Get $get): HtmlString => $this->cuadreDelCobro($get)),
                                 ]),
                         ])
                             ->columnSpan(['default' => 1, 'lg' => 7])

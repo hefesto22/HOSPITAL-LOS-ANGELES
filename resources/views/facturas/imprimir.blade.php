@@ -34,19 +34,73 @@
     `factura_lineas`. Una reimpresión de hace ocho meses sale idéntica
     aunque el catálogo y los precios hayan cambiado diez veces. Lo único
     que se lee del sistema son los datos del EMISOR.
+
+    ─────────────────────────────────────────────────────────────────────
+    🔴 CUANDO ES LARGA (Mauricio, 14-oct-2026)
+    ─────────────────────────────────────────────────────────────────────
+
+    «Se podría mejorar un poco más la factura, no me termina de convencer
+    cuando es muy larga.» Una cirugía desglosada pasaba de una hoja y la
+    segunda salía con los totales solos, sin decir de qué factura eran,
+    con media hoja en blanco en la primera.
+
+      · Cada hoja dice al pie de qué factura y de qué paciente es, y
+        «Página 1 de 2»; de la segunda en adelante, arriba, que es la
+        continuación. Si las hojas se separan, se vuelven a juntar.
+      · El final —los dos últimos renglones, el total en letras, las
+        casillas, el total a pagar, las firmas, el sello y el pie— es un
+        bloque que no se corta: si no cabe, pasa entero a la hoja
+        siguiente con sus dos renglones. Nunca quedan los totales solos.
+      · Las casillas fiscales van en dos columnas —el gravado al lado de
+        su ISV— y las firmas van debajo de los comentarios: el final
+        mide casi la mitad.
+      · Los renglones son más bajos y alternan un fondo apenas gris, para
+        no perder la fila en una lista de veinte.
+
+    Siguen TODAS las casillas que pide el SAR, con su nombre.
 --}}
 @php($lineas = $factura->detalle)
 @php($leyendas = config('sihla.facturacion.leyendas', []))
 @php($logo = $sede->logoIncrustado())
 @php($telefono = $sede->telefonoImpreso())
 @php($descuentos = (float) $factura->descuento_legal + (float) $factura->descuento_comercial)
+@php($continua = 'FACTURA '.str_replace(['"', '\\', '<', '>'], '', $factura->numero).' · CONTINUACIÓN')
+@php($alPie = str_replace(['"', '\\', '<', '>', "\n", "\r"], '', 'Factura '.$factura->numero.(filled($factura->paciente_nombre) ? ' · '.$factura->paciente_nombre : '')))
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="utf-8">
     <title>{{ $factura->numero }}</title>
     <style>
-        @page { size: letter; margin: 11mm 12mm; }
+        /*
+         * Al pie de cada hoja, de qué factura es y qué hoja es. Son las
+         * cajas de margen de la página: Chrome las dibuja al imprimir y
+         * en lugar de su propio encabezado y pie. En pantalla no existen.
+         */
+        @page {
+            size: letter;
+            margin: 11mm 12mm 13mm;
+
+            @bottom-left {
+                content: "{!! $alPie !!}";
+                font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 7px; color: #64748b;
+            }
+
+            @bottom-right {
+                content: "Página " counter(page) " de " counter(pages);
+                font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 7px; color: #64748b;
+            }
+
+            @top-right {
+                content: "{!! $continua !!}";
+                font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 7px; letter-spacing: .12em; color: #0c4a6e;
+            }
+        }
+
+        /* La primera hoja ya tiene su encabezado completo. */
+        @page :first {
+            @top-right { content: none; }
+        }
         * { box-sizing: border-box; }
 
         /*
@@ -110,7 +164,16 @@
              * Lo que no se parte a la mitad: un renglón cortado entre dos
              * hojas, o los totales separados de su detalle.
              */
-            .detalle tr, .cierre, .firmas, .pie { break-inside: avoid; }
+            .detalle tr { break-inside: avoid; }
+
+            /*
+             * El bloque final no se corta: los dos últimos renglones, el
+             * cierre, las firmas y el pie pasan juntos a la hoja siguiente
+             * si no caben. Probado: con «evitar corte antes del cierre» en
+             * vez de un bloque, Chrome terminaba partiendo el cierre a la
+             * mitad y dejaba el «Total a pagar» solo en una tercera hoja.
+             */
+            .final { break-inside: avoid; }
 
             /* La marca de anulada, en todas las hojas. */
             .anulada-marca { position: fixed; }
@@ -135,7 +198,7 @@
          */
         .encabezado { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; }
         .membrete { min-width: 0; }
-        .logo { display: block; max-height: 19mm; max-width: 78mm; margin-bottom: 3mm; }
+        .logo { display: block; max-height: 17mm; max-width: 78mm; margin-bottom: 2.5mm; }
         .membrete p { margin: 1px 0 0; color: var(--suave); font-size: 8.8px; }
         .membrete .razon { margin: 0; font-size: 11.5px; font-weight: 700; color: var(--tinta); letter-spacing: .02em; }
         .membrete.sin-logo .razon { font-size: 17px; }
@@ -154,7 +217,7 @@
         .fechas td:last-child { font-weight: 600; color: var(--tinta); font-variant-numeric: tabular-nums; }
 
         .franja {
-            height: 3px; margin: 5mm 0 4mm; border-radius: 2px;
+            height: 3px; margin: 4mm 0 3.5mm; border-radius: 2px;
             background: linear-gradient(90deg, var(--marca) 0 70%, var(--marca-viva) 70% 100%);
         }
 
@@ -198,15 +261,17 @@
         .meta .valor { font-size: 9px; font-weight: 500; }
 
         /* El detalle. */
-        .detalle { margin-top: 4mm; }
+        .detalle { margin-top: 3.5mm; table-layout: fixed; }
+        .detalle.continua { margin-top: 0; }
         .detalle thead th {
             padding: 2.2mm 2mm; text-align: left; font-size: 7.2px; font-weight: 700; letter-spacing: .12em;
             text-transform: uppercase; color: var(--marca); background: var(--fondo);
             border-top: 1.5px solid var(--marca); border-bottom: 1px solid var(--raya);
         }
-        .detalle tbody td { padding: 2mm; border-bottom: 1px solid var(--raya-fina); font-size: 9.2px; }
-        .detalle tbody tr:last-child td { border-bottom: 1px solid var(--raya); }
-        .detalle .codigo { white-space: nowrap; font-size: 8.5px; color: var(--suave); }
+        .detalle tbody td { padding: 1.3mm 2mm; border-bottom: 1px solid var(--raya-fina); font-size: 9px; }
+        .detalle tbody tr.par td { background: #f8fafc; }
+        .detalle.continua tbody tr:last-child td { border-bottom: 1px solid var(--raya); }
+        .detalle .codigo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 8.5px; color: var(--suave); }
         .detalle td.total { font-weight: 600; color: var(--tinta); }
 
         /*
@@ -227,14 +292,30 @@
          * sumados al pie de cada columna: un número sin rótulo era lo que
          * confundía.
          */
-        .cierre { display: grid; grid-template-columns: 1fr 74mm; gap: 6mm; align-items: start; margin-top: 4mm; }
-        .letras { padding: 2.5mm 3.5mm; border-left: 3px solid var(--marca-viva); border-radius: 0 6px 6px 0; background: var(--fondo); }
-        .comentarios { min-height: 16mm; margin-top: 3mm; padding: 2.5mm 3.5mm; border: 1px solid var(--raya); border-radius: 6px; }
+        .cierre { display: grid; grid-template-columns: 1fr 88mm; gap: 6mm; margin-top: 4mm; }
+
+        /* Las firmas bajan hasta el pie del sello: las líneas quedan parejas con él. */
+        .cierre-izquierda { display: flex; flex-direction: column; }
+        .letras { padding: 2.2mm 3.5mm; border-left: 3px solid var(--marca-viva); border-radius: 0 6px 6px 0; background: var(--fondo); }
+        .comentarios { min-height: 11mm; margin-top: 2.5mm; padding: 2.2mm 3.5mm; border: 1px solid var(--raya); border-radius: 6px; }
         .comentarios p { margin: 0; white-space: pre-line; }
 
-        .totales td { padding: 1.3mm 0; border-bottom: 1px solid var(--raya-fina); font-size: 9px; color: var(--suave); }
-        .totales td.num { font-weight: 500; color: var(--tinta); }
-        .totales tr.base td { font-weight: 600; color: var(--tinta); }
+        /*
+         * Las cuentas: subtotal y descuentos a todo el ancho, y las seis
+         * casillas fiscales en dos columnas —cada gravado al lado de su
+         * ISV—. Antes eran ocho renglones uno debajo del otro y el cierre
+         * no cabía con los últimos renglones del detalle.
+         */
+        .cuentas .fila,
+        .casillas > div {
+            display: flex; justify-content: space-between; gap: 2mm; padding: 1.15mm 0;
+            border-bottom: 1px solid var(--raya-fina); font-size: 8.6px; color: var(--suave);
+        }
+        .cuentas b,
+        .casillas b { font-weight: 500; color: var(--tinta); white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .cuentas .fila.base,
+        .cuentas .fila.base b { font-weight: 600; color: var(--tinta); }
+        .casillas { display: grid; grid-template-columns: 1fr 1fr; column-gap: 5mm; }
         .pagar {
             display: flex; justify-content: space-between; align-items: center; margin-top: 2mm; padding: 2.6mm 3.5mm;
             border-radius: 6px; background: var(--marca); color: #fff;
@@ -242,19 +323,19 @@
         .pagar span { font-size: 8px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
         .pagar strong { font-size: 14px; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
 
-        /* Las firmas y el sello de pagado. */
-        .firmas { display: grid; grid-template-columns: 1fr 1fr 58mm; gap: 8mm; align-items: end; margin-top: 8mm; }
-        .firma { padding-top: 13mm; border-bottom: 1px solid var(--texto); }
+        /* Las firmas, debajo de los comentarios, y el sello de pagado, debajo del total. */
+        .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 7mm; margin-top: auto; padding-top: 3mm; }
+        .firma { padding-top: 10mm; border-bottom: 1px solid var(--texto); }
         .firma-rotulo { margin-top: 1.2mm; text-align: center; font-size: 8px; color: var(--suave); }
         .sello {
-            display: flex; flex-direction: column; justify-content: space-between; height: 30mm; padding: 2mm 3mm;
+            display: flex; flex-direction: column; justify-content: space-between; height: 20mm; margin-top: 2.5mm; padding: 1.8mm 3mm;
             border: 1.5px dashed #94a3b8; border-radius: 8px;
         }
         .sello .rotulo { text-align: center; color: var(--marca); }
         .sello .renglon { display: flex; gap: 2mm; font-size: 7.5px; color: var(--suave); }
         .sello .renglon i { flex: 1; border-bottom: 1px solid var(--raya); }
 
-        .pie { margin-top: 6mm; padding-top: 3mm; border-top: 1px solid var(--raya); text-align: center; }
+        .pie { margin-top: 4mm; padding-top: 2.5mm; border-top: 1px solid var(--raya); text-align: center; }
         .pie .copias { font-size: 8px; letter-spacing: .04em; color: var(--suave); }
         .pie .exijala { margin-top: 1.5mm; font-size: 9.5px; font-weight: 700; letter-spacing: .12em; color: var(--marca); }
     </style>
@@ -410,27 +491,56 @@
             </div>
         </section>
 
-        {{-- ── El detalle ───────────────────────────────────────────── --}}
+        {{--
+            ── El detalle ─────────────────────────────────────────────
+
+            🔴 LOS ÚLTIMOS DOS RENGLONES VIAJAN CON EL CIERRE (14-oct-2026).
+            La tabla se parte en dos: todos los renglones menos los dos
+            últimos, y después un bloque que no se corta —los dos últimos,
+            el total en letras, las casillas, el total a pagar, las firmas,
+            el sello y el pie—. Si ese bloque no cabe en la hoja, pasa entero
+            a la siguiente y se lleva sus dos renglones: la segunda hoja
+            nunca son los totales solos, y nunca queda un total a pagar
+            separado de su firma.
+
+            Las dos tablas comparten anchos de columna (`colgroup` con
+            `table-layout: fixed`): se leen como una sola.
+        --}}
+        @php($corte = max(0, $lineas->count() - 2))
         <table class="detalle">
+            <colgroup>
+                <col style="width: 19mm"><col><col style="width: 15mm"><col style="width: 21mm"><col style="width: 22mm"><col style="width: 22mm">
+            </colgroup>
             <thead>
                 <tr>
-                    <th style="width: 19mm">Código</th>
+                    <th>Código</th>
                     <th>Descripción</th>
-                    <th class="num" style="width: 15mm">Cant.</th>
-                    <th class="num" style="width: 21mm">Precio unit.</th>
-                    <th class="num" style="width: 22mm">Descuento</th>
-                    <th class="num" style="width: 22mm">Total</th>
+                    <th class="num">Cant.</th>
+                    <th class="num">Precio unit.</th>
+                    <th class="num">Descuento</th>
+                    <th class="num">Total</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach ($lineas as $linea)
+                    @if ($loop->index === $corte)
+            </tbody>
+        </table>
+
+        <div class="final">
+        <table class="detalle continua">
+            <colgroup>
+                <col style="width: 19mm"><col><col style="width: 15mm"><col style="width: 21mm"><col style="width: 22mm"><col style="width: 22mm">
+            </colgroup>
+            <tbody>
+                    @endif
                     @if ($linea->encabezado)
                         <tr class="titulo">
                             <td class="codigo">{{ $linea->codigo }}</td>
                             <td colspan="5">{{ $linea->descripcion }}</td>
                         </tr>
                     @else
-                        <tr>
+                        <tr @class(['par' => $loop->iteration % 2 === 0])>
                             <td class="codigo">{{ $linea->codigo }}</td>
                             <td>{{ $linea->descripcion }}</td>
                             <td class="num">{{ number_format((float) $linea->cantidad, 2) }}</td>
@@ -443,9 +553,15 @@
             </tbody>
         </table>
 
-        {{-- ── En letras, comentarios y las casillas ────────────────── --}}
+        {{--
+            ── El cierre ─────────────────────────────────────────────
+            A la izquierda el total en letras, los comentarios y las dos
+            firmas; a la derecha las cuentas, el total a pagar y, debajo, el
+            sello de pagado. Antes las firmas iban en una franja aparte y
+            el bloque final medía casi el doble.
+        --}}
         <section class="cierre">
-            <div>
+            <div class="cierre-izquierda">
                 {{-- El total en letras: la defensa contra el dígito alterado. --}}
                 <div class="letras">
                     <span class="rotulo">Son</span>
@@ -456,65 +572,52 @@
                     <span class="rotulo">Comentarios</span>
                     <p>{{ $factura->comentarios }}</p>
                 </div>
+
+                <div class="firmas">
+                    <div>
+                        <div class="firma"></div>
+                        <div class="firma-rotulo">Firma por {{ mb_strtoupper($sede->razon_social) }}</div>
+                    </div>
+                    <div>
+                        <div class="firma"></div>
+                        <div class="firma-rotulo">Recibido de conformidad</div>
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <table class="totales">
-                    <tr class="base">
-                        <td>Subtotal</td>
-                        <td class="num">{{ number_format((float) $factura->bruto, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>Descuentos y rebajas</td>
-                        <td class="num">{{ $descuentos > 0 ? '− ' : '' }}{{ number_format($descuentos, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>Importe exonerado</td>
-                        <td class="num">{{ number_format((float) $factura->exonerado, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>Importe exento</td>
-                        <td class="num">{{ number_format((float) $factura->exento, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>Importe gravado 15 %</td>
-                        <td class="num">{{ number_format((float) $factura->gravado_15, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>Importe gravado 18 %</td>
-                        <td class="num">{{ number_format((float) $factura->gravado_18, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>ISV 15 %</td>
-                        <td class="num">{{ number_format((float) $factura->isv_15, 2) }}</td>
-                    </tr>
-                    <tr>
-                        <td>ISV 18 %</td>
-                        <td class="num">{{ number_format((float) $factura->isv_18, 2) }}</td>
-                    </tr>
-                </table>
+            <div class="cierre-derecha">
+                <div class="cuentas">
+                    <div class="fila base">
+                        <span>Subtotal</span>
+                        <b>{{ number_format((float) $factura->bruto, 2) }}</b>
+                    </div>
+                    <div class="fila">
+                        <span>Descuentos y rebajas</span>
+                        <b>{{ $descuentos > 0 ? '− ' : '' }}{{ number_format($descuentos, 2) }}</b>
+                    </div>
+
+                    {{-- Las casillas que el SAR pide separadas, cada gravado al lado de su impuesto. --}}
+                    <div class="casillas">
+                        <div><span>Importe exonerado</span><b>{{ number_format((float) $factura->exonerado, 2) }}</b></div>
+                        <div><span>Importe exento</span><b>{{ number_format((float) $factura->exento, 2) }}</b></div>
+                        <div><span>Importe gravado 15 %</span><b>{{ number_format((float) $factura->gravado_15, 2) }}</b></div>
+                        <div><span>ISV 15 %</span><b>{{ number_format((float) $factura->isv_15, 2) }}</b></div>
+                        <div><span>Importe gravado 18 %</span><b>{{ number_format((float) $factura->gravado_18, 2) }}</b></div>
+                        <div><span>ISV 18 %</span><b>{{ number_format((float) $factura->isv_18, 2) }}</b></div>
+                    </div>
+                </div>
 
                 <div class="pagar">
                     <span>Total a pagar</span>
                     <strong>L {{ number_format((float) $factura->total, 2) }}</strong>
                 </div>
-            </div>
-        </section>
 
-        {{-- ── Firmas y el sello de pagado ──────────────────────────── --}}
-        <section class="firmas">
-            <div>
-                <div class="firma"></div>
-                <div class="firma-rotulo">Firma por {{ mb_strtoupper($sede->razon_social) }}</div>
-            </div>
-            <div>
-                <div class="firma"></div>
-                <div class="firma-rotulo">Recibido de conformidad</div>
-            </div>
-            <div class="sello">
-                <span class="rotulo">Pagado · sello y firma</span>
-                <div class="renglon">Fecha <i></i></div>
-                <div class="renglon">Firma <i></i></div>
+                {{-- 🔴 El espacio para marcarla como pagada (Mauricio, 12-oct-2026). --}}
+                <div class="sello">
+                    <span class="rotulo">Pagado · sello y firma</span>
+                    <div class="renglon">Fecha <i></i></div>
+                    <div class="renglon">Firma <i></i></div>
+                </div>
             </div>
         </section>
 
@@ -524,6 +627,7 @@
                 <div class="exijala">{{ mb_strtoupper($leyenda) }}</div>
             @endforeach
         </footer>
+        </div>
     </div>
 </body>
 </html>

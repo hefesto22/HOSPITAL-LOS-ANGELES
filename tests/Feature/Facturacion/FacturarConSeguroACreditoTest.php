@@ -5,9 +5,11 @@ declare(strict_types=1);
 use App\Domain\Enums\BaseDelDescuentoLegal;
 use App\Domain\Exceptions\FacturaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
+use App\Domain\ValueObjects\Monto;
 use App\Models\Convenio;
 use App\Models\RangoCai;
 use App\Services\EmisorDeFactura;
+use App\Services\RegistradorDeAutorizacion;
 
 /**
  * FACTURAR CON EL SEGURO A CRÉDITO.
@@ -109,3 +111,57 @@ it('el saldo del paciente descuenta lo que ya abono', function (): void {
         /* Y la cuenta SIGUE debiendo: los 3,000 del seguro. */
         ->and($cuenta->saldoPendiente()->redondeado(2))->toBe('3000.00');
 })->note('Las dos preguntas conviven: «¿el paciente puso lo suyo?» decide la factura, «¿cuánto debe la cuenta?» sigue siendo la deuda real.');
+
+it('🔴 con seguro los comentarios dicen el copago, el reembolso y el seguro', function (): void {
+    $cuenta = unaCuentaCon(unSeguroQueCubre('0.7000'));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '10000.0000');
+    abonarle($cuenta, '3000.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+        nota: 'pagó en efectivo',
+    );
+
+    expect($factura->comentarios)->toBe(
+        'COPAGO: L 3,000.00 · REEMBOLSO: L 7,000.00 · '.$cuenta->convenio->nombre."\nPAGÓ EN EFECTIVO"
+    )
+        /* La nota sola sigue guardada aparte, como se escribió. */
+        ->and($factura->nota)->toBe('PAGÓ EN EFECTIVO');
+})->note('Mauricio, 14-oct-2026: «en comentarios debería salir copago de X lempiras, reembolso de X lempiras y el nombre del seguro».');
+
+it('el reparto de los comentarios es el de la autorizacion anotada, y suma el total', function (): void {
+    $cuenta = unaCuentaCon(unSeguroQueCubre('0.0000'));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '230.0200');
+    app(RegistradorDeAutorizacion::class)->registrar($cuenta->refresh(), null, Monto::de('200.00'));
+    abonarle($cuenta, '30.02');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+    );
+
+    expect($factura->comentarios)->toBe('COPAGO: L 30.02 · REEMBOLSO: L 200.00 · '.$cuenta->convenio->nombre)
+        ->and($factura->total)->toBe('230.02');
+})->note('Es la cuenta de la captura del 14-oct-2026: el seguro aprobó L 200 de L 230.02.');
+
+it('sin seguro los comentarios son solo la nota', function (): void {
+    $cuenta = unaCuentaCon(Convenio::factory()->contado()->create([
+        'base_descuento_legal' => BaseDelDescuentoLegal::SobreElTotalFacturado,
+    ]));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '500.0000');
+    abonarle($cuenta, '500.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+    );
+
+    expect($factura->comentarios)->toBeNull();
+});
