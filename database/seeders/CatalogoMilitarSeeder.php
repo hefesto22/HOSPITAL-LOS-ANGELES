@@ -81,12 +81,12 @@ use RuntimeException;
  * 🔴 LO QUE HAY QUE DECIDIR ANTES DE FACTURARLE AL MILITAR
  * ─────────────────────────────────────────────────────────────────────
  *
- *   · El convenio queda con cobertura CERO. El Militar no cubre un
- *     porcentaje: aprueba un MONTO por caso, y ese monto se registra en
- *     la cuenta («lo que el seguro autorizó»). Con cero, mientras nadie
- *     autorice nada el paciente aparece debiendo todo —visible y
+ *   · El convenio queda SIN cobertura general: se decide al facturar
+ *     (13-oct-2026). El Militar no cubre un porcentaje: aprueba un MONTO
+ *     por caso, y ese monto se escribe al emitir («¿quién paga qué?»).
+ *     Mientras tanto el paciente aparece debiendo todo —visible y
  *     corregible— en vez de que el Militar aparezca cubriendo lo que no
- *     aprobó.
+ *     aprobó, y al facturar el campo no se puede dejar vacío.
  *   · `base_descuento_legal` es «sobre el total facturado» (decisión del
  *     hospital, 9-oct-2026): el descuento de tercera y cuarta edad cae
  *     sobre el valor entero de cada línea y lo aprobado se resta después.
@@ -449,7 +449,7 @@ class CatalogoMilitarSeeder extends Seeder
         $this->command?->comment('  El precio de lista de TODOS ellos quedó en el centinela de L 10: el documento no lo trae y no se inventa.');
         $this->command?->warn('  ⚠️ Mientras esté en L 10 no se le puede facturar a un paciente de contado. Faltan '.ListaPendiente::cuantosFaltan().' ítems por precio de lista.');
         $this->command?->warn('  ⚠️ Ambulancia no se cargó: las tres filas vienen en cero y el documento dice que no hay servicio.');
-        $this->command?->warn('  ⚠️ El convenio quedó con cobertura 0 %: el Militar aprueba un MONTO por caso, y ese monto se registra en la cuenta al facturar.');
+        $this->command?->warn('  ⚠️ El convenio quedó sin cobertura general: el Militar aprueba un MONTO por caso, y ese monto se escribe al facturar.');
         $this->command?->warn('  ⚠️ Falta el R.T.N. del Hospital Militar: cargalo en Seguros y convenios antes de emitirle una factura.');
     }
 
@@ -481,7 +481,11 @@ class CatalogoMilitarSeeder extends Seeder
                     .'MONTO APROBADO, no por porcentaje: cada caso se autoriza y el resto se le factura '
                     .'al paciente. Áreas: hospitalización, equipo médico, rayos X, laboratorio, otros '
                     .'laboratorios y consulta externa. Ambulancia: sin servicio.',
-                'cobertura_fraccion' => '0.0000',
+                /*
+                 * Vacía: cada caso se autoriza aparte y se escribe al
+                 * facturar; el resto es el copago del paciente (13-oct-2026).
+                 */
+                'cobertura_fraccion' => null,
                 'cubre_por_defecto'  => true,
             ],
         );

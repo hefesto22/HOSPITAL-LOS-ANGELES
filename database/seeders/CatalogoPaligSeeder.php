@@ -278,17 +278,18 @@ class CatalogoPaligSeeder extends Seeder
         $this->command?->comment('  El precio de lista quedó en el centinela de L 10: el tarifario no lo trae y no se inventa.');
         $this->command?->warn('  ⚠️ Mientras esté en L 10 no se le puede facturar a un paciente de contado. Faltan '.ListaPendiente::cuantosFaltan().' ítems por precio de lista.');
         $this->command?->warn('  ⚠️ Revisá los ítems marcados VERIFICAR en el seeder antes de facturarle a nadie.');
-        $this->command?->warn('  ⚠️ El convenio PALIG quedó con cobertura 0 %: cargá el porcentaje real en Convenios.');
+        $this->command?->warn('  ⚠️ El convenio PALIG quedó sin cobertura general: se decide al facturar hasta que cargues el porcentaje real en Convenios.');
     }
 
     /**
-     * El pagador. Se crea con cobertura CERO a propósito.
+     * El pagador. Se crea SIN cobertura general a propósito.
      *
      * El porcentaje real no está en el tarifario que se fotografió, y un
      * 80 % inventado sería el hospital regalando plata sin que nadie lo
-     * haya decidido. Con cero, el paciente aparece debiendo todo —que es
-     * visible y se corrige en dos clics— en vez de que la aseguradora
-     * aparezca cubriendo lo que no cubre.
+     * haya decidido. Vacía, la cuenta se carga entera al paciente y al
+     * facturar quien cobra escribe lo que autorizó el seguro —que es
+     * visible y no se puede saltar— en vez de que la aseguradora aparezca
+     * cubriendo lo que no cubre.
      */
     private function convenio(): Convenio
     {
@@ -316,10 +317,11 @@ class CatalogoPaligSeeder extends Seeder
 
                 /*
                  * Cubre el catálogo por defecto —es una aseguradora, no
-                 * un contado— pero con porcentaje CERO hasta que alguien
-                 * lea el contrato y lo cargue.
+                 * un contado— pero sin porcentaje general: vacío, se
+                 * decide en cada cuenta al facturar hasta que alguien lea
+                 * el contrato y lo cargue (13-oct-2026).
                  */
-                'cobertura_fraccion' => '0.0000',
+                'cobertura_fraccion' => null,
                 'cubre_por_defecto'  => true,
             ],
         );

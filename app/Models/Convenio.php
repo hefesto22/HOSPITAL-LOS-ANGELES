@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Domain\Enums\BaseDelDescuentoLegal;
 use App\Domain\Enums\TipoConvenio;
+use App\Domain\ValueObjects\Decimal;
 use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
 use Carbon\CarbonInterface;
@@ -33,6 +34,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $telefono
  * @property string|null $correo
  * @property bool $requiere_autorizacion
+ * @property numeric-string|null $cobertura_fraccion null = se decide al facturar
  * @property bool $desglosa_paquetes
  * @property int|null $dias_credito
  * @property string|null $notas
@@ -156,6 +158,31 @@ class Convenio extends Model
     public function esAlContado(): bool
     {
         return $this->tipo === TipoConvenio::Contado;
+    }
+
+    /**
+     * Lo que este pagador cubre en general, o nulo cuando no hay un
+     * porcentaje general y se decide en cada cuenta al facturar.
+     */
+    public function coberturaGeneral(): ?Decimal
+    {
+        $fraccion = $this->cobertura_fraccion;
+
+        return is_numeric($fraccion) ? Decimal::de((string) $fraccion) : null;
+    }
+
+    /**
+     * ¿La cobertura se decide cuenta por cuenta, al facturar?
+     *
+     * Es la cobertura vacía (Mauricio, 13-oct-2026): «no con todos es
+     * igual». Con el Hospital Militar cada caso se autoriza aparte y el
+     * resto lo paga el paciente. Mientras la cuenta se carga, los
+     * renglones van enteros al paciente; al emitir, quien cobra tiene que
+     * escribir lo que autorizó el seguro.
+     */
+    public function decideLaCoberturaAlFacturar(): bool
+    {
+        return $this->tipo->pagaUnTercero() && $this->coberturaGeneral() === null;
     }
 
     /**

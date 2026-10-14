@@ -51,6 +51,29 @@ final readonly class CoberturaAplicada
         );
     }
 
+    /**
+     * El pagador cubre este renglón, pero cuánto se decide al facturar
+     * (convenio con la cobertura vacía, 13-oct-2026).
+     *
+     * ⚠️ Elegible y con fracción CERO, no «ninguna». Mientras la cuenta
+     * se carga el renglón va entero al paciente, igual que con
+     * «ninguna». Pero «ninguna» lo congelaría como excluido de la póliza,
+     * y lo excluido no se reclama: el día de la glosa se leería como algo
+     * que el seguro no cubre, cuando en realidad solo faltaba la
+     * autorización. La autorización de la cuenta reparte después el
+     * total sin tocar este renglón (§9.0.3).
+     */
+    public static function seDecideAlFacturar(Convenio $convenio): self
+    {
+        return new self(
+            elegible: true,
+            fraccion: Decimal::cero(),
+            disponibleDelTope: null,
+            explicacion: $convenio->nombre.' decide cuánto cubre al facturar: '
+                .'hasta entonces la línea va entera al paciente.',
+        );
+    }
+
     public static function segunElConvenio(
         Convenio $convenio,
         Decimal $fraccion,

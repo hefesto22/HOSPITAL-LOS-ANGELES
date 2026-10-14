@@ -11,6 +11,7 @@ use App\Domain\Enums\SexoBiologico;
 use App\Domain\Enums\TipoEncuentro;
 use App\Domain\Exceptions\PosibleDuplicadoException;
 use App\Domain\ValueObjects\DatosDePaciente;
+use App\Domain\ValueObjects\Decimal;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Expediente;
@@ -192,11 +193,14 @@ class SembrarDemoDeSeguros extends Command
             return $convenio->nombre.' no cubre nada: el paciente paga todo.';
         }
 
-        $fraccion = $convenio->cobertura_fraccion;
+        $fraccion = $convenio->coberturaGeneral();
 
-        $porcentaje = is_numeric($fraccion)
-            ? rtrim(rtrim(number_format((float) $fraccion * 100, 2, '.', ''), '0'), '.').' %'
-            : '0 %';
+        if (! $fraccion instanceof Decimal) {
+            return $convenio->nombre.' decide la cobertura al facturar: la cuenta se carga entera al paciente '
+                .'y al emitir se escribe lo que autorizó el seguro. El resto es el copago.';
+        }
+
+        $porcentaje = $fraccion->comoPorcentaje(2);
 
         $tope = $convenio->tope_por_evento;
 

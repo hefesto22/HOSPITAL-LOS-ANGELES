@@ -171,8 +171,8 @@ class SembrarDemoDeCapacitacion extends Command
         $this->newLine();
         $this->info('Listo. Las cuentas están en «Atención → Cuentas abiertas», con qué cobrar.');
         $this->warn('  ⚠ Farmacia sigue en cero: la primera compra se recibe en vivo, que es lo que conviene mostrar.');
-        $this->warn('  ⚠ La cuenta de PALIG cobra con el tarifario de PALIG, pero el reparto seguro/paciente');
-        $this->warn('    sale en cero hasta que le cargues el porcentaje de cobertura en «Seguros y convenios».');
+        $this->warn('  ⚠ La cuenta de PALIG cobra con el tarifario de PALIG; lo que pone el seguro se escribe al');
+        $this->warn('    facturar, salvo que le cargues un porcentaje general en «Seguros y convenios».');
 
         return self::SUCCESS;
     }

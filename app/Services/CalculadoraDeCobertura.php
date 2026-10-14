@@ -63,7 +63,16 @@ final class CalculadoraDeCobertura
             );
         }
 
-        $fraccion = Decimal::de((string) $convenio->cobertura_fraccion);
+        $fraccion = $convenio->coberturaGeneral();
+
+        /*
+         * Cobertura vacía: cada cuenta se autoriza aparte al facturar
+         * (13-oct-2026). El renglón queda elegible y en cero hasta
+         * entonces; ver `CoberturaAplicada::seDecideAlFacturar()`.
+         */
+        if (! $fraccion instanceof Decimal) {
+            return CoberturaAplicada::seDecideAlFacturar($convenio);
+        }
 
         if ($fraccion->esCero()) {
             return CoberturaAplicada::ninguna(

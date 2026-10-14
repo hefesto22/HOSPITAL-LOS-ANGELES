@@ -191,10 +191,15 @@ final class ConvenioForm
     /**
      * Cuánto pone el pagador de cada cuenta (§8.6.3).
      *
-     * ⚠️ Nace en CERO y no en el 80 % típico del mercado: un porcentaje
+     * ⚠️ Nace VACÍA y no en el 80 % típico del mercado: un porcentaje
      * puesto por defecto es el hospital regalando plata sin que nadie lo
-     * haya decidido. Con cero, el paciente aparece debiendo todo — que
-     * es visible y se corrige acá mismo.
+     * haya decidido.
+     *
+     * Vacía quiere decir «se decide al facturar» (Mauricio, 13-oct-2026:
+     * «no con todos es igual»). Mientras la cuenta se carga el paciente
+     * aparece debiendo todo, y al emitir quien cobra escribe lo que
+     * autorizó el seguro para ESA cuenta; el resto es el copago. Antes
+     * vaciarla daba 500: la columna no aceptaba nulos.
      */
     private static function cobertura(): Section
     {
@@ -214,11 +219,11 @@ final class ConvenioForm
                 TextInput::make('cobertura_fraccion')
                     ->label('Cobertura')
                     ->numeric()
-                    ->default(0)
                     ->minValue(0)
                     ->maxValue(1)
                     ->step('0.0001')
-                    ->helperText('0.80 es el 80 %. Cero = el paciente paga todo.'),
+                    ->placeholder('Se decide al facturar')
+                    ->helperText('0.80 es el 80 %. Vacío = se decide en cada cuenta al facturar (copago).'),
 
                 TextInput::make('tope_por_evento')
                     ->label('Tope por evento')

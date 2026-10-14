@@ -672,14 +672,63 @@ class Cuenta extends Model
      */
     private function loQueAutorizoElSeguro(Monto $total): ?Monto
     {
-        if ($this->monto_autorizado !== null) {
-            return Monto::de($this->monto_autorizado);
+        return self::loQueCubre(
+            $total,
+            $this->cobertura_autorizada !== null ? Decimal::de($this->cobertura_autorizada) : null,
+            $this->monto_autorizado !== null ? Monto::de($this->monto_autorizado) : null,
+        );
+    }
+
+    /**
+     * Cómo quedaría el reparto con una autorización que TODAVÍA no se
+     * anotó: es lo que mira quien va a emitir mientras escribe lo que
+     * autorizó el seguro (13-oct-2026).
+     *
+     * 🔴 La misma cuenta que `recalcular()`, no una parecida. La pantalla
+     * le dice a la cajera «cobrale L 69.25» y el emisor después exige
+     * exactamente lo que dejó la autorización anotada: si las dos cuentas
+     * redondearan distinto, el botón pediría un número y el emisor otro,
+     * y la factura no saldría por un centavo. Por eso el porcentaje se
+     * lleva a cuatro decimales y el monto a dos ANTES de multiplicar,
+     * igual que los guarda `RegistradorDeAutorizacion`.
+     *
+     * Con los dos nulos manda lo que sumaron los cargos, como en la
+     * cuenta sin autorización.
+     *
+     * @return array{paciente: Monto, aseguradora: Monto}
+     */
+    public function repartoConLaAutorizacion(?Decimal $fraccion, ?Monto $monto): array
+    {
+        $total = Monto::de($this->total);
+
+        $aseguradora = self::loQueCubre(
+            $total,
+            $fraccion instanceof Decimal ? Decimal::de($fraccion->redondeado(4)) : null,
+            $monto instanceof Monto ? Monto::de($monto->valor()) : null,
+        ) ?? $this->saldoDeLaAseguradora();
+
+        if ($aseguradora->mayorQue($total)) {
+            $aseguradora = $total;
         }
 
-        if ($this->cobertura_autorizada !== null) {
-            return Monto::de(
-                $total->cantidad()->por(Decimal::de($this->cobertura_autorizada))->redondeado(2)
-            );
+        return [
+            'paciente'    => $total->restar($aseguradora),
+            'aseguradora' => $aseguradora,
+        ];
+    }
+
+    /**
+     * Lo que pone el seguro sobre `$total` con una autorización dada.
+     * El monto manda sobre el porcentaje: la base no deja guardar los dos.
+     */
+    private static function loQueCubre(Monto $total, ?Decimal $fraccion, ?Monto $monto): ?Monto
+    {
+        if ($monto instanceof Monto) {
+            return $monto;
+        }
+
+        if ($fraccion instanceof Decimal) {
+            return Monto::de($total->cantidad()->por($fraccion)->redondeado(2));
         }
 
         return null;

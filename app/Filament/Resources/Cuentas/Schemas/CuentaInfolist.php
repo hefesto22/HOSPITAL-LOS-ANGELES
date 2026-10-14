@@ -68,12 +68,16 @@ final class CuentaInfolist
                                     .'Descubrirlo en la conciliación a 60 días es descubrir que el dinero ya se perdió.'
                                 ),
 
-                            TextEntry::make('convenio.cobertura_fraccion')
+                            /*
+                             * Vacía en el convenio = se decide al facturar
+                             * (13-oct-2026). `state()` y no el campo: con
+                             * nulo, `formatStateUsing` ni se llama y quedaba
+                             * la casilla en blanco.
+                             */
+                            TextEntry::make('cobertura_pactada')
                                 ->label('Cobertura pactada')
-                                ->formatStateUsing(fn (Cuenta $record): string => number_format(
-                                    (float) $record->convenio->cobertura_fraccion * 100,
-                                    1
-                                ).' %'),
+                                ->state(fn (Cuenta $record): string => $record->convenio->coberturaGeneral()?->comoPorcentaje()
+                                    ?? 'Se decide al facturar'),
 
                             TextEntry::make('convenio.tope_por_evento')
                                 ->label('Tope por evento')
