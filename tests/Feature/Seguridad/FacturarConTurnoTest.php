@@ -128,6 +128,47 @@ it('caja carga cualquier cosa', function (): void {
     expect(CatalogoDelRol::tiposQuePuedeCargar($usuario))->toBeNull();
 })->note('Un rol que no está en el mapa no tiene restricción: caja, admisión, enfermería y dirección cargan todo.');
 
+it('🔴 laboratorio y consulta externa le cargan a una cuenta abierta, pero no la cierran ni la rebajan', function (): void {
+    $cuenta = Cuenta::factory()->create();
+
+    foreach (['laboratorio', 'consulta_externa'] as $rol) {
+        alguienConElRol($rol);
+
+        expect(Gate::allows('cargar', $cuenta))->toBeTrue("{$rol} debería poder cargarle a la cuenta")
+            ->and(Gate::allows('update', $cuenta))->toBeFalse("{$rol} NO debería cerrar ni rebajar la cuenta");
+    }
+})->note('Mauricio, 21-oct-2026: agregar un ácido úrico desde laboratorio daba «Error al cargar la página». La pantalla pedía `update` —que es también cerrar y poner descuento— para agregar una línea.');
+
+it('nadie le carga a una cuenta cerrada, ni caja', function (): void {
+    $cuenta = Cuenta::factory()->cerrada()->create();
+
+    foreach (['caja', 'laboratorio'] as $rol) {
+        alguienConElRol($rol);
+
+        expect(Gate::allows('cargar', $cuenta))->toBeFalse("{$rol} no debería cargarle a una cuenta cerrada");
+    }
+});
+
+it('quien no tiene Create:Cargo no carga', function (): void {
+    $cuenta = Cuenta::factory()->create();
+
+    alguienConElRol('auditoria');
+
+    expect(Gate::allows('cargar', $cuenta))->toBeFalse();
+});
+
+it('farmacia carga lo que despacha, y nada más', function (): void {
+    $usuario = alguienConElRol('farmacia');
+
+    $puede = static fn (TipoItem $tipo): bool => CatalogoDelRol::puedeCargar(Item::factory()->make(['tipo' => $tipo]), $usuario);
+
+    expect($puede(TipoItem::Medicamento))->toBeTrue()
+        ->and($puede(TipoItem::Insumo))->toBeTrue()
+        ->and($puede(TipoItem::Estancia))->toBeFalse()
+        ->and($puede(TipoItem::EstudioLaboratorio))->toBeFalse()
+        ->and($puede(TipoItem::Honorario))->toBeFalse();
+})->note('Desde que cargar dejó de pedir `Update:Cuenta`, farmacia puede cargar; el mapa la deja en medicamentos e insumos.');
+
 /*
 |--------------------------------------------------------------------------
 | El seeder de usuarios de prueba

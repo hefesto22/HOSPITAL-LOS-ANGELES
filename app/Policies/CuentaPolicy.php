@@ -59,6 +59,24 @@ class CuentaPolicy
     }
 
     /**
+     * ¿Puede agregarle (o quitarle) líneas a ESTA cuenta? (21-oct-2026)
+     *
+     * Antes la pantalla pedía `update` para agregar, y `Update:Cuenta`
+     * es también congelar, cerrar y ponerle descuento: laboratorio y
+     * consulta externa abren la cuenta y le cargan, pero cerrarla y
+     * rebajarla es de caja (`MatrizDePermisosSeeder`). Sin ese permiso,
+     * agregar un ácido úrico daba 403 —«Error al cargar la página»—.
+     *
+     * Cargar es `Create:Cargo` sobre una cuenta viva. QUÉ puede cargar
+     * cada rol lo sigue decidiendo `CatalogoDelRol`, del lado de la
+     * pantalla y del servicio.
+     */
+    public function cargar(AuthUser $authUser, Cuenta $cuenta): bool
+    {
+        return $cuenta->estaViva() && $authUser->can('Create:Cargo');
+    }
+
+    /**
      * Una cuenta no se borra. Se anula con motivo, y sus cargos quedan.
      * Borrar una cuenta es borrar la explicación de una factura.
      */

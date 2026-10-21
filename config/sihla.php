@@ -332,6 +332,15 @@ return [
              * procedimientos— son `procedimiento`.
              */
             'consulta_externa' => ['honorario', 'procedimiento'],
+
+            /*
+             * Farmacia carga a la cuenta lo que despacha
+             * (`MatrizDePermisosSeeder`). Hasta el 21-oct-2026 la pantalla
+             * le pedía `Update:Cuenta` para agregar y no lo tiene, así que
+             * no cargaba nada; con `CuentaPolicy::cargar()` puede, y esto
+             * la deja en lo suyo y no en una noche de hospitalización.
+             */
+            'farmacia' => ['medicamento', 'insumo'],
         ],
 
         'categoria_por_tipo' => [

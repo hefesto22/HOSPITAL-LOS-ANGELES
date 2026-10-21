@@ -1372,10 +1372,12 @@ class CuentasAbiertas extends Page
 
                 /*
                  * Y sobre ESTA cuenta en particular: el id llega del
-                 * cliente. `CuentaPolicy::update()` ya niega las cerradas
-                 * y las anuladas.
+                 * cliente. `CuentaPolicy::cargar()` niega las cerradas y
+                 * las anuladas. Es `cargar` y no `update`: laboratorio y
+                 * consulta externa le cargan a la cuenta, pero cerrarla y
+                 * ponerle descuento es de caja (21-oct-2026).
                  */
-                abort_unless(Gate::allows('update', $cuenta), 403);
+                abort_unless(Gate::allows('cargar', $cuenta), 403);
 
                 /*
                  * 🔴 Si no se pudo agregar, la línea se queda como está.
@@ -1508,8 +1510,15 @@ class CuentasAbiertas extends Page
                 $cuenta = $this->cuentaDe($arguments);
 
                 return view('filament.pages.partials.descuentos-de-la-cuenta', [
-                    'cuenta'     => $cuenta,
-                    'puede'      => $this->puedeCargar(),
+                    'cuenta' => $cuenta,
+
+                    /*
+                     * Solo a quien puede guardarlos: el descuento se
+                     * escribe en la cuenta (`update`). Laboratorio y
+                     * consulta externa cargan, pero no rebajan — antes la
+                     * banda les aparecía y lo que tecleaban no tomaba.
+                     */
+                    'puede'      => $cuenta instanceof Cuenta && Gate::allows('update', $cuenta),
                     'tope'       => $this->topeDeDescuento($cuenta)->por('100')->redondeado(2),
                     'ayuda'      => $this->ayudaDelDescuento($cuenta),
                     'descuento'  => $this->descuentoDeLaTanda,
@@ -1932,7 +1941,11 @@ class CuentasAbiertas extends Page
             return;
         }
 
-        abort_unless(Gate::allows('update', $laLinea->cuenta), 403);
+        abort_unless(Gate::allows('cargar', $laLinea->cuenta), 403);
+
+        if (! $this->esDeMiArea($laLinea)) {
+            return;
+        }
 
         /*
          * 🔴 EL GUARDIÁN ESTÁ ACÁ, NO EN EL BLADE.
@@ -1963,6 +1976,12 @@ class CuentasAbiertas extends Page
      */
     public function pedirElMotivo(int $cargo): void
     {
+        $laLinea = $this->cargoDe(['cargo' => $cargo]);
+
+        if ($laLinea instanceof Cargo && ! $this->esDeMiArea($laLinea)) {
+            return;
+        }
+
         $this->cargoAQuitar = $cargo;
         $this->motivoDeQuitar = '';
     }
@@ -3466,11 +3485,44 @@ class CuentasAbiertas extends Page
             return;
         }
 
-        abort_unless(Gate::allows('update', $laLinea->cuenta), 403);
+        abort_unless(Gate::allows('cargar', $laLinea->cuenta), 403);
+
+        if (! $this->esDeMiArea($laLinea)) {
+            $this->cancelarQuitar();
+
+            return;
+        }
 
         if ($this->anular($laLinea, trim($this->motivoDeQuitar))) {
             $this->cancelarQuitar();
         }
+    }
+
+    /**
+     * ¿La línea es de algo que esta persona puede cargar? (21-oct-2026)
+     *
+     * Quien carga puede corregir lo que cargó (`MatrizDePermisosSeeder`),
+     * pero dentro de su área: laboratorio quita un examen mal puesto, no
+     * la noche de hospitalización que cargó caja. La regla es la misma
+     * que al agregar —`CatalogoDelRol`—, y para caja, admisión y
+     * enfermería no cambia nada: no tienen restricción.
+     */
+    private function esDeMiArea(Cargo $cargo): bool
+    {
+        $item = Item::query()->find($cargo->item_id);
+
+        if (! $item instanceof Item || CatalogoDelRol::puedeCargar($item)) {
+            return true;
+        }
+
+        Notification::make()
+            ->danger()
+            ->title('Esa línea es de otra área')
+            ->body("{$item->nombre} no se quita desde tu área: lo corrige caja o el área que lo cargó.")
+            ->persistent()
+            ->send();
+
+        return false;
     }
 
     /**
