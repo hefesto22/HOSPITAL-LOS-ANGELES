@@ -42,6 +42,19 @@ class UnidadesSeeder extends Seeder
         'KIT'     => ['KIT', 'kit', MagnitudDeMedida::Conteo, false],
         'BOLSA'   => ['BOLSA', 'bolsa', MagnitudDeMedida::Conteo, false],
 
+        /*
+         * Las que pide la lista de productos de farmacia (14-oct-2026).
+         * En una base con datos las agrega la migración
+         * `2026_10_14_120000_las_unidades_que_pide_la_lista_de_productos`.
+         */
+        'SUP'    => ['SUPOSITORIO', 'sup', MagnitudDeMedida::Conteo, false],
+        'OVULO'  => ['ÓVULO', 'óv', MagnitudDeMedida::Conteo, false],
+        'PARCHE' => ['PARCHE', 'parche', MagnitudDeMedida::Conteo, false],
+        'TUBO'   => ['TUBO', 'tubo', MagnitudDeMedida::Conteo, false],
+        'PAQ'    => ['PAQUETE', 'paq', MagnitudDeMedida::Conteo, false],
+        'ROLLO'  => ['ROLLO', 'rollo', MagnitudDeMedida::Conteo, false],
+        'GALON'  => ['GALÓN', 'gal', MagnitudDeMedida::Conteo, false],
+
         // ── Volumen ───────────────────────────────────────────────────
         /*
          * Mililitro y centímetro cúbico son la MISMA cantidad y aun así
