@@ -199,6 +199,26 @@ it('solo direccion y caja escriben el catalogo de servicios', function (): void 
     }
 })->note('Al dar de alta un ítem se fija su régimen de ISV y bajo qué numeral del Art. 30 cae su descuento. Caja entra desde el 13-oct-2026 (Mauricio: «las cajeras pueden crear y editar servicios y productos»); el resto, no.');
 
+it('caja registra y corrige pacientes, productos y servicios, pero no borra ni fusiona', function (): void {
+    sembrarPermisosComoShield();
+
+    $this->seed(MatrizDePermisosSeeder::class);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    /** @var Role $caja */
+    $caja = Role::findByName('caja', 'web');
+
+    foreach (['Persona', 'Item', 'Producto'] as $sujeto) {
+        expect($caja->hasPermissionTo("Create:{$sujeto}"))->toBeTrue("Caja debería crear {$sujeto}")
+            ->and($caja->hasPermissionTo("Update:{$sujeto}"))->toBeTrue("Caja debería editar {$sujeto}")
+            ->and($caja->hasPermissionTo("Delete:{$sujeto}"))->toBeFalse("Caja NO debería borrar {$sujeto}");
+    }
+
+    expect($caja->hasPermissionTo('View:FusionDePersona'))->toBeTrue()
+        ->and($caja->hasPermissionTo('Create:FusionDePersona'))->toBeFalse()
+        ->and($caja->hasPermissionTo('Update:FusionDePersona'))->toBeFalse();
+})->note('Mauricio, 21-oct-2026: las cajeras crean y editan productos, servicios y clientes, y no borran nada. Fusionar dos pacientes es de admisión, con cuatro ojos.');
+
 it('admision y caja leen los convenios pero no los crean', function (): void {
     sembrarPermisosComoShield();
 

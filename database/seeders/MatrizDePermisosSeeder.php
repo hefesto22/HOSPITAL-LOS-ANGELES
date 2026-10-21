@@ -184,8 +184,9 @@ class MatrizDePermisosSeeder extends Seeder
          * usando la clave de otro, y la bitácora dejaría de servir para lo
          * único que existe: saber quién hizo qué.
          *
-         * El resto de los roles clínicos y caja solo LEEN. Bodega no
-         * aparece: nunca ve expediente (§1.4).
+         * Caja también registra y corrige pacientes desde el 21-oct-2026
+         * (ver su bloque). El resto de los roles clínicos solo LEEN.
+         * Bodega no aparece: nunca ve expediente (§1.4).
          *
          * `FusionDePersona` incluye aprobar y deshacer, y eso NO
          * contradice el control de cuatro ojos: la base impide que apruebe
@@ -285,14 +286,28 @@ class MatrizDePermisosSeeder extends Seeder
          * abre otro, con motivo— así que lo que cambie una cajera queda
          * en el historial con su nombre, y lo ya cobrado sigue con su
          * precio (§8.5-5). Borrar no: ni ella ni nadie (`ItemPolicy`).
+         *
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 REGISTRA Y CORRIGE PACIENTES (21-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: las cajeras deben poder crear y editar productos,
+         * servicios y clientes, y no borrar nada. El cliente del
+         * mostrador es el paciente: sin `Create:Persona`, la cajera abría
+         * la cuenta pero no podía dar de alta al que llega por primera
+         * vez. Igual que laboratorio y consulta externa: ve los posibles
+         * duplicados (`FusionDePersona` de solo lectura) pero no los
+         * fusiona —eso es de admisión, con cuatro ojos—. Lo clínico del
+         * expediente sigue fuera de su alcance (§1.4).
          */
         'caja' => [
-            'Persona'       => ['ViewAny', 'View'],
-            'Item'          => ['ViewAny', 'View', 'Create', 'Update'],
-            'CategoriaItem' => ['ViewAny', 'View'],
-            'Producto'      => ['ViewAny', 'View', 'Create', 'Update'],
-            'Unidad'        => ['ViewAny', 'View'],
-            'Convenio'      => ['ViewAny', 'View'],
+            'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
+            'FusionDePersona' => ['ViewAny', 'View'],
+            'Item'            => ['ViewAny', 'View', 'Create', 'Update'],
+            'CategoriaItem'   => ['ViewAny', 'View'],
+            'Producto'        => ['ViewAny', 'View', 'Create', 'Update'],
+            'Unidad'          => ['ViewAny', 'View'],
+            'Convenio'        => ['ViewAny', 'View'],
 
             /*
              * 🔴 Caja es quien carga el honorario, y para eso tiene que
