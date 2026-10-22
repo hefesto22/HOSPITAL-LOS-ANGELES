@@ -134,13 +134,13 @@ it('direccion si puede fijar el precio de un item', function (): void {
     expect(Gate::allows('update', unMedicamentoCualquiera()))->toBeTrue();
 });
 
-it('admision lee el convenio pero no pacta el porcentaje', function (): void {
+it('admision no entra a convenios ni pacta el porcentaje', function (): void {
     $admision = comoElRol('admision');
     $convenio = Convenio::factory()->create();
 
-    expect($admision->can('viewAny', Convenio::class))->toBeTrue()
+    expect($admision->can('viewAny', Convenio::class))->toBeFalse()
         ->and(Gate::allows('update', $convenio))->toBeFalse();
-})->note('Admisión elige el pagador al ingreso. Cambiar lo que se le cobra a esa aseguradora es de dirección.');
+})->note('Admisión elige el pagador al ingreso desde la cuenta, sin pasar por este permiso. Ver y cambiar lo que se le cobra a esa aseguradora es de dirección (Mauricio, 21-oct-2026).');
 
 /*
 |--------------------------------------------------------------------------

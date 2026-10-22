@@ -94,6 +94,10 @@ class MatrizDePermisosSeeder extends Seeder
          * Lee también el margen objetivo y los convenios porque son las
          * dos mitades de la explicación de cada precio: sin verlos, un
          * hallazgo sobre lo que se le cobró a un paciente no se cierra.
+         *
+         * Convenios, unidades y la bitácora los ven solo dirección y
+         * auditoría (Mauricio, 21-oct-2026); auditoría los sigue leyendo
+         * porque revisarlos es su trabajo, y no puede cambiar ninguno.
          */
         'auditoria' => [
             'Activity'        => ['ViewAny', 'View'],
@@ -194,18 +198,29 @@ class MatrizDePermisosSeeder extends Seeder
          * entre sí. Si solo dirección pudiera, a las 3 de la mañana no
          * habría quien apruebe y el duplicado seguiría vivo.
          *
-         * CATÁLOGO — lo lee todo el mundo, lo escribe dirección. Farmacia,
-         * laboratorio, imágenes, quirófano y caja cobran contra el mismo
-         * catálogo. Crearlo es otra cosa: al dar de alta un ítem se fija su
-         * régimen de ISV y bajo qué numeral del Art. 30 cae su descuento.
-         * Equivocarse en cualquiera de los dos es un hallazgo del SAR o una
-         * denuncia a la línea 115.
+         * CATÁLOGO — lo leen los roles que trabajan con él, lo escriben
+         * dirección y caja. Farmacia, imágenes, quirófano y caja cobran
+         * contra el mismo catálogo; laboratorio y consulta externa ya no lo
+         * listan (ver su bloque): buscan su examen desde la cuenta. Crearlo
+         * es otra cosa: al dar de alta un ítem se fija su régimen de ISV y
+         * bajo qué numeral del Art. 30 cae su descuento. Equivocarse en
+         * cualquiera de los dos es un hallazgo del SAR o una denuncia a la
+         * línea 115.
          *
-         * CONVENIOS — se LEEN en admisión y en caja: la primera elige el
-         * pagador al ingreso, la segunda factura contra él. Crearlos es de
-         * dirección, porque dar de alta un convenio incluye declarar sobre
-         * qué monto se aplica el descuento del Art. 30, y esa es una
-         * decisión con respaldo legal, no del turno.
+         * ─────────────────────────────────────────────────────────────
+         * CONVENIOS Y UNIDADES — SOLO DIRECCIÓN Y AUDITORÍA (21-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: «seguros y convenios solo el administrador y super
+         * admin deberían verlo, unidades de medida igual». Dar de alta un
+         * convenio declara sobre qué monto se aplica el descuento del
+         * Art. 30, y una unidad decide cómo se cuenta todo un estante: las
+         * dos son configuración, no trabajo del turno.
+         *
+         * Admisión y caja siguen ELIGIENDO el pagador al abrir la cuenta y
+         * la unidad al dar de alta un producto: esos selectores leen la
+         * tabla directo y no consultan `ViewAny:Convenio` ni
+         * `ViewAny:Unidad`. Lo que se va es la opción del menú.
          *
          * ─────────────────────────────────────────────────────────────
          * CUENTAS — QUIÉN LAS ABRE Y QUIÉN LES CARGA
@@ -230,8 +245,6 @@ class MatrizDePermisosSeeder extends Seeder
             'Item'            => ['ViewAny', 'View'],
             'CategoriaItem'   => ['ViewAny', 'View'],
             'Producto'        => ['ViewAny', 'View'],
-            'Unidad'          => ['ViewAny', 'View'],
-            'Convenio'        => ['ViewAny', 'View'],
             'Encuentro'       => ['ViewAny', 'View', 'Create', 'Update'],
             'Cuenta'          => ['ViewAny', 'View', 'Create', 'Update'],
             'Cargo'           => ['ViewAny', 'View', 'Create'],
@@ -243,7 +256,6 @@ class MatrizDePermisosSeeder extends Seeder
             'Item'            => ['ViewAny', 'View'],
             'CategoriaItem'   => ['ViewAny', 'View'],
             'Producto'        => ['ViewAny', 'View'],
-            'Unidad'          => ['ViewAny', 'View'],
             'Encuentro'       => ['ViewAny', 'View'],
             'Cuenta'          => ['ViewAny', 'View', 'Create', 'Update'],
             'Cargo'           => ['ViewAny', 'View', 'Create'],
@@ -265,7 +277,6 @@ class MatrizDePermisosSeeder extends Seeder
             'Item'          => ['ViewAny', 'View'],
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View'],
-            'Unidad'        => ['ViewAny', 'View'],
             'Encuentro'     => ['ViewAny', 'View'],
             'Medico'        => ['ViewAny', 'View'],
             'Especialidad'  => ['ViewAny', 'View'],
@@ -306,8 +317,6 @@ class MatrizDePermisosSeeder extends Seeder
             'Item'            => ['ViewAny', 'View', 'Create', 'Update'],
             'CategoriaItem'   => ['ViewAny', 'View'],
             'Producto'        => ['ViewAny', 'View', 'Create', 'Update'],
-            'Unidad'          => ['ViewAny', 'View'],
-            'Convenio'        => ['ViewAny', 'View'],
 
             /*
              * 🔴 Caja es quien carga el honorario, y para eso tiene que
@@ -381,7 +390,6 @@ class MatrizDePermisosSeeder extends Seeder
 
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View', 'Create', 'Update'],
-            'Unidad'        => ['ViewAny', 'View'],
             'Proveedor'     => ['ViewAny', 'View'],
             'Compra'        => ['ViewAny', 'View'],
             'Recepcion'     => ['ViewAny', 'View'],
@@ -448,18 +456,30 @@ class MatrizDePermisosSeeder extends Seeder
          *
          * No lleva `Update:Cuenta` ni `Update:Encuentro`: abre lo suyo y
          * ahí termina. Cerrar, corregir y liquidar es de caja.
+         *
+         * ─────────────────────────────────────────────────────────────
+         * SU MENÚ: CUENTAS ABIERTAS, PACIENTES Y CUENTAS (21-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: laboratorio y consulta externa veían el catálogo
+         * entero, las bases de precios, los encuentros y el libro de
+         * cargos. Nada de eso les hace falta: el examen lo buscan desde la
+         * cuenta, que ya muestra el precio, y `CatalogoDelRol` no consulta
+         * `ViewAny:Item` para eso.
+         *
+         * `Encuentro` y `Cargo` quedan en `Create` SOLO: abrir la cuenta
+         * crea su encuentro, y agregar es crear un cargo
+         * (`CuentaPolicy::cargar()`). Lo que se les quita es el LISTADO —
+         * el de cargos es el libro de todo el hospital, con lo que cargó
+         * cada área—. `Cuenta` sí lo ven: es la entrada a «Cuentas
+         * abiertas» (`CuentasAbiertas::canAccess()`).
          */
         'laboratorio' => [
             'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
             'FusionDePersona' => ['ViewAny', 'View'],
-            'Item'            => ['ViewAny', 'View'],
-            'CategoriaItem'   => ['ViewAny', 'View'],
-            'Producto'        => ['ViewAny', 'View'],
-            'Unidad'          => ['ViewAny', 'View'],
-            'Convenio'        => ['ViewAny', 'View'],
-            'Encuentro'       => ['ViewAny', 'View', 'Create'],
+            'Encuentro'       => ['Create'],
             'Cuenta'          => ['ViewAny', 'View', 'Create'],
-            'Cargo'           => ['ViewAny', 'View', 'Create'],
+            'Cargo'           => ['Create'],
         ],
 
         /*
@@ -467,26 +487,21 @@ class MatrizDePermisosSeeder extends Seeder
          * el paciente que viene a consulta. Registra, abre la cuenta y
          * carga; QUÉ puede cargar lo acota `sihla.inventario.cargos_por_rol`
          * (consultas y procedimientos). Sin Abono ni Factura: cobrar y
-         * facturar es de caja con el turno abierto.
+         * facturar es de caja con el turno abierto. Y el mismo menú que
+         * laboratorio: cuentas abiertas, pacientes y cuentas.
          */
         'consulta_externa' => [
             'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
             'FusionDePersona' => ['ViewAny', 'View'],
-            'Item'            => ['ViewAny', 'View'],
-            'CategoriaItem'   => ['ViewAny', 'View'],
-            'Producto'        => ['ViewAny', 'View'],
-            'Unidad'          => ['ViewAny', 'View'],
-            'Convenio'        => ['ViewAny', 'View'],
-            'Encuentro'       => ['ViewAny', 'View', 'Create'],
+            'Encuentro'       => ['Create'],
             'Cuenta'          => ['ViewAny', 'View', 'Create'],
-            'Cargo'           => ['ViewAny', 'View', 'Create'],
+            'Cargo'           => ['Create'],
         ],
         'imagenes' => [
             'Persona'       => ['ViewAny', 'View'],
             'Item'          => ['ViewAny', 'View'],
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View'],
-            'Unidad'        => ['ViewAny', 'View'],
             'Encuentro'     => ['ViewAny', 'View'],
             'Cuenta'        => ['ViewAny', 'View'],
             'Cargo'         => ['ViewAny', 'View', 'Create'],
@@ -535,7 +550,6 @@ class MatrizDePermisosSeeder extends Seeder
 
             'CategoriaItem' => ['ViewAny', 'View'],
             'Producto'      => ['ViewAny', 'View'],
-            'Unidad'        => ['ViewAny', 'View'],
             'Almacen'       => ['ViewAny', 'View'],
             'Proveedor'     => ['ViewAny', 'View', 'Create', 'Update'],
             'Recepcion'     => ['ViewAny', 'View', 'Create', 'Update'],

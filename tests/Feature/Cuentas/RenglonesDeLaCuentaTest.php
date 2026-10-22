@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enums\CategoriaLegalDeDescuento;
+use App\Domain\Enums\TipoItem;
+use App\Domain\ValueObjects\RenglonDeCuenta;
 use App\Models\Cargo;
 use App\Models\Cuenta;
+use App\Models\Item;
 use App\Models\User;
 
 /**
@@ -107,3 +111,21 @@ it('un renglon sin entregas no revienta', function (): void {
 
     expect($cuenta->renglonesVivos())->toBeEmpty();
 })->note('La cuenta recién abierta pasa por el mismo camino que la que tiene veinte líneas.');
+
+it('🔴 cada area ve la equis solo en lo que ella carga', function (): void {
+    $cuenta = unaCuentaConCargos();
+    $caja = User::factory()->create();
+
+    $examen = Item::factory()->de(TipoItem::EstudioLaboratorio, CategoriaLegalDeDescuento::RadiologiaYLaboratorio)->create();
+    $consulta = Item::factory()->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada)->create();
+
+    Cargo::factory()->enLaCuenta($cuenta)->create(['item_id' => $examen->id, 'texto' => 'ACIDO URICO', 'created_by' => $caja->id]);
+    Cargo::factory()->enLaCuenta($cuenta)->create(['item_id' => $consulta->id, 'texto' => 'CONSULTA EXTERNA', 'created_by' => $caja->id]);
+
+    $renglones = $cuenta->renglonesVivos()->keyBy(fn (RenglonDeCuenta $renglon): string => $renglon->texto);
+    $soloLaboratorio = ['estudio_laboratorio'];
+
+    expect($renglones['ACIDO URICO']->esDeLosTipos($soloLaboratorio))->toBeTrue()
+        ->and($renglones['CONSULTA EXTERNA']->esDeLosTipos($soloLaboratorio))->toBeFalse()
+        ->and($renglones['CONSULTA EXTERNA']->esDeLosTipos(null))->toBeTrue();
+})->note('Mauricio, 21-oct-2026: laboratorio veía la ✕ en el honorario y en la tableta que había puesto caja, y al apretarla le salía «Esa línea es de otra área». El servidor ya lo rechazaba; ahora la ✕ ni se dibuja. `null` es un rol sin restricción, como caja.');

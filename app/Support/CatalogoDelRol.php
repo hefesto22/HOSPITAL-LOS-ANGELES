@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use App\Domain\Enums\EstadoCargo;
 use App\Domain\Exceptions\CargoException;
+use App\Models\Cargo;
+use App\Models\Cuenta;
 use App\Models\Item;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -130,6 +133,30 @@ final class CatalogoDelRol
         }
 
         throw CargoException::noEsDeSuArea($item->nombre, $item->tipo->etiqueta());
+    }
+
+    /**
+     * ¿Todo lo que la cuenta tiene vivo es de lo que este usuario carga?
+     * (21-oct-2026)
+     *
+     * Es la condición para que laboratorio o consulta externa anulen la
+     * cuenta que ellos abrieron: anularla quita TODOS sus renglones, y el
+     * medicamento que puso caja no lo quita laboratorio, igual que con la
+     * ✕ de cada renglón. Una consulta, no una por renglón.
+     */
+    public static function todoLoVivoEsDeSuArea(Cuenta $cuenta, ?User $usuario = null): bool
+    {
+        $tipos = self::tiposQuePuedeCargar($usuario);
+
+        if ($tipos === null) {
+            return true;
+        }
+
+        return ! Cargo::query()
+            ->where('cuenta_id', $cuenta->id)
+            ->where('estado', EstadoCargo::Pendiente->value)
+            ->whereIn('item_id', Item::query()->withTrashed()->select('id')->whereNotIn('tipo', $tipos))
+            ->exists();
     }
 
     /**

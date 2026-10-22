@@ -22,6 +22,12 @@
 @php($cuenta = $cuenta ?? null)
 @php($usuario = $usuario ?? null)
 @php($cargoAQuitar = $cargoAQuitar ?? null)
+{{--
+    Lo que esta área carga, y por lo tanto lo que puede quitar: laboratorio
+    sus exámenes, consulta externa sus consultas. `null` es sin restricción.
+    Se pregunta una vez para toda la cuenta, no renglón por renglón.
+--}}
+@php($tiposDelArea = \App\Support\CatalogoDelRol::tiposQuePuedeCargar())
 
 @if ($cuenta)
     {{--
@@ -130,7 +136,7 @@
                                 <td class="sihla-num sihla-fuerte">{{ $renglon->importe()->formateado() }}</td>
 
                                 <td class="sihla-col-acc">
-                                    @if ($renglon->sePuedeQuitar())
+                                    @if ($renglon->sePuedeQuitar() && $renglon->esDeLosTipos($tiposDelArea))
                                         @php($ultima = $renglon->ultimaEntrega())
                                         @php($pideMotivo = $renglon->pideMotivoParaQuitar($usuario))
                                         {{--

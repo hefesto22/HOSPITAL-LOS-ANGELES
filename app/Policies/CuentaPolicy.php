@@ -77,6 +77,38 @@ class CuentaPolicy
     }
 
     /**
+     * ¿Puede anular ESTA cuenta? (Mauricio, 21-oct-2026)
+     *
+     * Quien tiene `Update:Cuenta` —caja, admisión, enfermería y
+     * dirección, los que ya la congelan y la cierran— anula cualquiera.
+     * Quien solo la abre —laboratorio, consulta externa— anula LA QUE ÉL
+     * ABRIÓ: corrige su propio error sin llamar a nadie, y no el de otro.
+     *
+     * Solo mira la fila y los permisos, a propósito: se pregunta por cada
+     * tarjeta de «Cuentas abiertas», y una consulta acá serían veinte. Lo
+     * que exige mirar los renglones —que todo lo vivo sea de su área—
+     * lo verifica la pantalla al anular (`CatalogoDelRol`), y lo que
+     * exige plata o estado lo vuelve a verificar `AnuladorDeCuenta` bajo
+     * candado.
+     */
+    public function anular(AuthUser $authUser, Cuenta $cuenta): bool
+    {
+        if (! $cuenta->estaViva()) {
+            return false;
+        }
+
+        if ($authUser->can('Update:Cuenta')) {
+            return true;
+        }
+
+        $abrio = $cuenta->getAttribute('created_by');
+
+        return $authUser->can('Create:Cuenta')
+            && is_numeric($abrio)
+            && (int) $abrio === (int) $authUser->getAuthIdentifier();
+    }
+
+    /**
      * Una cuenta no se borra. Se anula con motivo, y sus cargos quedan.
      * Borrar una cuenta es borrar la explicación de una factura.
      */

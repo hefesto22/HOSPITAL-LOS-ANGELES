@@ -162,11 +162,15 @@ final class AbridorDeEncuentro
      * Es indicador de calidad y moneda de negociación con aseguradoras, y
      * reconstruirlo después es imposible si cada ingreso es una isla. Se
      * enlaza al abrir, que es el único momento en que sale gratis.
+     *
+     * El anulado no cuenta (21-oct-2026): una cuenta abierta por error y
+     * anulada no fue un ingreso, y contarla inventaría reingresos.
      */
     private function encuentroPrevioReciente(Persona $persona, CarbonInterface $momento): ?int
     {
         $previo = Encuentro::query()
             ->where('persona_id', $persona->id)
+            ->where('estado', '<>', EstadoEncuentro::Anulado->value)
             ->where('abierto_en', '>=', $momento->copy()->subDays(30))
             ->where('abierto_en', '<', $momento)
             ->orderByDesc('abierto_en')

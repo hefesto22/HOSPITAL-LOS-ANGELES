@@ -219,25 +219,28 @@ it('caja registra y corrige pacientes, productos y servicios, pero no borra ni f
         ->and($caja->hasPermissionTo('Update:FusionDePersona'))->toBeFalse();
 })->note('Mauricio, 21-oct-2026: las cajeras crean y editan productos, servicios y clientes, y no borran nada. Fusionar dos pacientes es de admisión, con cuatro ojos.');
 
-it('admision y caja leen los convenios pero no los crean', function (): void {
+it('convenios y unidades los ven solo direccion y auditoria', function (): void {
     sembrarPermisosComoShield();
 
     $this->seed(MatrizDePermisosSeeder::class);
     app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-    foreach (['admision', 'caja'] as $nombreRol) {
+    foreach (array_keys(RoleSeeder::ROLES) as $nombreRol) {
         /** @var Role $rol */
         $rol = Role::findByName($nombreRol, 'web');
 
-        expect($rol->hasPermissionTo('ViewAny:Convenio'))->toBeTrue()
-            ->and($rol->hasPermissionTo('Create:Convenio'))->toBeFalse();
+        $ve = in_array($nombreRol, ['direccion', 'auditoria'], true);
+
+        foreach (['Convenio', 'Unidad'] as $sujeto) {
+            expect($rol->hasPermissionTo("ViewAny:{$sujeto}"))->toBe($ve, "{$nombreRol} y ViewAny:{$sujeto}");
+        }
+
+        if ($nombreRol !== 'direccion') {
+            expect($rol->hasPermissionTo('Create:Convenio'))->toBeFalse("{$nombreRol} no debería crear convenios")
+                ->and($rol->hasPermissionTo('Create:Unidad'))->toBeFalse("{$nombreRol} no debería crear unidades");
+        }
     }
-
-    /** @var Role $bodega */
-    $bodega = Role::findByName('bodega', 'web');
-
-    expect($bodega->hasPermissionTo('ViewAny:Convenio'))->toBeFalse();
-})->note('Dar de alta un convenio incluye declarar sobre qué monto se le aplica el descuento del Art. 30. Esa es una decisión con respaldo legal, no del turno de las 3 de la mañana.');
+})->note('Mauricio, 21-oct-2026: «seguros y convenios solo el administrador y super admin deberían verlo, unidades de medida igual». Auditoría los sigue leyendo porque revisarlos es su trabajo. Admisión y caja siguen eligiendo el pagador y la unidad: esos selectores no consultan el permiso.');
 
 it('bodega recibe mercaderia pero no ve el registro fiscal de compras', function (): void {
     sembrarPermisosComoShield();

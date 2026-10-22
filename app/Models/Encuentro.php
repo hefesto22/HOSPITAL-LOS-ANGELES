@@ -41,6 +41,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property TipoEgreso|null $tipo_egreso
  * @property CarbonInterface|null $cerrado_en
  * @property CarbonInterface|null $anulado_en
+ * @property int|null $anulado_por
  * @property string|null $motivo_anulacion
  * @property int|null $encuentro_anterior_id
  */
@@ -82,6 +83,7 @@ class Encuentro extends Model
             'salida_fisica_en'       => 'datetime',
             'cerrado_en'             => 'datetime',
             'anulado_en'             => 'datetime',
+            'anulado_por'            => 'integer',
         ];
     }
 

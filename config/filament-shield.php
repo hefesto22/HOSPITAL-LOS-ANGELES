@@ -1,6 +1,12 @@
 <?php
 
 declare(strict_types=1);
+use App\Filament\Pages\Escritorio;
+use App\Filament\Widgets\AccesosDelEscritorio;
+use App\Filament\Widgets\CajaDelEscritorio;
+use App\Filament\Widgets\InventarioDelEscritorio;
+use App\Filament\Widgets\LoQueCargueHoy;
+use App\Filament\Widgets\ResumenDelDia;
 use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
 use Filament\Pages\Dashboard;
 use Filament\Widgets\AccountWidget;
@@ -224,6 +230,14 @@ return [
         'prefix'  => 'view',
         'exclude' => [
             Dashboard::class,
+
+            /*
+             * El escritorio lo ve todo el mundo, y cada cuadro decide solo
+             * con `sihla.escritorio` y los permisos de lo que muestra
+             * (21-oct-2026). Un «View:Escritorio» en el panel de roles
+             * sería un interruptor que no apaga nada.
+             */
+            Escritorio::class,
         ],
     ],
 
@@ -244,6 +258,11 @@ return [
         'exclude' => [
             AccountWidget::class,
             FilamentInfoWidget::class,
+            AccesosDelEscritorio::class,
+            CajaDelEscritorio::class,
+            InventarioDelEscritorio::class,
+            LoQueCargueHoy::class,
+            ResumenDelDia::class,
         ],
     ],
 

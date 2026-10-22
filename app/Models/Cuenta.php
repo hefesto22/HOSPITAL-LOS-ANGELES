@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoCuenta;
+use App\Domain\Enums\MotivoDeAnulacionDeCuenta;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\TipoDeMovimiento;
 use App\Domain\ValueObjects\Decimal;
@@ -50,7 +51,10 @@ use Illuminate\Support\Collection;
  * @property CarbonInterface|null $cerrada_en
  * @property int|null $cerrada_por
  * @property CarbonInterface|null $anulada_en
+ * @property int|null $anulada_por
+ * @property MotivoDeAnulacionDeCuenta|null $tipo_anulacion
  * @property string|null $motivo_anulacion
+ * @property numeric-string|null $total_al_anular
  * @property string|null $motivo_apertura
  * @property int|null $cuenta_anterior_id
  * @property numeric-string $total_bruto
@@ -116,6 +120,8 @@ class Cuenta extends Model
             'congelada_en'    => 'datetime',
             'cerrada_en'      => 'datetime',
             'anulada_en'      => 'datetime',
+            'anulada_por'     => 'integer',
+            'tipo_anulacion'  => MotivoDeAnulacionDeCuenta::class,
             'cerrada_por'     => 'integer',
             'lineas'          => 'integer',
 
@@ -198,7 +204,14 @@ class Cuenta extends Model
     public function renglonesVivos(int $tope = 200): Collection
     {
         return $this->cargos()
-            ->with('createdBy:id,name')
+            /*
+             * `item:id,tipo` es para la ✕: cada área quita solo lo suyo
+             * (`RenglonDeCuenta::esDeLosTipos()`), y preguntarlo renglón
+             * por renglón sería una consulta por línea. Solo esas dos
+             * columnas: lo que lea otra columna del ítem desde acá la
+             * recibe nula sin error (§9.M6), así que se agrega a la lista.
+             */
+            ->with(['createdBy:id,name', 'item:id,tipo'])
             ->whereNotIn('estado', [
                 EstadoCargo::Anulado->value,
                 EstadoCargo::Anulacion->value,

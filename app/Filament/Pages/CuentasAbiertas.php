@@ -11,6 +11,7 @@ use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\FormaDePago;
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\MomentoDiagnostico;
+use App\Domain\Enums\MotivoDeAnulacionDeCuenta;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\QuienPresta;
 use App\Domain\Enums\RangoEdad;
@@ -62,6 +63,7 @@ use App\Models\User;
 use App\Services\AbridorDeEncuentro;
 use App\Services\AgregadorDePresupuestoALaCuenta;
 use App\Services\AnuladorDeCargo;
+use App\Services\AnuladorDeCuenta;
 use App\Services\AplicadorDeDescuentoDeLaCuenta;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
@@ -6446,6 +6448,158 @@ class CuentasAbiertas extends Page
                     ['renglon' => $this->renglonDeLaTanda],
                 );
             });
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * ANULAR UNA CUENTA QUE NO DEBIÓ ABRIRSE (Mauricio, 21-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Antes no había cómo: la cuenta abierta por error quedaba viva, y
+     * como un paciente tiene una sola cuenta viva, le bloqueaba abrir la
+     * correcta. Ahora se anula con un motivo de la lista y, si ya tiene
+     * algo cargado, con el detalle de por qué no se factura (Mauricio).
+     * Lo hace `AnuladorDeCuenta`; acá solo se pregunta y se avisa.
+     *
+     * 🔴 El modal dice lo que NO es: el paciente que sí se atendió y no
+     * va a pagar. Lo cargado vuelve al estante al anular, y lo que se le
+     * dio a alguien ya no está ahí.
+     */
+    public function anularCuentaAction(): Action
+    {
+        return Action::make('anularCuenta')
+            ->label('Anular cuenta')
+            ->icon(Heroicon::OutlinedXCircle)
+            ->color('danger')
+            ->modalIcon(Heroicon::OutlinedXCircle)
+            ->modalHeading(fn (array $arguments): string => 'Anular · '.$this->tituloDelModal($arguments))
+            ->modalDescription(fn (array $arguments): string => $this->loQueSeAnula($arguments))
+            ->modalWidth('2xl')
+            ->modalSubmitActionLabel('Anular la cuenta')
+            ->closeModalByClickingAway(false)
+            ->schema([
+                Select::make('tipo')
+                    ->label('¿Por qué se anula?')
+                    ->required()
+                    ->native(false)
+                    ->live()
+                    ->options(fn (): array => collect(MotivoDeAnulacionDeCuenta::cases())
+                        ->mapWithKeys(fn (MotivoDeAnulacionDeCuenta $m): array => [$m->value => $m->opcion()])
+                        ->all()),
+
+                CampoMayusculas::area('detalle')
+                    ->label('Detalle')
+                    ->rows(3)
+                    ->minLength(10)
+                    ->maxLength(150)
+                    ->required(fn (Get $get): bool => $get('tipo') === MotivoDeAnulacionDeCuenta::Otro->value)
+                    ->placeholder('SE LE CARGÓ EL HEMOGRAMA A LA HERMANA, QUE VENÍA CON ELLA')
+                    ->helperText(
+                        'Obligatorio si la cuenta ya tiene algo cargado: es por qué no se factura. '
+                        .'Queda en la cuenta y en cada renglón que se quita.'
+                    ),
+            ])
+            ->action(function (array $data, array $arguments, Action $action): void {
+                $cuenta = $this->cuentaDe($arguments);
+
+                if (! $cuenta instanceof Cuenta) {
+                    return;
+                }
+
+                abort_unless(Gate::allows('anular', $cuenta), 403);
+
+                /*
+                 * Quien no tiene `Update:Cuenta` —laboratorio, consulta
+                 * externa— anula la que abrió, y solo si todo lo vivo es
+                 * de su área: el medicamento que puso caja no lo quita
+                 * laboratorio, ni renglón por renglón ni de una vez.
+                 */
+                if (! Gate::allows('update', $cuenta) && ! CatalogoDelRol::todoLoVivoEsDeSuArea($cuenta)) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se anuló')
+                        ->body(CuentaException::tieneRenglonesDeOtraArea($cuenta->numero)->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    return;
+                }
+
+                $tipo = MotivoDeAnulacionDeCuenta::tryFrom(is_string($data['tipo'] ?? null) ? $data['tipo'] : '');
+
+                if (! $tipo instanceof MotivoDeAnulacionDeCuenta) {
+                    $action->halt();
+
+                    return;
+                }
+
+                $detalle = $data['detalle'] ?? null;
+
+                try {
+                    app(AnuladorDeCuenta::class)->anular($cuenta, $tipo, is_string($detalle) ? $detalle : null);
+                } catch (CuentaException|CargoException $e) {
+                    Notification::make()
+                        ->danger()
+                        ->title('No se anuló')
+                        ->body($e->getMessage())
+                        ->persistent()
+                        ->send();
+
+                    /*
+                     * Abierto y con lo escrito: si faltaba el detalle,
+                     * se agrega y se vuelve a apretar, sin elegir de
+                     * nuevo el motivo.
+                     */
+                    $action->halt();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->success()
+                    ->title("Cuenta {$cuenta->numero} anulada")
+                    ->body('Queda en «Cuentas (consulta)» con el motivo. Al paciente ya se le puede abrir otra.')
+                    ->send();
+            });
+    }
+
+    /**
+     * ¿Se dibuja «Anular cuenta» en esta tarjeta?
+     *
+     * Solo la policy, que mira la fila y los permisos: se pregunta por
+     * cada tarjeta y no puede consultar la base. Lo demás lo verifica la
+     * acción al apretar.
+     */
+    public function puedeAnular(Cuenta $cuenta): bool
+    {
+        return Gate::allows('anular', $cuenta);
+    }
+
+    /**
+     * Lo que el modal avisa antes de anular, con lo que la tarjeta ya
+     * trae: renglones y total materializados, sin sumar nada.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    private function loQueSeAnula(array $arguments): string
+    {
+        $cuenta = $this->cuentaDe($arguments);
+
+        if (! $cuenta instanceof Cuenta) {
+            return '';
+        }
+
+        $noEs = 'Anular es para lo que no debió abrirse. Si al paciente sí se le dio algo y no va a '
+            .'pagar, no la anulés: avisale a dirección.';
+
+        if ($cuenta->lineas === 0) {
+            return 'No tiene nada cargado. Queda anulada con el motivo, y al paciente se le puede abrir otra. '.$noEs;
+        }
+
+        $renglones = $cuenta->lineas === 1 ? '1 renglón' : "{$cuenta->lineas} renglones";
+
+        return "Tiene {$renglones} por ".Monto::de($cuenta->total)->formateado().'. Al anularla se quitan '
+            .'todos, y lo que salió de farmacia vuelve al estante. '.$noEs;
     }
 
     /**

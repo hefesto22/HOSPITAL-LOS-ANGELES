@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Listeners\RecordUserLogin;
+use App\Policies\ActivityPolicy;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Filament\Facades\Filament;
 use Filament\Support\Facades\FilamentView;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Spatie\Activitylog\Models\Activity;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -50,5 +53,17 @@ class AppServiceProvider extends ServiceProvider
 
         // ─── Eventos ────────────────────────────────────────────────────
         Event::listen(Login::class, RecordUserLogin::class);
+
+        // ─── Policies que Laravel no encuentra solo ─────────────────────
+        // 🔴 Laravel busca la policy de un modelo en el namespace del
+        // modelo, y la bitácora es `Spatie\Activitylog\Models\Activity`:
+        // nunca encontraba `App\Policies\ActivityPolicy`. Sin policy,
+        // Filament PERMITE, así que «Registros de actividad» —quién cambió
+        // qué paciente, qué precio, qué factura— lo veía cualquiera con
+        // usuario, aunque la matriz solo le diera `ViewAny:Activity` a
+        // auditoría y dirección (Mauricio lo vio con consulta externa,
+        // 21-oct-2026). Todo modelo de otro paquete con Resource va acá;
+        // `MenuPorRolTest` falla si falta uno.
+        Gate::policy(Activity::class, ActivityPolicy::class);
     }
 }

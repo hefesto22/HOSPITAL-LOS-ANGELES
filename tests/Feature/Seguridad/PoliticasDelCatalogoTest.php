@@ -125,12 +125,12 @@ it('auditoria lee el catalogo pero no lo escribe', function (): void {
         ->and($auditoria->can('create', Item::class))->toBeFalse();
 })->note('Quien audita no puede ser parte de lo auditado.');
 
-it('caja no puede dar de alta un convenio', function (): void {
+it('caja no entra a convenios ni da de alta uno', function (): void {
     $caja = usuarioCon('caja');
 
-    expect($caja->can('viewAny', Convenio::class))->toBeTrue()
+    expect($caja->can('viewAny', Convenio::class))->toBeFalse()
         ->and($caja->can('create', Convenio::class))->toBeFalse();
-})->note('Caja factura contra el convenio, así que lo necesita ver. Crearlo incluye declarar la lectura del Art. 30, y eso es de dirección.');
+})->note('Mauricio, 21-oct-2026: seguros y convenios son de dirección. Caja factura contra el convenio que trae la cuenta y lo elige al abrirla; eso no pasa por este permiso. Crearlo incluye declarar la lectura del Art. 30.');
 
 it('laboratorio no toca los margenes', function (): void {
     $laboratorio = usuarioCon('laboratorio');

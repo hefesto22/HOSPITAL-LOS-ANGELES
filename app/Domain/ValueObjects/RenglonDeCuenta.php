@@ -208,6 +208,30 @@ final readonly class RenglonDeCuenta
     }
 
     /**
+     * ¿Este renglón es de lo que el área carga? (21-oct-2026)
+     *
+     * Laboratorio quita exámenes de laboratorio; el honorario o la
+     * tableta que puso caja no. El servidor ya lo rechaza
+     * (`CuentasAbiertas::esDeMiArea()`), pero con la ✕ dibujada el
+     * laboratorista apretaba y le salía «Esa línea es de otra área»: un
+     * botón que existe y no funciona con su rol (§5). Esto decide si se
+     * dibuja.
+     *
+     * @param list<string>|null $tipos los de `CatalogoDelRol::tiposQuePuedeCargar()`;
+     *                                 `null` es sin restricción
+     */
+    public function esDeLosTipos(?array $tipos): bool
+    {
+        if ($tipos === null) {
+            return true;
+        }
+
+        $tipo = $this->ultimaEntrega()?->item?->tipo;
+
+        return $tipo !== null && in_array($tipo->value, $tipos, true);
+    }
+
+    /**
      * ¿La ✕ de este renglón tiene que preguntar por qué?
      *
      * La regla vive en `Cargo::pideMotivoParaQuitar()`, que es donde

@@ -256,6 +256,26 @@
                             <span>Tratamiento</span>
                         </button>
                     </div>
+
+                    {{--
+                        Anular va aparte y chico, debajo de las cuatro:
+                        es la corrección de un error, no una acción del
+                        día, y no tiene que competir con Abonar y Facturar.
+                        Solo aparece para quien puede (CuentaPolicy::anular):
+                        laboratorio y consulta externa la ven en las que
+                        ellos abrieron.
+                    --}}
+                    @if ($this->puedeAnular($cuenta))
+                        <button
+                            type="button"
+                            wire:click="mountAction('anularCuenta', { cuenta: {{ $cuenta->id }} })"
+                            wire:loading.attr="disabled"
+                            class="sihla-anular-cuenta"
+                        >
+                            <x-filament::icon icon="heroicon-o-x-circle" class="sihla-icono-chico" />
+                            <span>Anular cuenta</span>
+                        </button>
+                    @endif
                     </div>
                 @endforeach
             </div>
@@ -383,6 +403,19 @@
         }
         .sihla-accion-clinica:disabled { opacity: .45; cursor: not-allowed; }
 
+        /*
+         * Anular: un renglón de texto, no un botón más. Gris hasta que se
+         * apunta, y rojo solo entonces: se ve, pero no llama.
+         */
+        .sihla-anular-cuenta {
+            display: flex; align-items: center; justify-content: center; gap: .3rem;
+            margin-top: .45rem; padding: .25rem; border: 0; background: none;
+            font-size: .72rem; color: rgb(113 113 122); cursor: pointer;
+            transition: color .15s ease;
+        }
+        .sihla-anular-cuenta:hover:not(:disabled) { color: rgb(220 38 38); }
+        .sihla-anular-cuenta:disabled { opacity: .45; cursor: not-allowed; }
+
         .sihla-contador {
             display: inline-flex; align-items: center; justify-content: center;
             min-width: 1.15rem; height: 1.15rem; padding: 0 .3rem; border-radius: 999px;
@@ -471,6 +504,8 @@
         .dark .sihla-accion-clinica:hover:not(:disabled) {
             border-color: rgb(113 113 122); background: rgb(63 63 70);
         }
+        .dark .sihla-anular-cuenta { color: rgb(161 161 170); }
+        .dark .sihla-anular-cuenta:hover:not(:disabled) { color: rgb(248 113 113); }
         .dark .sihla-vacio { border-color: rgb(63 63 70); }
         .dark .sihla-vacio-titulo { color: rgb(212 212 216); }
     </style>

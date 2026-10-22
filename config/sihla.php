@@ -825,4 +825,46 @@ return [
         'facturan_sin_turno' => ['direccion'],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | El escritorio de cada rol (Mauricio, 21-oct-2026)
+    |--------------------------------------------------------------------------
+    |
+    | Qué secciones ve cada rol al entrar. Los accesos rápidos los ve todo el
+    | mundo, y salen solos de lo que cada uno puede abrir. Las secciones:
+    |
+    |   · resumen_del_dia — facturado y cobrado hoy, cuentas abiertas, la
+    |     gaveta y las cuentas anuladas del día.
+    |   · caja            — el turno que opera, la gaveta, lo cobrado, lo que
+    |     falta cobrarle a los pacientes y los números del CAI.
+    |   · lo_que_cargue   — lo que cargó hoy quien mira, y las cuentas que
+    |     abrió y siguen sin cobrar.
+    |   · inventario      — lotes vencidos y por vencer, préstamos sin saldar
+    |     y recepciones sin revisar.
+    |
+    | ⚠️ Esta lista decide qué se MUESTRA, no qué se puede ver: cada sección
+    | vuelve a pedir su permiso (`MatrizDePermisosSeeder`). Poner aquí una
+    | sección a un rol sin el permiso no le muestra nada. El super
+    | administrador ve todas.
+    |
+    | Es configuración y no código para que otra clínica arme el suyo sin
+    | tocar un archivo de PHP (§1.1).
+    |
+    */
+    'escritorio' => [
+        'secciones_por_rol' => [
+            'direccion'        => ['resumen_del_dia', 'caja', 'inventario'],
+            'auditoria'        => ['resumen_del_dia'],
+            'caja'             => ['caja'],
+            'laboratorio'      => ['lo_que_cargue'],
+            'consulta_externa' => ['lo_que_cargue'],
+            'imagenes'         => ['lo_que_cargue'],
+            'farmacia'         => ['lo_que_cargue', 'inventario'],
+            'bodega'           => ['inventario'],
+            'admision'         => [],
+            'enfermeria'       => [],
+            'medico'           => [],
+        ],
+    ],
+
 ];

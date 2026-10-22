@@ -139,7 +139,14 @@ final class CuentasTable
                     ->formatStateUsing(fn (EstadoCuenta $state): string => self::estadoEnPalabras($state))
                     ->icon(fn (EstadoCuenta $state): string => self::iconoDelEstado($state))
                     ->color(fn (EstadoCuenta $state): string => $state->color())
-                    ->tooltip(fn (EstadoCuenta $state): string => self::queQuiereDecir($state))
+                    /*
+                     * La anulada dice POR QUÉ (21-oct-2026): «se anuló» solo
+                     * no le sirve a quien la encuentra una semana después.
+                     */
+                    ->tooltip(fn (Cuenta $record): string => $record->estado === EstadoCuenta::Anulada
+                        && filled($record->motivo_anulacion)
+                            ? 'Se anuló: '.$record->motivo_anulacion
+                            : self::queQuiereDecir($record->estado))
                     ->grow(false)
                     ->visibleFrom('sm'),
 

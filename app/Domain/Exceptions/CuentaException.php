@@ -158,4 +158,45 @@ final class CuentaException extends SihlaException
             .'No se escribió nada. Reportalo: es un defecto del sistema, no un error de captura.'
         );
     }
+
+    // ── Anular (21-oct-2026) ──────────────────────────────────────────
+
+    public static function yaNoSeAnula(string $numero, string $estado): self
+    {
+        return new self(
+            "La cuenta {$numero} está {$estado}: ya no se anula. Una cuenta facturada se corrige "
+            .'anulando la factura, que la devuelve abierta.'
+        );
+    }
+
+    public static function tieneAbonos(string $numero, string $monto): self
+    {
+        return new self(
+            "La cuenta {$numero} tiene {$monto} abonados. Primero anulá esos recibos desde «Abonar» "
+            .'—la plata se devuelve con su comprobante— y después anulá la cuenta.'
+        );
+    }
+
+    public static function faltaDecirPorQueNoSeFactura(string $numero, int $renglones): self
+    {
+        $cuantos = $renglones === 1 ? 'un renglón cargado' : "{$renglones} renglones cargados";
+
+        return new self(
+            "La cuenta {$numero} tiene {$cuantos}. Escribí por qué no se le factura: "
+            .'queda en la cuenta y en cada renglón que se quita.'
+        );
+    }
+
+    public static function faltaElDetalleDeLaAnulacion(): self
+    {
+        return new self('Con «Otro motivo» hay que escribir cuál es, con al menos 10 letras.');
+    }
+
+    public static function tieneRenglonesDeOtraArea(string $numero): self
+    {
+        return new self(
+            "La cuenta {$numero} tiene renglones que cargó otra área. Esa la anula caja, "
+            .'admisión o dirección.'
+        );
+    }
 }
