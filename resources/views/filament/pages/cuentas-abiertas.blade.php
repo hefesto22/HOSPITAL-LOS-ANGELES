@@ -187,13 +187,12 @@
                                 </div>
                             </div>
 
-                            @if ($cuenta->saldoDeLaAseguradora()->esCero() === false)
-                                <div class="sihla-division">
-                                    <span>Paciente {{ $resumen['paciente'] }}</span>
-                                    <span aria-hidden="true">·</span>
-                                    <span>Seguro {{ $resumen['aseguradora'] }}</span>
-                                </div>
-                            @endif
+                            {{--
+                                Sin el «Paciente L … · Seguro L …» debajo
+                                (Mauricio, 22-oct-2026): en la tarjeta va el
+                                total; el reparto se ve al abrir la cuenta y
+                                al facturar.
+                            --}}
                         </button>
 
                         {{--
@@ -489,9 +488,6 @@
             font-size: 1.05rem; font-weight: 700; color: rgb(24 24 27);
             font-variant-numeric: tabular-nums;
         }
-        .sihla-division {
-            display: flex; gap: .4rem; font-size: .75rem; color: rgb(113 113 122);
-        }
 
         /*
          * UN renglón: los botones del día se reparten el ancho y «⋯» queda
@@ -549,8 +545,7 @@
         .dark .sihla-nombre,
         .dark .sihla-total-monto { color: rgb(244 244 245); }
         .dark .sihla-hace,
-        .dark .sihla-numeros,
-        .dark .sihla-division { color: rgb(161 161 170); }
+        .dark .sihla-numeros { color: rgb(161 161 170); }
         .dark .sihla-pie,
         .dark .sihla-tarjeta-acciones { border-top-color: rgb(63 63 70); }
         .dark .sihla-accion,
