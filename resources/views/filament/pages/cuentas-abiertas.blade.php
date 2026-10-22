@@ -39,7 +39,10 @@
 
         @php($cuentas = $this->cuentas())
         @php($puedeCargar = $this->puedeCargar())
-        @php($puedeDiagnosticar = $this->puedeDiagnosticar())
+        @php($botones = $this->botonesDeLaTarjeta())
+        @php($hayBotones = $botones['abonar'] || $botones['facturar'] || $botones['clinicos'])
+        @php($diagnosticos = $this->diagnosticosPorEncuentro($cuentas))
+        @php($coinciden = $this->cuantasCoinciden($cuentas->count()))
         @php($porQueNoAbona = $this->porQueNoAbona())
         @php($porQueNoFactura = $this->porQueNoFactura())
 
@@ -66,6 +69,21 @@
                 </p>
             </div>
         @else
+            {{--
+                La grilla corta en `tarjetas_por_pantalla`. Lo que no entra
+                no puede desaparecer callado: es un paciente internado cuya
+                cuenta nadie encuentra (Mauricio, 22-oct-2026).
+            --}}
+            @if ($coinciden > $cuentas->count())
+                <div class="sihla-aviso-tope" role="status">
+                    <x-filament::icon icon="heroicon-m-information-circle" class="sihla-aviso-tope-icono" />
+                    <span>
+                        Se muestran las {{ $cuentas->count() }} más recientes de {{ $coinciden }}.
+                        Buscá por nombre, apellido o expediente para encontrar las demás.
+                    </span>
+                </div>
+            @endif
+
             <div class="sihla-tarjetas">
                 @foreach ($cuentas as $cuenta)
                     @php($resumen = $this->resumenDe($cuenta))
@@ -117,10 +135,18 @@
                             </div>
                         </div>
 
-                        <div class="sihla-linea-tenue">
-                            <span>{{ $resumen['expediente'] }}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>{{ $cuenta->numero }}</span>
+                        {{--
+                            Cada número entero o en el renglón de abajo,
+                            nunca partido: «EXP-HLA-» arriba y «00000009»
+                            abajo es un número que se lee mal. El punto
+                            que los separa lo pone el CSS, y desaparece
+                            cuando el segundo baja de renglón.
+                        --}}
+                        <div class="sihla-numeros">
+                            <div class="sihla-numeros-fila">
+                                <span>{{ $resumen['expediente'] }}</span>
+                                <span>{{ $cuenta->numero }}</span>
+                            </div>
                         </div>
 
                         <div class="sihla-ingreso">
@@ -174,9 +200,17 @@
 
                         La tarjeta es un `div` y el cuerpo es el botón:
                         un botón dentro de otro no es HTML válido, así que
-                        la única forma de que estas dos acciones vivan
-                        DENTRO de la tarjeta —y no colgando abajo— es que
-                        la tarjeta deje de ser el botón.
+                        la única forma de que estas acciones vivan DENTRO
+                        de la tarjeta —y no colgando abajo— es que la
+                        tarjeta deje de ser el botón.
+
+                        Cada quien ve los botones que puede usar
+                        (`botonesDeLaTarjeta()`, Mauricio, 22-oct-2026):
+                        sin el permiso el botón no está; con el permiso
+                        pero sin poder ahora, está apagado y dice por qué.
+                        Caja ve Abonar y Facturar; el médico, Diagnóstico
+                        y Tratamiento; laboratorio, ninguno —a ellos les
+                        sirve tocar la tarjeta y cargar—.
 
                         🔴 «Tratamiento» está apagado a propósito, no sin
                         terminar. Una receta es una orden médica y se
@@ -185,80 +219,88 @@
                         puede saber si esto se guarda o se imprime — y esa
                         respuesta cambia el módulo entero, no un campo.
                     --}}
-                    <div class="sihla-tarjeta-acciones">
-                        {{--
-                            Abonar vive acá, junto al saldo, y no en una
-                            pantalla de caja aparte: quien recibe la plata
-                            está mirando este número.
-                        --}}
-                        <button
-                            type="button"
-                            @if ($porQueNoAbona === null)
-                                wire:click="prepararAbono({{ $cuenta->id }})"
-                                wire:loading.attr="disabled"
-                            @else
-                                disabled
-                                title="{{ $porQueNoAbona }}"
+                    @if ($hayBotones)
+                        <div class="sihla-tarjeta-acciones">
+                            {{--
+                                Abonar vive acá, junto al saldo, y no en una
+                                pantalla de caja aparte: quien recibe la
+                                plata está mirando este número.
+                            --}}
+                            @if ($botones['abonar'])
+                                <button
+                                    type="button"
+                                    @if ($porQueNoAbona === null)
+                                        wire:click="prepararAbono({{ $cuenta->id }})"
+                                        wire:loading.attr="disabled"
+                                    @else
+                                        disabled
+                                        title="{{ $porQueNoAbona }}"
+                                    @endif
+                                    class="sihla-accion-clinica"
+                                >
+                                    <x-filament::icon icon="heroicon-o-banknotes" class="sihla-icono-chico" />
+                                    <span>Abonar</span>
+                                </button>
                             @endif
-                            class="sihla-accion-clinica"
-                        >
-                            <x-filament::icon icon="heroicon-o-banknotes" class="sihla-icono-chico" />
-                            <span>Abonar</span>
-                        </button>
 
-                        {{--
-                            🔴 Facturar CIERRA la cuenta y consume un
-                            número del SAR. Va acá, al lado del saldo,
-                            porque es la última cosa que se hace con una
-                            cuenta abierta.
-                        --}}
-                        <button
-                            type="button"
-                            @if ($porQueNoFactura === null)
-                                wire:click="prepararFactura({{ $cuenta->id }})"
-                                wire:loading.attr="disabled"
-                            @else
-                                disabled
-                                title="{{ $porQueNoFactura }}"
+                            {{--
+                                🔴 Facturar CIERRA la cuenta y consume un
+                                número del SAR. Va acá, al lado del saldo,
+                                porque es la última cosa que se hace con
+                                una cuenta abierta. Apagado también en la
+                                cuenta vacía: no hay qué facturar.
+                            --}}
+                            @if ($botones['facturar'])
+                                @php($porQueNoFacturaEsta = $this->porQueNoFacturaLa($cuenta, $porQueNoFactura))
+
+                                <button
+                                    type="button"
+                                    @if ($porQueNoFacturaEsta === null)
+                                        wire:click="prepararFactura({{ $cuenta->id }})"
+                                        wire:loading.attr="disabled"
+                                    @else
+                                        disabled
+                                        title="{{ $porQueNoFacturaEsta }}"
+                                    @endif
+                                    class="sihla-accion-clinica"
+                                >
+                                    <x-filament::icon icon="heroicon-o-document-text" class="sihla-icono-chico" />
+                                    <span>Facturar</span>
+                                </button>
                             @endif
-                            class="sihla-accion-clinica"
-                        >
-                            <x-filament::icon icon="heroicon-o-document-text" class="sihla-icono-chico" />
-                            <span>Facturar</span>
-                        </button>
 
-                        <button
-                            type="button"
-                            @if ($puedeDiagnosticar)
-                                wire:click="mountAction('diagnosticar', { cuenta: {{ $cuenta->id }} })"
-                                wire:loading.attr="disabled"
-                            @else
-                                disabled
-                                title="Solo el médico tratante escribe el diagnóstico."
+                            @if ($botones['clinicos'])
+                                @php($cuantosDiagnosticos = $diagnosticos[$cuenta->encuentro_id] ?? 0)
+
+                                <button
+                                    type="button"
+                                    wire:click="mountAction('diagnosticar', { cuenta: {{ $cuenta->id }} })"
+                                    wire:loading.attr="disabled"
+                                    class="sihla-accion-clinica"
+                                >
+                                    <x-filament::icon icon="heroicon-o-clipboard-document-list" class="sihla-icono-chico" />
+                                    <span>Diagnóstico</span>
+
+                                    @if ($cuantosDiagnosticos > 0)
+                                        <span class="sihla-contador">{{ $cuantosDiagnosticos }}</span>
+                                    @endif
+                                </button>
+
+                                <button
+                                    type="button"
+                                    disabled
+                                    class="sihla-accion-clinica"
+                                    title="La receta es una orden médica y se firma. Se habilita cuando SESAL confirme si la firma electrónica vale en el expediente clínico."
+                                >
+                                    <x-filament::icon icon="heroicon-o-beaker" class="sihla-icono-chico" />
+                                    <span>Tratamiento</span>
+                                </button>
                             @endif
-                            class="sihla-accion-clinica"
-                        >
-                            <x-filament::icon icon="heroicon-o-clipboard-document-list" class="sihla-icono-chico" />
-                            <span>Diagnóstico</span>
-
-                            @if ($this->cuantosDiagnosticos($cuenta) > 0)
-                                <span class="sihla-contador">{{ $this->cuantosDiagnosticos($cuenta) }}</span>
-                            @endif
-                        </button>
-
-                        <button
-                            type="button"
-                            disabled
-                            class="sihla-accion-clinica"
-                            title="La receta es una orden médica y se firma. Se habilita cuando SESAL confirme si la firma electrónica vale en el expediente clínico."
-                        >
-                            <x-filament::icon icon="heroicon-o-beaker" class="sihla-icono-chico" />
-                            <span>Tratamiento</span>
-                        </button>
-                    </div>
+                        </div>
+                    @endif
 
                     {{--
-                        Anular va aparte y chico, debajo de las cuatro:
+                        Anular va aparte y chico, debajo de los botones:
                         es la corrección de un error, no una acción del
                         día, y no tiene que competir con Abonar y Facturar.
                         Solo aparece para quien puede (CuentaPolicy::anular):
@@ -307,7 +349,7 @@
             background: rgb(255 255 255); color: inherit;
         }
         .sihla-buscador-campo:focus {
-            outline: 2px solid rgb(var(--primary-600, 79 70 229)); outline-offset: 1px; border-color: transparent;
+            outline: 2px solid var(--primary-600, rgb(79 70 229)); outline-offset: 1px; border-color: transparent;
         }
 
         /*
@@ -355,7 +397,7 @@
             border: 0; background: transparent; color: inherit; cursor: pointer;
         }
         .sihla-tarjeta-cuerpo:focus-visible {
-            outline: 2px solid rgb(var(--primary-600, 79 70 229)); outline-offset: 4px; border-radius: .5rem;
+            outline: 2px solid var(--primary-600, rgb(79 70 229)); outline-offset: 4px; border-radius: .5rem;
         }
         .sihla-tarjeta-cuerpo:disabled { cursor: default; }
         .sihla-tarjeta-lectura .sihla-tarjeta-cuerpo { cursor: default; }
@@ -384,6 +426,8 @@
             gap: .4rem; margin-top: .75rem; padding-top: .7rem;
             border-top: 1px solid rgb(244 244 245);
         }
+        /* Si quedan tres, el último ocupa el renglón entero en vez de dejar un hueco. */
+        .sihla-tarjeta-acciones > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 
         .sihla-accion-clinica {
             display: flex; align-items: center; justify-content: center; gap: .3rem;
@@ -423,14 +467,20 @@
             font-size: .7rem; font-weight: 600; line-height: 1;
         }
 
+        /*
+         * El nombre arriba, con TODO el ancho, y las insignias debajo
+         * (22-oct-2026). Al lado, las insignias le robaban un tercio de
+         * la tarjeta y «GLORIA MARINA CASTRO VILLANUEVA» bajaba en cuatro
+         * renglones de una palabra cada uno.
+         */
         .sihla-tarjeta-cabecera {
-            display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem;
+            display: flex; flex-direction: column; align-items: flex-start; gap: .4rem;
         }
         .sihla-nombre {
             font-size: 1rem; font-weight: 600; line-height: 1.25; color: rgb(24 24 27);
         }
         .sihla-insignias {
-            display: flex; align-items: center; gap: .3rem; flex-shrink: 0;
+            display: flex; flex-wrap: wrap; align-items: center; gap: .3rem;
         }
         .sihla-rango { font-weight: 700; letter-spacing: .02em; cursor: help; }
 
@@ -440,6 +490,27 @@
             font-size: .8rem; color: rgb(113 113 122);
         }
         .sihla-icono-chico { width: .9rem; height: .9rem; flex: none; }
+
+        /*
+         * El separador vive en el margen izquierdo de cada número. La
+         * fila de adentro corre ese margen hacia afuera (`margin-left`
+         * negativo) y la caja de afuera lo recorta (`overflow: hidden`):
+         * si los dos caben, el punto queda entre ellos; si el segundo
+         * baja, el punto cae en la parte recortada y no cuelga al final
+         * del primero. Hacen falta las DOS cajas: con una sola, el
+         * recorte empieza donde empieza el margen y el punto se ve.
+         */
+        .sihla-numeros { overflow: hidden; font-size: .8rem; color: rgb(113 113 122); }
+        .sihla-numeros-fila { display: flex; flex-wrap: wrap; row-gap: .1rem; margin-left: -1rem; }
+        .sihla-numeros-fila > span { position: relative; margin-left: 1rem; white-space: nowrap; }
+        .sihla-numeros-fila > span + span::before { content: '·'; position: absolute; left: -.6rem; }
+
+        .sihla-aviso-tope {
+            display: flex; align-items: flex-start; gap: .5rem;
+            padding: .65rem .85rem; border-radius: .6rem; font-size: .85rem;
+            border: 1px solid rgb(253 230 138); background: rgb(255 251 235); color: rgb(146 64 14);
+        }
+        .sihla-aviso-tope-icono { width: 1.1rem; height: 1.1rem; flex: none; margin-top: .05rem; }
         .sihla-tenue { color: rgb(161 161 170); }
 
         /*
@@ -507,6 +578,9 @@
         .dark .sihla-anular-cuenta { color: rgb(161 161 170); }
         .dark .sihla-anular-cuenta:hover:not(:disabled) { color: rgb(248 113 113); }
         .dark .sihla-vacio { border-color: rgb(63 63 70); }
+        .dark .sihla-aviso-tope {
+            border-color: rgb(120 53 15); background: rgb(69 26 3 / .45); color: rgb(253 230 138);
+        }
         .dark .sihla-vacio-titulo { color: rgb(212 212 216); }
     </style>
 </x-filament-panels::page>

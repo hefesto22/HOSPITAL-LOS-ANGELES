@@ -440,9 +440,61 @@ class CuentasAbiertas extends Page
         return 'Cuentas abiertas';
     }
 
-    public function getSubheading(): string
+    /**
+     * Debajo del título, los números de la pantalla y no una frase fija
+     * (Mauricio, 22-oct-2026): cuántas hay abiertas, cuánto llevan
+     * cargado sin facturar y cuántas no tienen nada.
+     *
+     * Las vacías van aparte porque casi siempre son un error de apertura
+     * o una que alguien olvidó: se ven desde arriba sin recorrer
+     * tarjetas. Es UNA consulta con `FILTER`, sobre las mismas cuentas
+     * vivas que la grilla y sin el buscador: es el estado del hospital,
+     * no el de la búsqueda.
+     *
+     * Sin cuentas no dice nada: el recuadro vacío de abajo ya lo explica.
+     */
+    public function getSubheading(): ?string
     {
-        return 'Lo que cada paciente lleva acumulado. Se le agrega escaneando o buscando por nombre.';
+        $numeros = $this->numerosDeLaPantalla();
+
+        if ($numeros['abiertas'] === 0) {
+            return null;
+        }
+
+        $partes = [
+            $numeros['abiertas'] === 1 ? '1 abierta' : "{$numeros['abiertas']} abiertas",
+            Monto::de($numeros['cargado'])->formateado().' sin facturar',
+        ];
+
+        if ($numeros['vacias'] > 0) {
+            $partes[] = $numeros['vacias'] === 1 ? '1 vacía' : "{$numeros['vacias']} vacías";
+        }
+
+        return implode(' · ', $partes);
+    }
+
+    /**
+     * @return array{abiertas: int, cargado: string, vacias: int}
+     */
+    public function numerosDeLaPantalla(): array
+    {
+        $fila = Cuenta::query()
+            ->vivas()
+            ->selectRaw('count(*) as abiertas')
+            ->selectRaw('coalesce(sum(total), 0) as cargado')
+            ->selectRaw('count(*) filter (where lineas = 0) as vacias')
+            ->toBase()
+            ->first();
+
+        $abiertas = data_get($fila, 'abiertas');
+        $cargado = data_get($fila, 'cargado');
+        $vacias = data_get($fila, 'vacias');
+
+        return [
+            'abiertas' => is_numeric($abiertas) ? (int) $abiertas : 0,
+            'cargado'  => is_numeric($cargado) ? (string) $cargado : '0',
+            'vacias'   => is_numeric($vacias) ? (int) $vacias : 0,
+        ];
     }
 
     public static function canAccess(): bool
@@ -464,9 +516,7 @@ class CuentasAbiertas extends Page
      */
     public function cuentas(): Collection
     {
-        $termino = trim($this->busqueda);
-
-        return Cuenta::query()
+        return $this->lasQueCoinciden()
             /*
              * Columnas nombradas y no `with('encuentro.persona')` a
              * secas: la tarjeta necesita seis campos y traer la persona
@@ -487,6 +537,61 @@ class CuentasAbiertas extends Page
                 'encuentro.servicio:id,nombre',
                 'convenio:id,codigo,nombre,tipo,base_descuento_legal',
             ])
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 EL ORDEN TIENE QUE SER ESTABLE, NO SOLO CORRECTO
+             * ─────────────────────────────────────────────────────────
+             *
+             * Con `abierta_en` solo, las cuentas abiertas en el mismo
+             * minuto —las tres que deja un comando de demo, o las cuatro
+             * del ingreso de la mañana— quedan empatadas, y ante un
+             * empate PostgreSQL devuelve las filas en el orden que le
+             * convenga. Puede ser otro después de cargarle algo a una.
+             *
+             * Eso se ve como tarjetas que saltan de lugar mientras
+             * alguien trabaja: se va a tocar la de Pedro y aparece la de
+             * Marta donde estaba. Con el paciente enfrente, ese salto es
+             * un cargo en la cuenta equivocada.
+             *
+             * El id desempata y no se repite nunca: 40, 39, 38, siempre
+             * en el mismo lugar aunque se les agregue o se les quite.
+             */
+            ->orderByDesc('abierta_en')
+            ->orderByDesc('id')
+            ->limit($this->tarjetasPorPantalla())
+            ->get();
+    }
+
+    /**
+     * Cuántas cuentas coinciden de verdad, para avisar cuando la grilla
+     * no las muestra todas (Mauricio, 22-oct-2026).
+     *
+     * La grilla corta en `sihla.facturacion.tarjetas_por_pantalla`, y la
+     * 25.ª cuenta desaparecía sin que nadie lo notara: el paciente
+     * seguía internado y su cuenta no estaba en la pantalla de cuentas
+     * abiertas. Solo cuenta cuando la grilla llegó al tope; si mostró
+     * menos, ya son todas y no hace falta preguntarle a la base.
+     */
+    public function cuantasCoinciden(int $mostradas): int
+    {
+        if ($mostradas < $this->tarjetasPorPantalla()) {
+            return $mostradas;
+        }
+
+        return $this->lasQueCoinciden()->count();
+    }
+
+    /**
+     * Las cuentas vivas que coinciden con el buscador: lo que comparten
+     * la grilla y el aviso de «se muestran 24 de 31».
+     *
+     * @return Builder<Cuenta>
+     */
+    private function lasQueCoinciden(): Builder
+    {
+        $termino = trim($this->busqueda);
+
+        return Cuenta::query()
             ->vivas()
             /*
              * ⚠️ Todo el buscador va DENTRO de un solo `where` agrupado.
@@ -527,30 +632,12 @@ class CuentasAbiertas extends Page
                                     ->select('expedientes.id'),
                             )
                     )
-            ))
-            /*
-             * ─────────────────────────────────────────────────────────
-             * 🔴 EL ORDEN TIENE QUE SER ESTABLE, NO SOLO CORRECTO
-             * ─────────────────────────────────────────────────────────
-             *
-             * Con `abierta_en` solo, las cuentas abiertas en el mismo
-             * minuto —las tres que deja un comando de demo, o las cuatro
-             * del ingreso de la mañana— quedan empatadas, y ante un
-             * empate PostgreSQL devuelve las filas en el orden que le
-             * convenga. Puede ser otro después de cargarle algo a una.
-             *
-             * Eso se ve como tarjetas que saltan de lugar mientras
-             * alguien trabaja: se va a tocar la de Pedro y aparece la de
-             * Marta donde estaba. Con el paciente enfrente, ese salto es
-             * un cargo en la cuenta equivocada.
-             *
-             * El id desempata y no se repite nunca: 40, 39, 38, siempre
-             * en el mismo lugar aunque se les agregue o se les quite.
-             */
-            ->orderByDesc('abierta_en')
-            ->orderByDesc('id')
-            ->limit((int) config('sihla.facturacion.tarjetas_por_pantalla', 24))
-            ->get();
+            ));
+    }
+
+    private function tarjetasPorPantalla(): int
+    {
+        return max(1, (int) config('sihla.facturacion.tarjetas_por_pantalla', 24));
     }
 
     public function hayCuentas(): bool
@@ -583,20 +670,99 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * Cuántos diagnósticos vigentes lleva la cuenta.
+     * Cuántos diagnósticos vigentes lleva cada tarjeta, por encuentro.
      *
      * Va en la tarjeta como un contador rojo cuando hay alguno, y NO
      * cuando no hay: un cero en cada tarjeta se vuelve invisible en dos
      * días. Lo que se quiere ver de un vistazo es cuáles ya tienen y
      * cuáles siguen sin diagnóstico — que son las que no se le pueden
      * cobrar a una aseguradora.
+     *
+     * UNA consulta para toda la grilla (22-oct-2026). Antes era un
+     * `count()` por tarjeta, y la vista lo llamaba dos veces —para decidir
+     * si había y para escribirlo—: 48 consultas de más en una pantalla de
+     * 24 cuentas (§13.2). Y solo para quien ve el botón: a nadie más le
+     * sirve el número.
+     *
+     * @param Collection<int, Cuenta> $cuentas
+     *
+     * @return array<int, int> encuentro_id => cuántos
      */
-    public function cuantosDiagnosticos(Cuenta $cuenta): int
+    public function diagnosticosPorEncuentro(Collection $cuentas): array
     {
-        return Diagnostico::query()
-            ->where('encuentro_id', $cuenta->encuentro_id)
+        if ($cuentas->isEmpty() || ! $this->puedeDiagnosticar()) {
+            return [];
+        }
+
+        $filas = Diagnostico::query()
+            ->whereIn('encuentro_id', $cuentas->pluck('encuentro_id')->all())
             ->vigentes()
-            ->count();
+            ->groupBy('encuentro_id')
+            ->selectRaw('encuentro_id, count(*) as cuantos')
+            ->toBase()
+            ->get();
+
+        $cuantos = [];
+
+        foreach ($filas as $fila) {
+            $encuentro = data_get($fila, 'encuentro_id');
+            $total = data_get($fila, 'cuantos');
+
+            if (is_numeric($encuentro) && is_numeric($total)) {
+                $cuantos[(int) $encuentro] = (int) $total;
+            }
+        }
+
+        return $cuantos;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * QUÉ BOTONES LLEVA LA TARJETA (Mauricio, 22-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «Ya que aún no se usará lo de diagnósticos ni tratamientos, no hay
+     * necesidad de que lo vean los cajeros». La regla que sale de ahí:
+     *
+     *   · sin el PERMISO, el botón no está. A la cajera no le sirve ver
+     *     «Diagnóstico» y «Tratamiento» apagados en cada tarjeta, ni a
+     *     laboratorio «Abonar» y «Facturar»: nunca van a poder usarlos.
+     *   · con el permiso pero sin poder AHORA —la gaveta cerrada, la
+     *     cuenta vacía—, el botón está apagado y dice por qué. Eso sí
+     *     tiene arreglo, y la persona tiene que saber cuál.
+     *
+     * Se pregunta el permiso `Create:Factura` y no la policy: la policy
+     * pide además el turno abierto, y ese caso es el del botón apagado.
+     *
+     * @return array{abonar: bool, facturar: bool, clinicos: bool}
+     */
+    public function botonesDeLaTarjeta(): array
+    {
+        $usuario = Auth::user();
+
+        return [
+            'abonar'   => Gate::allows('create', Abono::class),
+            'facturar' => $usuario instanceof User && $usuario->can('Create:Factura'),
+            'clinicos' => $this->puedeDiagnosticar(),
+        ];
+    }
+
+    /**
+     * Por qué no se factura ESTA cuenta, o `null` si se puede.
+     *
+     * Lo de quien mira —sin turno, gaveta de otro turno— pesa primero y
+     * ya viene calculado una vez para toda la grilla. Después, la cuenta:
+     * una cuenta sin nada cargado no tiene qué facturar
+     * (`FacturaException::noHayNadaQueFacturar`), y el botón encendido
+     * solo llevaba a ese error con el modal ya abierto.
+     */
+    public function porQueNoFacturaLa(Cuenta $cuenta, ?string $deQuienMira): ?string
+    {
+        if ($deQuienMira !== null) {
+            return $deQuienMira;
+        }
+
+        return $cuenta->lineas === 0 ? 'No tiene nada cargado: no hay qué facturar.' : null;
     }
 
     public function puedeCargar(): bool
