@@ -9,6 +9,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Resources\RangosCai\RangoCaiResource;
 use App\Models\RangoCai;
+use App\Models\User;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Facades\Gate;
 
@@ -31,12 +32,30 @@ trait NumerosDelEscritorio
      * darle el alta administrativa a nadie (§8.6.4), así que avisa con el
      * doble umbral de `sihla.facturacion`: porcentaje consumido y días
      * para la fecha límite.
+     *
+     * Lo ve quien ve los rangos (dirección, auditoría) y quien factura
+     * (caja, 22-oct-2026). La cajera no tiene «Rangos de CAI» en el menú,
+     * pero sí tiene que saber por qué no le deja facturar y cuándo
+     * avisar. Se pregunta el PERMISO `Create:Factura` y no la policy:
+     * la policy pide además el turno abierto, y el aviso sirve justo
+     * antes de abrirlo. Sin acceso a los rangos el cuadro no lleva
+     * enlace: a ese clic lo esperaba un 403.
      */
     protected static function statDelCai(?int $sedeId): ?Stat
     {
-        if ($sedeId === null || ! Gate::allows('viewAny', RangoCai::class)) {
+        $usuario = auth()->user();
+
+        if ($sedeId === null || ! $usuario instanceof User) {
             return null;
         }
+
+        $veLosRangos = Gate::allows('viewAny', RangoCai::class);
+
+        if (! $veLosRangos && ! $usuario->can('Create:Factura')) {
+            return null;
+        }
+
+        $enlace = $veLosRangos ? RangoCaiResource::getUrl() : null;
 
         $rango = RangoCai::query()
             ->where('sede_id', $sedeId)
@@ -49,10 +68,12 @@ trait NumerosDelEscritorio
 
         if (! $rango instanceof RangoCai) {
             return Stat::make($titulo, 'Sin CAI')
-                ->description('No se puede facturar: falta cargar el rango del SAR')
+                ->description($veLosRangos
+                    ? 'No se puede facturar: falta cargar el rango del SAR'
+                    : 'No se puede facturar: avisá a dirección que cargue el rango del SAR')
                 ->descriptionIcon('heroicon-m-exclamation-triangle')
                 ->color('danger')
-                ->url(RangoCaiResource::getUrl());
+                ->url($enlace);
         }
 
         $hoy = now()->startOfDay();
@@ -64,7 +85,7 @@ trait NumerosDelEscritorio
                 ->description($rango->seAgoto() ? 'Se usó todo el rango' : $vence)
                 ->descriptionIcon('heroicon-m-exclamation-triangle')
                 ->color('danger')
-                ->url(RangoCaiResource::getUrl());
+                ->url($enlace);
         }
 
         $porcentaje = (float) config('sihla.facturacion.alerta_cai_porcentaje_rango', 0.80);

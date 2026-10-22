@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Enums\MotivoDeAnulacionDeCuenta;
 use App\Domain\Enums\TipoEncuentro;
+use App\Filament\Resources\RangosCai\RangoCaiResource;
 use App\Filament\Widgets\AccesosDelEscritorio;
 use App\Filament\Widgets\CajaDelEscritorio;
 use App\Filament\Widgets\InventarioDelEscritorio;
@@ -14,6 +15,7 @@ use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Expediente;
 use App\Models\Persona;
+use App\Models\RangoCai;
 use App\Models\Sede;
 use App\Models\User;
 use App\Services\AbridorDeEncuentro;
@@ -267,3 +269,48 @@ it('🔴 laboratorio ve lo que cargó hoy, en renglones y no en lempiras', funct
     expect(elStat($stats, 'Hoy cargaste')?->getValue())->toBe('2 renglones')
         ->and(elStat($stats, 'Hoy cargaste')?->getDescription())->toBe('A 1 paciente');
 })->note('§1.4: laboratorio no ve costos. Lo que le sirve es saber si se le pasó alguno.');
+
+/*
+|--------------------------------------------------------------------------
+| El CAI (22-oct-2026)
+|--------------------------------------------------------------------------
+*/
+
+it('🔴 caja ve cuántas facturas quedan, sin el enlace a los rangos', function (): void {
+    $sede = Sede::factory()->create();
+    RangoCai::factory()->create(['sede_id' => $sede->id, 'hasta' => 5000, 'siguiente' => 4001]);
+
+    entraAlEscritorio('caja', $sede->id);
+
+    $cai = elStat(statsDelCuadro(CajaDelEscritorio::class), 'Facturas que quedan');
+
+    expect(RangoCaiResource::canAccess())->toBeFalse();
+    expect($cai)->toBeInstanceOf(Stat::class);
+    expect($cai?->getValue())->toBe('1,000')
+        ->and($cai?->getUrl())->toBeNull();
+})->note('Mauricio: «rangos de CAI solo debería poder verlo administrador y super admin». La cajera no los ve en el menú, pero sigue sabiendo cuántas le quedan: el cuadro sale por `Create:Factura`, y sin enlace, porque ese clic terminaba en un 403.');
+
+it('🔴 sin CAI la cajera sabe que no puede facturar y a quién avisarle', function (): void {
+    $sede = Sede::factory()->create();
+
+    entraAlEscritorio('caja', $sede->id);
+
+    $cai = elStat(statsDelCuadro(CajaDelEscritorio::class), 'Facturas que quedan');
+
+    expect($cai)->toBeInstanceOf(Stat::class);
+    expect($cai?->getValue())->toBe('Sin CAI')
+        ->and($cai?->getDescription())->toContain('dirección')
+        ->and($cai?->getUrl())->toBeNull();
+});
+
+it('dirección ve el CAI con el enlace para cargarlo', function (): void {
+    Sede::factory()->create();
+
+    entraAlEscritorio('direccion');
+
+    $cai = elStat(statsDelCuadro(CajaDelEscritorio::class), 'Facturas que quedan');
+
+    expect($cai)->toBeInstanceOf(Stat::class);
+    expect($cai?->getValue())->toBe('Sin CAI')
+        ->and($cai?->getUrl())->toBe(RangoCaiResource::getUrl());
+});

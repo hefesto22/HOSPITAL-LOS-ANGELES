@@ -107,7 +107,7 @@ final class FacturaException extends SihlaException
     {
         return new self(
             "No hay ningún rango de CAI activo para {$tipo} en esta sede. "
-            .'Cargá la resolución del SAR en «Rangos de CAI» antes de facturar.'
+            .'Dirección tiene que cargar la resolución del SAR en «Rangos de CAI» antes de facturar.'
         );
     }
 
@@ -121,7 +121,7 @@ final class FacturaException extends SihlaException
     {
         return new self(
             "El CAI {$cai} venció el {$fecha}. Ningún documento emitido con él tiene validez. "
-            .'Cargá el rango nuevo que autorizó el SAR.'
+            .'Dirección tiene que cargar el rango nuevo que autorizó el SAR.'
         );
     }
 
@@ -129,7 +129,7 @@ final class FacturaException extends SihlaException
     {
         return new self(
             "El rango del CAI {$cai} llegó a su último número ({$hasta}). "
-            .'Cargá el rango siguiente: los números no se reutilizan.'
+            .'Dirección tiene que cargar el rango siguiente: los números no se reutilizan.'
         );
     }
 

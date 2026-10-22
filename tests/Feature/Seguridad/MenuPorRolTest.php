@@ -14,6 +14,7 @@ use App\Filament\Resources\Items\ItemResource;
 use App\Filament\Resources\Pacientes\PacienteResource;
 use App\Filament\Resources\PrincipiosActivos\PrincipioActivoResource;
 use App\Filament\Resources\Productos\ProductoResource;
+use App\Filament\Resources\RangosCai\RangoCaiResource;
 use App\Filament\Resources\Unidades\UnidadResource;
 use App\Models\Cargo;
 use App\Models\Cuenta;
@@ -48,7 +49,7 @@ use Spatie\Permission\PermissionRegistrar;
  */
 const SUJETOS_DEL_MENU = [
     'Activity', 'Cargo', 'CategoriaItem', 'Convenio', 'Cuenta', 'Encuentro',
-    'FusionDePersona', 'Item', 'Persona', 'Producto', 'Unidad',
+    'FusionDePersona', 'Item', 'Persona', 'Producto', 'RangoCai', 'Unidad',
 ];
 
 beforeEach(function (): void {
@@ -121,6 +122,18 @@ it('🔴 convenios, unidades y la bitacora: solo direccion y auditoria', functio
         }
     }
 })->note('Mauricio: «seguros y convenios solo el administrador y super admin deberían verlo, unidades de medida igual, registro de actividad igual». Auditoría los lee porque revisarlos es su trabajo, y no puede cambiar ninguno.');
+
+it('🔴 rangos de CAI: solo direccion y auditoria, y caja tampoco', function (): void {
+    foreach (array_keys(RoleSeeder::ROLES) as $rol) {
+        entraAlMenuComo($rol);
+
+        expect(RangoCaiResource::canAccess())->toBe(in_array($rol, ['direccion', 'auditoria'], true), $rol);
+    }
+
+    entraAlMenuComo('auditoria');
+
+    expect(RangoCaiResource::canCreate())->toBeFalse();
+})->note('Mauricio, 22-oct-2026: «rangos de CAI solo debería poder verlo administrador y super admin». Caja lo veía para saber por qué no le dejaba facturar; eso ahora está en su escritorio («Facturas que quedan»). Auditoría lo lee, como los convenios: revisar con qué CAI se facturó es su trabajo.');
 
 /*
 |--------------------------------------------------------------------------

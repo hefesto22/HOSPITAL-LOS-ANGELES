@@ -353,21 +353,27 @@ class MatrizDePermisosSeeder extends Seeder
 
             /*
              * ─────────────────────────────────────────────────────────
-             * FACTURAR SÍ; CARGAR EL CAI, NO
+             * FACTURAR SÍ; LOS RANGOS DE CAI, NO (22-oct-2026)
              * ─────────────────────────────────────────────────────────
              *
-             * Caja emite y anula facturas —`Create` y `Update`— pero
-             * solo LEE los rangos de CAI. Cargar una resolución del SAR
-             * es teclear el CAI, el rango autorizado y la fecha límite:
-             * un dígito mal escrito ahí son todas las facturas del mes
-             * emitidas con un número que no corresponde. Eso es de
+             * Caja emite y anula facturas —`Create` y `Update`— y no
+             * tiene NADA de `RangoCai`: ni cargarlo ni verlo en el menú
+             * (Mauricio: «rangos de CAI solo debería poder verlo
+             * administrador y super admin»). Cargar una resolución del
+             * SAR es teclear el CAI, el rango autorizado y la fecha
+             * límite: un dígito mal escrito ahí son todas las facturas
+             * del mes con un número que no corresponde. Eso es de
              * dirección, con el papel del SAR en la mano.
              *
-             * Verlo sí, y hace falta: es la respuesta a «¿por qué no me
-             * deja facturar?» a las once de la noche.
+             * Lo que la cajera sí necesita —«¿por qué no me deja
+             * facturar?» a las once de la noche— lo tiene en su
+             * escritorio: «Facturas que quedan» sale por `Create:Factura`
+             * y no por este permiso, sin el enlace a los rangos
+             * (`NumerosDelEscritorio::statDelCai()`). Emitir no lo
+             * necesita: `EmisorDeFactura` toma el rango sin preguntarle
+             * a la policy.
              */
-            'RangoCai' => ['ViewAny', 'View'],
-            'Factura'  => ['ViewAny', 'View', 'Create', 'Update'],
+            'Factura' => ['ViewAny', 'View', 'Create', 'Update'],
         ],
 
         /*
