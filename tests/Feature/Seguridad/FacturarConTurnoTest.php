@@ -205,6 +205,26 @@ it('correrlo de nuevo no le pisa la contraseña a nadie', function (): void {
         ->and(User::query()->where('email', 'angela.cardona@gmail.com')->count())->toBe(1);
 });
 
+it('🔴 al cambiarle el correo es el mismo usuario, y no queda el viejo con rol de direccion', function (): void {
+    Sede::factory()->create();
+
+    /** @var User $marcador */
+    $marcador = User::factory()->create(['email' => 'juan.cardona@gmail.com', 'name' => 'Dr. Juan Cardona', 'phone' => null]);
+    $marcador->assignRole('direccion');
+    $marcador->forceFill(['password' => Hash::make('la-que-el-eligio')])->save();
+
+    test()->seed(UsuariosDePruebaSeeder::class);
+
+    $juan = User::query()->where('email', 'hladireccion@gmail.com')->firstOrFail();
+
+    expect($juan->id)->toBe($marcador->id)
+        ->and($juan->name)->toBe('Dr. Juan Carlos Cardona Medina')
+        ->and($juan->phone)->toBe('9995-2663')
+        ->and($juan->getRoleNames()->all())->toBe(['direccion'])
+        ->and(Hash::check('la-que-el-eligio', (string) $juan->password))->toBeTrue()
+        ->and(User::withTrashed()->where('email', 'juan.cardona@gmail.com')->exists())->toBeFalse();
+})->note('Mauricio, 26-oct-2026: el «Dr. Juan Cardona» de marcador es el Dr. Juan Carlos Cardona Medina, con el correo de dirección. Cambiar solo el correo en la lista dejaba DOS usuarios con rol de dirección, uno de ellos con una contraseña conocida que nadie usa.');
+
 it('🔴 en produccion no corre sin la marca del servidor de pruebas', function (): void {
     Sede::factory()->create();
     app()->instance('env', 'production');

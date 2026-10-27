@@ -21,9 +21,10 @@ use RuntimeException;
  *   · Laboratorio: registra al paciente, abre la cuenta y carga SOLO
  *     exámenes. No cobra ni factura.
  *   · Consulta externa: lo mismo, pero consultas y procedimientos.
- *   · Angela Cardona y el Dr. Juan Cardona: administración. Rol
- *     `direccion`, NO super_admin —el de soporte se salta las policies,
- *     y quien opera el hospital pasa por ellas como todo el mundo—.
+ *   · Angela Cardona y el Dr. Juan Carlos Cardona Medina:
+ *     administración. Rol `direccion`, NO super_admin —el de soporte se
+ *     salta las policies, y quien opera el hospital pasa por ellas como
+ *     todo el mundo—.
  *
  * ─────────────────────────────────────────────────────────────────────
  * ⚠️ PARA PROBAR — NO ES LA CARGA DE USUARIOS REALES
@@ -50,19 +51,43 @@ class UsuariosDePruebaSeeder extends Seeder
     private const CONTRASENA_POR_DEFECTO = '12345678';
 
     /**
-     * Correo, nombre, rol y turno. Para cambiar un correo, se cambia acá
-     * y se vuelve a correr: el usuario viejo queda, con su historia.
+     * Correo, nombre, rol, turno y teléfono.
      *
-     * @var list<array{email: string, nombre: string, rol: string, turno: string|null}>
+     * ─────────────────────────────────────────────────────────────────
+     * CAMBIAR UN CORREO: `antes`
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Si a alguien le cambia el correo, el nuevo va en `email` y el viejo
+     * en `antes`. El seeder busca primero por el nuevo y, si no lo
+     * encuentra, por los de `antes`: le cambia el correo al MISMO usuario,
+     * con su historia, su contraseña y su rol. Sin esto quedaban dos: el
+     * nuevo, y el viejo con rol de dirección y una contraseña conocida
+     * que nadie usa — una puerta abierta.
+     *
+     * El Dr. Juan Carlos Cardona Medina (26-oct-2026, Mauricio) era el
+     * «Dr. Juan Cardona» de `juan.cardona@gmail.com` que se sembró de
+     * marcador; su correo real es el de dirección del hospital.
+     *
+     * `telefono` null deja el que tenga: no se borra el que alguien cargó
+     * en el panel.
+     *
+     * @var list<array{email: string, antes: list<string>, nombre: string, rol: string, turno: string|null, telefono: string|null}>
      */
     public const USUARIOS = [
-        ['email' => 'caja.turnoa@gmail.com', 'nombre' => 'Cajera Turno A', 'rol' => 'caja', 'turno' => 'Turno A'],
-        ['email' => 'caja.turnob@gmail.com', 'nombre' => 'Cajera Turno B', 'rol' => 'caja', 'turno' => 'Turno B'],
-        ['email' => 'caja.turnoc@gmail.com', 'nombre' => 'Cajera Turno C', 'rol' => 'caja', 'turno' => 'Turno C'],
-        ['email' => 'laboratorio.hla@gmail.com', 'nombre' => 'Laboratorio', 'rol' => 'laboratorio', 'turno' => null],
-        ['email' => 'consulta.hla@gmail.com', 'nombre' => 'Consulta Externa', 'rol' => 'consulta_externa', 'turno' => null],
-        ['email' => 'angela.cardona@gmail.com', 'nombre' => 'Angela Cardona', 'rol' => 'direccion', 'turno' => null],
-        ['email' => 'juan.cardona@gmail.com', 'nombre' => 'Dr. Juan Cardona', 'rol' => 'direccion', 'turno' => null],
+        ['email' => 'caja.turnoa@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno A', 'rol' => 'caja', 'turno' => 'Turno A', 'telefono' => null],
+        ['email' => 'caja.turnob@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno B', 'rol' => 'caja', 'turno' => 'Turno B', 'telefono' => null],
+        ['email' => 'caja.turnoc@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno C', 'rol' => 'caja', 'turno' => 'Turno C', 'telefono' => null],
+        ['email' => 'laboratorio.hla@gmail.com', 'antes' => [], 'nombre' => 'Laboratorio', 'rol' => 'laboratorio', 'turno' => null, 'telefono' => null],
+        ['email' => 'consulta.hla@gmail.com', 'antes' => [], 'nombre' => 'Consulta Externa', 'rol' => 'consulta_externa', 'turno' => null, 'telefono' => null],
+        ['email' => 'angela.cardona@gmail.com', 'antes' => [], 'nombre' => 'Angela Cardona', 'rol' => 'direccion', 'turno' => null, 'telefono' => null],
+        [
+            'email'    => 'hladireccion@gmail.com',
+            'antes'    => ['juan.cardona@gmail.com'],
+            'nombre'   => 'Dr. Juan Carlos Cardona Medina',
+            'rol'      => 'direccion',
+            'turno'    => null,
+            'telefono' => '9995-2663',
+        ],
     ];
 
     public function run(): void
@@ -89,7 +114,9 @@ class UsuariosDePruebaSeeder extends Seeder
         }
 
         foreach (self::USUARIOS as $datos) {
-            $usuario = User::withTrashed()->firstWhere('email', $datos['email']) ?? new User;
+            $usuario = User::withTrashed()->firstWhere('email', $datos['email'])
+                ?? $this->porUnCorreoAnterior($datos['antes'])
+                ?? new User;
             $esNuevo = ! $usuario->exists;
 
             $usuario->fill([
@@ -99,6 +126,10 @@ class UsuariosDePruebaSeeder extends Seeder
                 'turno'     => $datos['turno'],
                 'is_active' => true,
             ]);
+
+            if ($datos['telefono'] !== null) {
+                $usuario->setAttribute('phone', $datos['telefono']);
+            }
 
             // Fuera del `fill`: no está en `$fillable`.
             if ($usuario->getAttribute('email_verified_at') === null) {
@@ -131,5 +162,19 @@ class UsuariosDePruebaSeeder extends Seeder
 
         $this->command?->warn("Contraseña de los nuevos: {$contrasena}".($forzar ? ' (repuesta también en los que ya existían)' : ''));
         $this->command?->warn('⚠️  Son usuarios de PRUEBA. En el hospital real cada persona va con su propio usuario.');
+    }
+
+    /**
+     * El usuario que tenía uno de esos correos, si existe.
+     *
+     * @param list<string> $correos
+     */
+    private function porUnCorreoAnterior(array $correos): ?User
+    {
+        if ($correos === []) {
+            return null;
+        }
+
+        return User::withTrashed()->whereIn('email', $correos)->orderBy('id')->first();
     }
 }
