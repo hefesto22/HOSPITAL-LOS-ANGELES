@@ -12,29 +12,37 @@ use Illuminate\Support\Facades\Hash;
 use RuntimeException;
 
 /**
- * Los usuarios para probar el hospital de punta a punta (12-oct-2026).
+ * Los usuarios del hospital (Mauricio, 26-oct-2026): los mismos que ya
+ * están en el servidor de pruebas, que son los que van a producción.
  *
- *   · Tres cajeras —turno A, B y C—: cobran y facturan, cada una con su
- *     turno abierto. El turno asignado es solo el nombre que viene
- *     puesto al abrir: la del A que hoy cubre el C abre el suyo y le
- *     pone «TURNO C».
- *   · Laboratorio: registra al paciente, abre la cuenta y carga SOLO
- *     exámenes. No cobra ni factura.
- *   · Consulta externa: lo mismo, pero consultas y procedimientos.
+ *   · Las cajeras, cada una con su nombre y su correo: Aida (turno A),
+ *     Waldina y Ruth (turno B). El turno es solo el nombre que viene
+ *     puesto al abrir la gaveta; quien cubre otro turno lo cambia ahí.
+ *   · Laboratorio y consulta externa: todavía con un usuario por área y
+ *     correo provisional (`@hospital.test`). Mauricio: «esos después se
+ *     cambiarán». Cuando se cambien, el correo nuevo va en `email` y el
+ *     de ahora en `antes`.
  *   · Angela Cardona y el Dr. Juan Carlos Cardona Medina:
  *     administración. Rol `direccion`, NO super_admin —el de soporte se
  *     salta las policies, y quien opera el hospital pasa por ellas como
  *     todo el mundo—.
  *
+ * Los nombres van tal como están en el servidor: el seeder los escribe,
+ * y uno distinto acá le cambiaría el nombre a alguien en el panel.
+ *
  * ─────────────────────────────────────────────────────────────────────
- * ⚠️ PARA PROBAR — NO ES LA CARGA DE USUARIOS REALES
+ * LOS MARCADORES QUE SE SEMBRARON POR ERROR
  * ─────────────────────────────────────────────────────────────────────
  *
- * Contraseña conocida y cajeras por turno en vez de por persona. En el
- * hospital real cada quien va con su nombre (§1.4): cuando falten L 400,
- * el arqueo tiene que señalar a una persona, no a un turno.
+ * Hasta el 26-oct-2026 la lista tenía cuentas de relleno
+ * («Cajera Turno A», `laboratorio.hla@gmail.com`…). Correrla en pruebas
+ * las creó al lado de las de verdad, con rol y con 12345678. Ahora cada
+ * relleno está en el `antes` de una persona real: en pruebas, donde
+ * existen los dos, el relleno queda dado de baja; en una base que solo
+ * tiene el relleno —la de desarrollo—, el relleno pasa a ser esa persona
+ * con su historia.
  *
- * Por eso NO está en `DatabaseSeeder` y se corre a mano:
+ * NO está en `DatabaseSeeder` y se corre a mano:
  *
  *     php artisan db:seed --class=UsuariosDePruebaSeeder
  *
@@ -64,9 +72,20 @@ class UsuariosDePruebaSeeder extends Seeder
      * nuevo, y el viejo con rol de dirección y una contraseña conocida
      * que nadie usa — una puerta abierta.
      *
+     * Si ya existen LOS DOS —el nuevo y uno de `antes`—, se queda el
+     * nuevo y el de `antes` se da de baja: sin roles, inactivo y con
+     * borrado lógico, para que no se pueda entrar con él. No se borra la
+     * fila: si alguna vez hizo algo, la bitácora sigue diciendo quién.
+     *
      * El Dr. Juan Carlos Cardona Medina (26-oct-2026, Mauricio) era el
      * «Dr. Juan Cardona» de `juan.cardona@gmail.com` que se sembró de
      * marcador; su correo real es el de dirección del hospital.
+     *
+     * Angela entra con `angelacardona@gmail.com`, sin punto: es el que
+     * tiene en el servidor de pruebas y el que se le mandó. El seeder
+     * decía `angela.cardona@gmail.com` y, al correrlo el 26-oct-2026, le
+     * creó una segunda cuenta de dirección con 12345678. Gmail no
+     * distingue el punto; el sistema compara letra por letra.
      *
      * `telefono` null deja el que tenga: no se borra el que alguien cargó
      * en el panel.
@@ -74,12 +93,54 @@ class UsuariosDePruebaSeeder extends Seeder
      * @var list<array{email: string, antes: list<string>, nombre: string, rol: string, turno: string|null, telefono: string|null}>
      */
     public const USUARIOS = [
-        ['email' => 'caja.turnoa@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno A', 'rol' => 'caja', 'turno' => 'Turno A', 'telefono' => null],
-        ['email' => 'caja.turnob@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno B', 'rol' => 'caja', 'turno' => 'Turno B', 'telefono' => null],
-        ['email' => 'caja.turnoc@gmail.com', 'antes' => [], 'nombre' => 'Cajera Turno C', 'rol' => 'caja', 'turno' => 'Turno C', 'telefono' => null],
-        ['email' => 'laboratorio.hla@gmail.com', 'antes' => [], 'nombre' => 'Laboratorio', 'rol' => 'laboratorio', 'turno' => null, 'telefono' => null],
-        ['email' => 'consulta.hla@gmail.com', 'antes' => [], 'nombre' => 'Consulta Externa', 'rol' => 'consulta_externa', 'turno' => null, 'telefono' => null],
-        ['email' => 'angela.cardona@gmail.com', 'antes' => [], 'nombre' => 'Angela Cardona', 'rol' => 'direccion', 'turno' => null, 'telefono' => null],
+        [
+            'email'    => 'aidaminellyr@gmail.com',
+            'antes'    => ['caja.turnoa@gmail.com'],
+            'nombre'   => 'AIDA MINELLY RIVERA MONTALVAN',
+            'rol'      => 'caja',
+            'turno'    => 'Turno A',
+            'telefono' => null,
+        ],
+        [
+            'email'    => 'waldylisseth4@gmail.com',
+            'antes'    => ['caja.turnob@gmail.com'],
+            'nombre'   => 'WALDINA LISSETH LOPEZ PONCE',
+            'rol'      => 'caja',
+            'turno'    => 'Turno B',
+            'telefono' => null,
+        ],
+        [
+            'email'    => 'cruzarguetaruthajeleth@gmail.com',
+            'antes'    => ['caja.turnoc@gmail.com'],
+            'nombre'   => 'RUTH CRUZ',
+            'rol'      => 'caja',
+            'turno'    => 'Turno B',
+            'telefono' => null,
+        ],
+        [
+            'email'    => 'laboratorio@hospital.test',
+            'antes'    => ['laboratorio.hla@gmail.com'],
+            'nombre'   => 'LABORATORIO · PRUEBA',
+            'rol'      => 'laboratorio',
+            'turno'    => null,
+            'telefono' => null,
+        ],
+        [
+            'email'    => 'consulta@hospital.test',
+            'antes'    => ['consulta.hla@gmail.com'],
+            'nombre'   => 'CONSULTA EXTERNA · PRUEBA',
+            'rol'      => 'consulta_externa',
+            'turno'    => null,
+            'telefono' => null,
+        ],
+        [
+            'email'    => 'angelacardona@gmail.com',
+            'antes'    => ['angela.cardona@gmail.com'],
+            'nombre'   => 'Angela Cardona',
+            'rol'      => 'direccion',
+            'turno'    => 'Turno C',
+            'telefono' => null,
+        ],
         [
             'email'    => 'hladireccion@gmail.com',
             'antes'    => ['juan.cardona@gmail.com'],
@@ -158,10 +219,43 @@ class UsuariosDePruebaSeeder extends Seeder
             }
 
             $this->command?->info(($esNuevo ? '✓ Creado ' : '✓ Al día  ')."{$datos['nombre']} <{$datos['email']}> — {$datos['rol']}");
+
+            $this->darDeBajaLosAnteriores($usuario, $datos['antes']);
         }
 
         $this->command?->warn("Contraseña de los nuevos: {$contrasena}".($forzar ? ' (repuesta también en los que ya existían)' : ''));
         $this->command?->warn('⚠️  Son usuarios de PRUEBA. En el hospital real cada persona va con su propio usuario.');
+    }
+
+    /**
+     * Si el correo nuevo ya existía y el viejo también, el viejo sobra:
+     * se le quitan los roles, se desactiva y se da de baja (borrado
+     * lógico). Así no queda una segunda llave de dirección con una
+     * contraseña que todos conocen.
+     *
+     * @param list<string> $correos
+     */
+    private function darDeBajaLosAnteriores(User $vigente, array $correos): void
+    {
+        if ($correos === []) {
+            return;
+        }
+
+        $sobrantes = User::withTrashed()
+            ->whereIn('email', $correos)
+            ->whereKeyNot($vigente->getKey())
+            ->get();
+
+        foreach ($sobrantes as $sobrante) {
+            $sobrante->syncRoles([]);
+            $sobrante->forceFill(['is_active' => false])->save();
+
+            if (! $sobrante->trashed()) {
+                $sobrante->delete();
+            }
+
+            $this->command?->warn("✗ Dado de baja {$sobrante->email}: era el correo anterior de {$vigente->email}.");
+        }
     }
 
     /**

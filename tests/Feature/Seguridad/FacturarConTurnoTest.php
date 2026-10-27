@@ -175,7 +175,7 @@ it('farmacia carga lo que despacha, y nada más', function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('siembra las tres cajeras, laboratorio, consulta externa y los dos de direccion', function (): void {
+it('siembra las cajeras, laboratorio, consulta externa y los dos de direccion', function (): void {
     Sede::factory()->create();
 
     test()->seed(UsuariosDePruebaSeeder::class);
@@ -189,20 +189,45 @@ it('siembra las tres cajeras, laboratorio, consulta externa y los dos de direcci
             ->and(Hash::check('12345678', $usuario->password))->toBeTrue();
     }
 
-    expect(User::query()->where('email', 'like', '%@gmail.com')->count())->toBe(count(UsuariosDePruebaSeeder::USUARIOS));
+    expect(User::withTrashed()->count())->toBe(count(UsuariosDePruebaSeeder::USUARIOS));
 });
+
+it('🔴 en pruebas, los rellenos sembrados por error quedan dados de baja al lado de las personas reales', function (): void {
+    Sede::factory()->create();
+
+    /*
+     * Lo que quedó en pruebas el 26-oct-2026: Aida, la de verdad, y al
+     * lado la «Cajera Turno A» de relleno, las dos con rol de caja.
+     */
+    /** @var User $aida */
+    $aida = User::factory()->create(['email' => 'aidaminellyr@gmail.com', 'name' => 'AIDA MINELLY RIVERA MONTALVAN']);
+    $aida->assignRole('caja');
+
+    /** @var User $relleno */
+    $relleno = User::factory()->create(['email' => 'caja.turnoa@gmail.com', 'name' => 'Cajera Turno A']);
+    $relleno->assignRole('caja');
+
+    test()->seed(UsuariosDePruebaSeeder::class);
+
+    $sobrante = User::withTrashed()->findOrFail($relleno->id);
+
+    expect(User::query()->where('email', 'aidaminellyr@gmail.com')->value('id'))->toBe($aida->id)
+        ->and($sobrante->trashed())->toBeTrue()
+        ->and($sobrante->getRoleNames()->all())->toBe([])
+        ->and(User::query()->where('email', 'like', 'caja.turno%')->exists())->toBeFalse();
+})->note('Mauricio: «deben ser los reales que ya subimos a pruebas». La lista tenía cuentas de relleno y correrla en pruebas las creó con rol y con 12345678 al lado de las cajeras de verdad.');
 
 it('correrlo de nuevo no le pisa la contraseña a nadie', function (): void {
     Sede::factory()->create();
     test()->seed(UsuariosDePruebaSeeder::class);
 
-    $angela = User::query()->where('email', 'angela.cardona@gmail.com')->firstOrFail();
+    $angela = User::query()->where('email', 'angelacardona@gmail.com')->firstOrFail();
     $angela->forceFill(['password' => Hash::make('la-que-ella-eligio')])->save();
 
     test()->seed(UsuariosDePruebaSeeder::class);
 
     expect(Hash::check('la-que-ella-eligio', (string) $angela->fresh()?->password))->toBeTrue()
-        ->and(User::query()->where('email', 'angela.cardona@gmail.com')->count())->toBe(1);
+        ->and(User::query()->where('email', 'angelacardona@gmail.com')->count())->toBe(1);
 });
 
 it('🔴 al cambiarle el correo es el mismo usuario, y no queda el viejo con rol de direccion', function (): void {
@@ -224,6 +249,27 @@ it('🔴 al cambiarle el correo es el mismo usuario, y no queda el viejo con rol
         ->and(Hash::check('la-que-el-eligio', (string) $juan->password))->toBeTrue()
         ->and(User::withTrashed()->where('email', 'juan.cardona@gmail.com')->exists())->toBeFalse();
 })->note('Mauricio, 26-oct-2026: el «Dr. Juan Cardona» de marcador es el Dr. Juan Carlos Cardona Medina, con el correo de dirección. Cambiar solo el correo en la lista dejaba DOS usuarios con rol de dirección, uno de ellos con una contraseña conocida que nadie usa.');
+
+it('🔴 si ya existen el correo nuevo y el viejo, el viejo queda dado de baja y sin roles', function (): void {
+    Sede::factory()->create();
+
+    /** @var User $laDeVerdad */
+    $laDeVerdad = User::factory()->create(['email' => 'angelacardona@gmail.com', 'name' => 'Angela Cardona']);
+    $laDeVerdad->assignRole('direccion');
+
+    /** @var User $laDuplicada */
+    $laDuplicada = User::factory()->create(['email' => 'angela.cardona@gmail.com', 'name' => 'Angela Cardona']);
+    $laDuplicada->assignRole('direccion');
+
+    test()->seed(UsuariosDePruebaSeeder::class);
+
+    $sobrante = User::withTrashed()->findOrFail($laDuplicada->id);
+
+    expect(User::query()->where('email', 'angelacardona@gmail.com')->value('id'))->toBe($laDeVerdad->id)
+        ->and($sobrante->trashed())->toBeTrue()
+        ->and($sobrante->is_active)->toBeFalse()
+        ->and($sobrante->getRoleNames()->all())->toBe([]);
+})->note('26-oct-2026: el seeder decía angela.cardona@gmail.com y ella entra con angelacardona@gmail.com. Al correrlo en pruebas le creó una segunda cuenta de dirección con 12345678. No se borra la fila: si hizo algo, la bitácora sigue diciendo quién.');
 
 it('🔴 en produccion no corre sin la marca del servidor de pruebas', function (): void {
     Sede::factory()->create();
