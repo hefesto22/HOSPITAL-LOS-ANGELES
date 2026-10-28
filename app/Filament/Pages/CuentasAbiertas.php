@@ -80,6 +80,7 @@ use App\Services\ResolutorDePrecio;
 use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
+use App\Support\FichaDelPaciente;
 use App\Support\NumeroDeFormulario;
 use App\Support\TextoCanonico;
 use App\Support\UsuarioAutenticado;
@@ -95,6 +96,7 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\ToggleButtons;
+use Filament\Forms\Components\ViewField;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions;
@@ -204,6 +206,48 @@ class CuentasAbiertas extends Page
     public string $claveDeEnvio = '';
 
     /**
+     * Memoria por pintada de «¿este paciente ya tiene cuenta viva?».
+     *
+     * @var array<int, Cuenta|null>
+     */
+    private array $cuentasVivas = [];
+
+    /**
+     * Memoria por pintada de la ficha del paciente del modal «Abrir
+     * cuenta». El modal se vuelve a pintar con cada campo que se toca, y
+     * la ficha la piden el rótulo del buscador, la visibilidad y la vista:
+     * sin memoria serían tres lecturas del mismo paciente por tecla.
+     *
+     * @var array<int, array{iniciales: string, nombre: string, nn: bool, datos: list<string>}|null>
+     */
+    private array $fichasDelPaciente = [];
+
+    /**
+     * Lo mismo para sus expedientes: los piden la vista, la validación y
+     * el que marca el único.
+     *
+     * @var array<int, array<int, string>>
+     */
+    private array $expedientesPorPersona = [];
+
+    /**
+     * Los pagadores del modal, una vez por pintada: los piden la lista y
+     * la visibilidad de la póliza y de la autorización.
+     *
+     * @var Collection<int, Convenio>|null
+     */
+    private ?Collection $pagadoresDelModal = null;
+
+    /**
+     * Cuántas líneas van cargadas en esta tanda.
+     *
+     * No se muestra en ningún lado y no es un dato del negocio: es lo que
+     * hace que el contexto de la acción cambie en cada ítem para que
+     * Filament no cierre el modal. El porqué está en `cargarEnCuenta`.
+     */
+    public int $renglonDeLaTanda = 0;
+
+    /**
      * ─────────────────────────────────────────────────────────────────
      * EL DESCUENTO DE LA TANDA
      * ─────────────────────────────────────────────────────────────────
@@ -220,22 +264,6 @@ class CuentasAbiertas extends Page
      * siguiente — y nadie lo mira dos veces cuando el campo ya está
      * lleno.
      */
-    /**
-     * Cuántas líneas van cargadas en esta tanda.
-     *
-     * No se muestra en ningún lado y no es un dato del negocio: es lo que
-     * hace que el contexto de la acción cambie en cada ítem para que
-     * Filament no cierre el modal. El porqué está en `cargarEnCuenta`.
-     */
-    /**
-     * Memoria por pintada de «¿este paciente ya tiene cuenta viva?».
-     *
-     * @var array<int, Cuenta|null>
-     */
-    private array $cuentasVivas = [];
-
-    public int $renglonDeLaTanda = 0;
-
     public ?int $cuentaDelDescuento = null;
 
     public ?string $descuentoDeLaTanda = null;
@@ -866,118 +894,190 @@ class CuentasAbiertas extends Page
             ->label('Abrir cuenta')
             ->icon(Heroicon::OutlinedPlus)
             ->color('primary')
+            /*
+             * ─────────────────────────────────────────────────────────
+             * REDISEÑO DEL 26-OCT-2026
+             * ─────────────────────────────────────────────────────────
+             *
+             * Mauricio: «que acá el diseño sea mejor, más bonito». Eran
+             * dos secciones con encabezado y una ayuda debajo de cada
+             * campo: la ventana pedía scroll para llegar al botón. Ahora,
+             * de arriba abajo:
+             *
+             *   · El buscador dice de cada resultado la fecha de
+             *     nacimiento y el documento: dos homónimos ya no se ven
+             *     iguales (§9.D3).
+             *   · Elegido el paciente, su ficha con el expediente. Si
+             *     tiene uno solo —casi siempre— ya viene marcado: antes
+             *     había que abrir un select para elegir la única opción.
+             *   · El tipo de atención en tarjetas: un clic.
+             *   · El pagador agrupado por clase. La póliza y la
+             *     autorización aparecen solo cuando hay seguro: al
+             *     contado no hay nada que escribir ahí.
+             */
+            ->modalIcon(Heroicon::OutlinedFolderPlus)
+            ->modalIconColor('primary')
             ->modalHeading('Abrir la cuenta de un paciente')
-            ->modalDescription(
-                'Se abre el encuentro y su cuenta a la vez. El pagador se puede cambiar después '
-                .'sin perder lo ya cargado.'
-            )
+            ->modalDescription('El encuentro y su cuenta se abren juntos. El pagador se puede cambiar después sin perder lo cargado.')
+            ->modalWidth('4xl')
             ->modalSubmitActionLabel('Abrir la cuenta')
             ->visible(fn (): bool => Gate::allows('create', Cuenta::class))
             ->schema([
-                Section::make('¿Quién es el paciente?')
-                    ->columns(2)
-                    ->schema([
-                        Select::make('persona_id')
-                            ->label('Paciente')
-                            ->required()
-                            ->searchable()
-                            ->native(false)
-                            ->live()
-                            ->columnSpanFull()
-                            ->helperText('Buscá por nombre, apellido o número de expediente antes de crear nada.')
-                            /*
-                             * ─────────────────────────────────────────
-                             * 🔴 EL QUE YA TIENE CUENTA SE VE, PERO NO
-                             * SE PUEDE ELEGIR
-                             * ─────────────────────────────────────────
-                             *
-                             * Sacarlo del buscador era lo primero que se
-                             * pensó y es peor: quien lo busca y no lo
-                             * encuentra concluye «no está registrado» y
-                             * lo crea de nuevo. Este sistema tiene una
-                             * pantalla entera para fusionar duplicados
-                             * justamente porque eso pasa y sale caro.
-                             *
-                             * Apagado y con el número de su cuenta al
-                             * lado: no se puede elegir, se entiende por
-                             * qué, y dice a dónde ir. El aviso aparte
-                             * sobraba.
-                             */
-                            ->getSearchResultsUsing(function (string $search): array {
-                                $encontrados = Persona::buscar($search);
+                Select::make('persona_id')
+                    ->label('Paciente')
+                    ->required()
+                    ->searchable()
+                    ->native(false)
+                    ->live()
+                    ->allowHtml()
+                    ->placeholder('Buscá por nombre, apellido o número de expediente')
+                    ->searchPrompt('Escribí el nombre, el apellido o el número de expediente')
+                    ->noSearchResultsMessage('No aparece nadie así. Revisá cómo se escribe antes de registrarlo: un duplicado sale caro.')
+                    /*
+                     * ─────────────────────────────────────────────────
+                     * 🔴 EL QUE YA TIENE CUENTA SE VE, PERO NO SE PUEDE
+                     * ELEGIR
+                     * ─────────────────────────────────────────────────
+                     *
+                     * Sacarlo del buscador era lo primero que se pensó y
+                     * es peor: quien lo busca y no lo encuentra concluye
+                     * «no está registrado» y lo crea de nuevo. Este
+                     * sistema tiene una pantalla entera para fusionar
+                     * duplicados justamente porque eso pasa y sale caro.
+                     *
+                     * Apagado y con el número de su cuenta debajo, en
+                     * ámbar: no se puede elegir, se entiende por qué, y
+                     * dice a dónde ir.
+                     *
+                     * Los renglones son HTML (`allowHtml`): lo arma
+                     * `FichaDelPaciente`, que escapa todo lo que viene de
+                     * la base. Por lo mismo, el rótulo del elegido también
+                     * pasa por `e()`.
+                     */
+                    ->getSearchResultsUsing(function (string $search): array {
+                        $encontrados = Persona::buscar($search);
 
-                                /*
-                                 * `array_values(array_map(...))` y no
-                                 * `->pluck('id')->all()`: los dos dan lo
-                                 * mismo en tiempo de ejecución, pero solo
-                                 * el primero le prueba a PHPStan que son
-                                 * enteros y que las llaves quedaron
-                                 * 0,1,2… `pluck` devuelve `mixed` porque
-                                 * el nombre de la columna es una cadena
-                                 * que el analizador no puede resolver.
-                                 */
-                                $this->precargarCuentasVivas(array_values(array_map(
-                                    fn (Persona $p): int => (int) $p->id,
-                                    $encontrados->all(),
-                                )));
+                        /*
+                         * Los documentos de los veinte de una vez: leídos
+                         * renglón por renglón serían veinte consultas por
+                         * tecla (§13.2).
+                         */
+                        $encontrados->load('identificadores');
 
-                                return $encontrados
-                                    ->mapWithKeys(fn (Persona $p): array => [
-                                        $p->id => $this->conSuCuentaAbierta($p),
-                                    ])
-                                    ->all();
-                            })
-                            ->disableOptionWhen(fn (mixed $value): bool => $this->cuentaVivaDe($value) instanceof Cuenta)
-                            ->getOptionLabelUsing(fn (mixed $value): ?string => Persona::query()
-                                ->find(is_numeric($value) ? (int) $value : 0)?->nombreCompleto())
-                            ->afterStateUpdated(fn (Set $set) => $set('expediente_id', null)),
+                        /*
+                         * `array_values(array_map(...))` y no
+                         * `->pluck('id')->all()`: los dos dan lo mismo en
+                         * tiempo de ejecución, pero solo el primero le
+                         * prueba a PHPStan que son enteros y que las
+                         * llaves quedaron 0,1,2… `pluck` devuelve `mixed`
+                         * porque el nombre de la columna es una cadena que
+                         * el analizador no puede resolver.
+                         */
+                        $this->precargarCuentasVivas(array_values(array_map(
+                            fn (Persona $p): int => (int) $p->id,
+                            $encontrados->all(),
+                        )));
 
-                        Select::make('expediente_id')
-                            ->label('Expediente')
-                            ->required()
-                            ->native(false)
-                            ->options(fn (Get $get): array => $this->expedientesDe($get('persona_id')))
-                            ->helperText('El expediente es de la sede. Un paciente puede tener uno por sede.'),
+                        $hoy = now();
 
-                        Select::make('tipo')
-                            ->label('Tipo de atención')
-                            ->required()
-                            ->native(false)
-                            ->default(TipoEncuentro::Hospitalizacion->value)
-                            ->options(TipoEncuentro::opciones()),
+                        return $encontrados
+                            ->mapWithKeys(fn (Persona $p): array => [
+                                $p->id => FichaDelPaciente::opcionDelBuscador($p, $hoy, $this->cuentaVivaDe($p->id)?->numero),
+                            ])
+                            ->all();
+                    })
+                    ->disableOptionWhen(fn (mixed $value): bool => $this->cuentaVivaDe($value) instanceof Cuenta)
+                    ->getOptionLabelUsing(function (mixed $value): ?string {
+                        $ficha = $this->fichaDelPaciente($value);
+
+                        return $ficha === null ? null : e($ficha['nombre']);
+                    })
+                    ->afterStateUpdated(fn (Get $get, Set $set) => $set(
+                        'expediente_id',
+                        $this->expedienteUnicoDe($get('persona_id')),
+                    )),
+
+                /*
+                 * La ficha ES el campo del expediente: el estado es su id.
+                 * Se valida con `in` contra los del paciente, lo mismo que
+                 * hacía el select de antes con sus opciones.
+                 */
+                ViewField::make('expediente_id')
+                    ->hiddenLabel()
+                    ->required()
+                    ->in(fn (Get $get): array => array_keys($this->expedientesDe($get('persona_id'))))
+                    ->validationMessages([
+                        'required' => 'Elegí el expediente del paciente.',
+                        'in'       => 'Ese expediente no es de este paciente.',
+                    ])
+                    ->visible(fn (Get $get): bool => $this->fichaDelPaciente($get('persona_id')) !== null)
+                    ->view('filament.forms.ficha-del-paciente')
+                    ->viewData(fn (Get $get): array => [
+                        'ficha'       => $this->fichaDelPaciente($get('persona_id')),
+                        'expedientes' => $this->expedientesDe($get('persona_id')),
                     ]),
 
-                Section::make('¿Quién paga?')
-                    ->columns(2)
+                ViewField::make('tipo')
+                    ->label('Tipo de atención')
+                    ->required()
+                    ->default(TipoEncuentro::Hospitalizacion->value)
+                    ->in(array_keys(TipoEncuentro::opciones()))
+                    ->validationMessages(['required' => 'Elegí el tipo de atención.'])
+                    ->view('filament.forms.tipo-de-atencion')
+                    ->viewData([
+                        'tipos' => array_map(fn (TipoEncuentro $tipo): array => [
+                            'valor'    => $tipo->value,
+                            'etiqueta' => $tipo->etiqueta(),
+                            'icono'    => $tipo->icono(),
+                        ], TipoEncuentro::cases()),
+                    ]),
+
+                Grid::make(2)
                     ->schema([
                         Select::make('convenio_id')
                             ->label('Pagador')
                             ->required()
                             ->native(false)
-                            ->columnSpanFull()
-                            ->options(fn (): array => app(AbridorDeEncuentro::class)
-                                ->pagadoresDisponibles()
-                                ->mapWithKeys(fn (Convenio $c): array => [$c->id => $c->nombre])
-                                ->all())
-                            ->helperText(
-                                'Contado también es un pagador. Si todavía no aparece la póliza, abrila '
-                                .'como contado: cambiarla después no pierde ningún cargo.'
-                            ),
+                            ->options(fn (): array => $this->pagadoresPorClase())
+                            ->helperText('¿La póliza no aparece? Abrila como contado y cambiala después.'),
 
+                        CampoMayusculas::make('motivo')
+                            ->label('Motivo de la atención')
+                            ->hint('Opcional')
+                            ->placeholder('EJ.: DOLOR ABDOMINAL')
+                            ->maxLength(200),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * SOLO CON SEGURO, Y SIN IR AL SERVIDOR
+                         * ─────────────────────────────────────────────
+                         *
+                         * Se muestran y se esconden en el navegador
+                         * (`visibleJs`): el pagador no es `live()`, así
+                         * que elegirlo no vuelve a pintar la página
+                         * entera con todas sus tarjetas.
+                         *
+                         * Escondidos así SÍ llegan al servidor, por eso
+                         * la acción vuelve a preguntar con la misma regla
+                         * (`pideLaPoliza`, `pideLaAutorizacion`): si se
+                         * eligió una aseguradora, se escribió la póliza y
+                         * después se pasó a contado, esa póliza no es de
+                         * esta cuenta y no se guarda.
+                         */
                         CampoMayusculas::make('numero_poliza')
                             ->label('Número de póliza')
-                            ->maxLength(60),
+                            ->maxLength(60)
+                            ->visibleJs(fn (): string => $this->siElPagadorPide(
+                                fn (int $convenioId): bool => $this->pideLaPoliza($convenioId),
+                            )),
 
                         CampoMayusculas::make('numero_autorizacion')
                             ->label('Número de autorización')
+                            ->hint('Si el seguro ya la dio')
                             ->maxLength(60)
-                            ->helperText('Si el seguro ya la dio. Se puede cargar después.'),
-
-                        CampoMayusculas::area('motivo')
-                            ->label('Motivo de la atención')
-                            ->maxLength(200)
-                            ->columnSpanFull()
-                            ->rows(2),
+                            ->visibleJs(fn (): string => $this->siElPagadorPide(
+                                fn (int $convenioId): bool => $this->pideLaAutorizacion($convenioId),
+                            )),
                     ]),
             ])
             ->action(function (array $data): void {
@@ -1004,9 +1104,11 @@ class CuentasAbiertas extends Page
                         tipo: TipoEncuentro::from((string) $data['tipo']),
                         convenio: $convenio,
                         motivo: is_string($data['motivo'] ?? null) && $data['motivo'] !== '' ? $data['motivo'] : null,
-                        numeroPoliza: is_string($data['numero_poliza'] ?? null) && $data['numero_poliza'] !== ''
+                        numeroPoliza: $this->pideLaPoliza($convenio->id)
+                            && is_string($data['numero_poliza'] ?? null) && $data['numero_poliza'] !== ''
                             ? $data['numero_poliza'] : null,
-                        numeroAutorizacion: is_string($data['numero_autorizacion'] ?? null) && $data['numero_autorizacion'] !== ''
+                        numeroAutorizacion: $this->pideLaAutorizacion($convenio->id)
+                            && is_string($data['numero_autorizacion'] ?? null) && $data['numero_autorizacion'] !== ''
                             ? $data['numero_autorizacion'] : null,
                     );
                 } catch (EncuentroException|CuentaException $e) {
@@ -7608,28 +7710,6 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * La cuenta viva del paciente, si la tiene.
-     *
-     * Congelada cuenta como viva: congelar es el paso previo a cerrar, no
-     * un cierre, y esa cuenta todavía va a salir en una factura.
-     */
-    /**
-     * El nombre del paciente, con su cuenta viva al lado si la tiene.
-     *
-     * El rótulo va en la propia opción y no en un aviso aparte: la opción
-     * apagada explica sola por qué no se puede elegir, y de paso dice a
-     * qué cuenta hay que ir.
-     */
-    private function conSuCuentaAbierta(Persona $persona): string
-    {
-        $abierta = $this->cuentaVivaDe($persona->id);
-
-        return $abierta instanceof Cuenta
-            ? $persona->nombreCompleto().' — ya tiene '.$abierta->numero.' abierta'
-            : $persona->nombreCompleto();
-    }
-
-    /**
      * Resuelve de una sola vez qué pacientes de la búsqueda tienen cuenta
      * viva.
      *
@@ -7676,6 +7756,12 @@ class CuentasAbiertas extends Page
         }
     }
 
+    /**
+     * La cuenta viva del paciente, si la tiene.
+     *
+     * Congelada cuenta como viva: congelar es el paso previo a cerrar, no
+     * un cierre, y esa cuenta todavía va a salir en una factura.
+     */
     private function cuentaVivaDe(mixed $personaId): ?Cuenta
     {
         if (! is_numeric($personaId)) {
@@ -8207,6 +8293,9 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * Los expedientes del paciente en esta sede (el scope de sesión de
+     * `Expediente` filtra la sede), el más nuevo primero.
+     *
      * @return array<int, string>
      */
     private function expedientesDe(mixed $personaId): array
@@ -8215,11 +8304,130 @@ class CuentasAbiertas extends Page
             return [];
         }
 
-        return Expediente::query()
-            ->where('persona_id', (int) $personaId)
+        $clave = (int) $personaId;
+
+        if (array_key_exists($clave, $this->expedientesPorPersona)) {
+            return $this->expedientesPorPersona[$clave];
+        }
+
+        /** @var array<int, string> $expedientes */
+        $expedientes = Expediente::query()
+            ->where('persona_id', $clave)
             ->orderByDesc('abierto_el')
             ->pluck('numero', 'id')
             ->all();
+
+        return $this->expedientesPorPersona[$clave] = $expedientes;
+    }
+
+    /**
+     * El expediente que se marca solo al elegir al paciente: el único que
+     * tiene. Con varios no se adivina; con ninguno no hay qué marcar.
+     */
+    private function expedienteUnicoDe(mixed $personaId): ?int
+    {
+        $expedientes = $this->expedientesDe($personaId);
+
+        return count($expedientes) === 1 ? array_key_first($expedientes) : null;
+    }
+
+    /**
+     * La ficha del paciente elegido en el modal «Abrir cuenta», o null si
+     * no hay ninguno (o el id no existe).
+     *
+     * @return array{iniciales: string, nombre: string, nn: bool, datos: list<string>}|null
+     */
+    private function fichaDelPaciente(mixed $personaId): ?array
+    {
+        if (! is_numeric($personaId)) {
+            return null;
+        }
+
+        $clave = (int) $personaId;
+
+        if (array_key_exists($clave, $this->fichasDelPaciente)) {
+            return $this->fichasDelPaciente[$clave];
+        }
+
+        $persona = Persona::query()->with('identificadores')->find($clave);
+
+        return $this->fichasDelPaciente[$clave] = $persona instanceof Persona
+            ? FichaDelPaciente::de($persona, now())
+            : null;
+    }
+
+    /**
+     * @return Collection<int, Convenio>
+     */
+    private function pagadoresDelModal(): Collection
+    {
+        return $this->pagadoresDelModal ??= app(AbridorDeEncuentro::class)->pagadoresDisponibles();
+    }
+
+    /**
+     * Los pagadores agrupados por clase —Contado, Aseguradora privada,
+     * Seguro externo…—, en el orden en que los da `pagadoresDisponibles`:
+     * contado primero.
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function pagadoresPorClase(): array
+    {
+        $grupos = [];
+
+        foreach ($this->pagadoresDelModal() as $convenio) {
+            $grupos[$convenio->tipo->etiqueta()][$convenio->id] = $convenio->nombre;
+        }
+
+        return $grupos;
+    }
+
+    private function pagadorDe(mixed $convenioId): ?Convenio
+    {
+        if (! is_numeric($convenioId)) {
+            return null;
+        }
+
+        return $this->pagadoresDelModal()->firstWhere('id', (int) $convenioId);
+    }
+
+    /**
+     * La condición de JavaScript que muestra un campo según el pagador
+     * elegido, sin ir al servidor: los ids de los pagadores para los que
+     * `$pide` dice que sí. Son enteros de la base, nunca algo tecleado
+     * (`visibleJs` se evalúa en el navegador), y van entre comillas
+     * simples porque Filament la escribe dentro de un atributo con
+     * comillas dobles.
+     *
+     * @param callable(int): bool $pide
+     */
+    private function siElPagadorPide(callable $pide): string
+    {
+        $ids = $this->pagadoresDelModal()
+            ->filter(fn (Convenio $convenio): bool => $pide($convenio->id))
+            ->map(fn (Convenio $convenio): string => "'".$convenio->id."'")
+            ->implode(',');
+
+        return "[{$ids}].includes(String(\$get('convenio_id') ?? ''))";
+    }
+
+    /**
+     * La póliza, con todo pagador que no sea el contado: también con el
+     * seguro externo, que no paga pero sale en la factura con su póliza
+     * para que el paciente reclame (`facturaANombreDelSeguro()`).
+     */
+    private function pideLaPoliza(mixed $convenioId): bool
+    {
+        return $this->pagadorDe($convenioId)?->tipo->facturaANombreDelSeguro() ?? false;
+    }
+
+    /**
+     * La autorización, solo cuando paga un tercero: al seguro externo el
+     * hospital no le pide nada, le cobra al paciente.
+     */
+    private function pideLaAutorizacion(mixed $convenioId): bool
+    {
+        return $this->pagadorDe($convenioId)?->tipo->pagaUnTercero() ?? false;
     }
 
     /**
