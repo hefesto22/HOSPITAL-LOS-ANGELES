@@ -83,6 +83,7 @@ use App\Support\CatalogoDelRol;
 use App\Support\FichaDelPaciente;
 use App\Support\NumeroDeFormulario;
 use App\Support\TextoCanonico;
+use App\Support\TiempoDelEncuentro;
 use App\Support\UsuarioAutenticado;
 use BackedEnum;
 use Carbon\CarbonInterface;
@@ -9168,7 +9169,8 @@ class CuentasAbiertas extends Page
             'nombre'       => $persona->nombreCompleto(),
             'expediente'   => $encuentro->expediente->numero,
             'ingreso'      => $encuentro->abierto_en->format('d/m/Y H:i'),
-            'desde'        => $encuentro->abierto_en->diffForHumans(),
+            'desde'        => TiempoDelEncuentro::paraLaTarjeta($encuentro->tipo, $encuentro->abierto_en, $ahora),
+            'desde_icono'  => $encuentro->tipo->ocupaCama() ? 'heroicon-o-calendar-days' : 'heroicon-o-clock',
             'tipo'         => $encuentro->tipo->etiqueta(),
             'servicio'     => $encuentro->servicio_id === null ? '' : $encuentro->servicio->nombre,
             'pagador'      => $cuenta->convenio->nombre,

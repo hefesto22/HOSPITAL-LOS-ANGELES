@@ -115,6 +115,7 @@
                                 wire:loading.attr="disabled"
                             @else
                                 disabled
+                                data-apagado
                             @endif
                             class="sihla-tarjeta-cuerpo"
                         >
@@ -143,8 +144,14 @@
                                     {{ $resumen['tipo'] }}
                                 </x-filament::badge>
 
+                                {{--
+                                    «Día 32» en hospitalización; minutos,
+                                    horas o días en lo demás
+                                    (`TiempoDelEncuentro`). La fecha exacta,
+                                    en el título.
+                                --}}
                                 <span class="sihla-hace" title="Ingreso {{ $resumen['ingreso'] }}">
-                                    <x-filament::icon icon="heroicon-o-clock" class="sihla-icono-chico" />
+                                    <x-filament::icon :icon="$resumen['desde_icono']" class="sihla-icono-chico" />
                                     {{ $resumen['desde'] }}
                                 </span>
                             </div>
@@ -233,11 +240,13 @@
                                         wire:loading.attr="disabled"
                                     @else
                                         disabled
+                                        data-apagado
                                         title="{{ $porQueNoAbona }}"
                                     @endif
                                     class="sihla-accion"
                                 >
                                     <x-filament::icon icon="heroicon-o-banknotes" class="sihla-icono-chico" />
+                                    <span class="sihla-girando" aria-hidden="true"></span>
                                     <span>Abonar</span>
                                 </button>
                             @endif
@@ -257,11 +266,13 @@
                                         wire:loading.attr="disabled"
                                     @else
                                         disabled
+                                        data-apagado
                                         title="{{ $porQueNoFacturaEsta }}"
                                     @endif
                                     class="sihla-accion"
                                 >
                                     <x-filament::icon icon="heroicon-o-document-text" class="sihla-icono-chico" />
+                                    <span class="sihla-girando" aria-hidden="true"></span>
                                     <span>Facturar</span>
                                 </button>
                             @endif
@@ -274,6 +285,7 @@
                                     class="sihla-accion"
                                 >
                                     <x-filament::icon icon="heroicon-o-clipboard-document-list" class="sihla-icono-chico" />
+                                    <span class="sihla-girando" aria-hidden="true"></span>
                                     <span>Diagnóstico</span>
 
                                     @if ($cuantosDiagnosticos > 0)
@@ -282,73 +294,132 @@
                                 </button>
                             @endif
 
-                            <x-filament::dropdown placement="bottom-end" class="sihla-mas">
-                                <x-slot name="trigger">
-                                    <button
-                                        type="button"
-                                        class="sihla-mas-boton"
-                                        title="Más de esta cuenta"
-                                        aria-label="Más de esta cuenta"
-                                    >
-                                        <x-filament::icon icon="heroicon-m-ellipsis-horizontal" class="sihla-icono-mas" />
-                                    </button>
-                                </x-slot>
-
-                                <x-filament::dropdown.header icon="heroicon-o-hashtag">
-                                    {{ $cuenta->numero }}
-                                </x-filament::dropdown.header>
-
-                                {{-- Solo la fecha: «Ingreso …» no entraba en el ancho del menú. --}}
-                                <x-filament::dropdown.header icon="heroicon-o-clock" title="Ingreso {{ $resumen['ingreso'] }}">
-                                    {{ $resumen['ingreso'] }}
-                                </x-filament::dropdown.header>
-
-                                @if ($botones['clinicos'] || $anula)
-                                    <x-filament::dropdown.list>
-                                        @if ($botones['clinicos'] && ! $diagnosticoAfuera)
-                                            <x-filament::dropdown.list.item
-                                                icon="heroicon-o-clipboard-document-list"
-                                                :badge="$cuantosDiagnosticos > 0 ? $cuantosDiagnosticos : null"
-                                                badge-color="danger"
-                                                wire:click="mountAction('diagnosticar', { cuenta: {{ $cuenta->id }} })"
-                                                x-on:click="close()"
-                                            >
-                                                Diagnóstico
-                                            </x-filament::dropdown.list.item>
-                                        @endif
-
-                                        @if ($botones['clinicos'])
-                                            <x-filament::dropdown.list.item
-                                                icon="heroicon-o-beaker"
-                                                :disabled="true"
-                                                tooltip="La receta es una orden médica y se firma. Se habilita cuando SESAL confirme si la firma electrónica vale en el expediente clínico."
-                                            >
-                                                Tratamiento
-                                            </x-filament::dropdown.list.item>
-                                        @endif
-
-                                        {{--
-                                            Solo para quien puede
-                                            (CuentaPolicy::anular):
-                                            laboratorio y consulta externa
-                                            lo ven en las que ellos abrieron.
-                                        --}}
-                                        @if ($anula)
-                                            <x-filament::dropdown.list.item
-                                                icon="heroicon-o-x-circle"
-                                                color="danger"
-                                                wire:click="mountAction('anularCuenta', { cuenta: {{ $cuenta->id }} })"
-                                                x-on:click="close()"
-                                            >
-                                                Anular cuenta
-                                            </x-filament::dropdown.list.item>
-                                        @endif
-                                    </x-filament::dropdown.list>
-                                @endif
-                            </x-filament::dropdown>
+                            {{--
+                                «⋯» abre el menú COMPARTIDO de la página
+                                (abajo de la grilla) con los datos de esta
+                                cuenta. Un menú por tarjeta era el 58 % del
+                                HTML de cada una, y la grilla entera se
+                                vuelve a mandar cada vez que se cierra un
+                                modal (28-oct-2026).
+                            --}}
+                            <button
+                                type="button"
+                                class="sihla-mas-boton"
+                                title="Más de esta cuenta"
+                                aria-label="Más de esta cuenta"
+                                aria-haspopup="menu"
+                                x-on:click="$dispatch('sihla-menu-de-cuenta', {
+                                    ancla: $el,
+                                    cuenta: {{ $cuenta->id }},
+                                    numero: @js($cuenta->numero),
+                                    ingreso: @js($resumen['ingreso']),
+                                    anula: @js($anula),
+                                    diagnosticos: {{ $cuantosDiagnosticos }},
+                                })"
+                            >
+                                <x-filament::icon icon="heroicon-m-ellipsis-horizontal" class="sihla-icono-mas" />
+                            </button>
                         </div>
                     </div>
                 @endforeach
+            </div>
+
+            {{--
+                ─────────────────────────────────────────────────────────
+                EL MENÚ «⋯», UNO SOLO PARA TODA LA GRILLA (28-oct-2026)
+                ─────────────────────────────────────────────────────────
+
+                Cada tarjeta traía su propio menú armado —encabezados,
+                renglones, íconos, el aviso de Tratamiento—: 8.7 de los
+                14.9 KB de la tarjeta. Cerrar cualquier modal vuelve a
+                mandar la grilla entera, y con 24 cuentas eso eran 200 KB
+                de menús que nadie había abierto.
+
+                Ahora «⋯» manda los datos de SU cuenta y este menú se
+                pega a ese botón (`x-anchor`, que sigue a la ancla cuando
+                cambia). Como vive afuera de las tarjetas, ninguna tarjeta
+                lo tapa (§9.M29).
+
+                Los permisos siguen donde estaban: «Anular» sale solo si
+                `puedeAnular()` lo dijo para esa cuenta, y la acción lo
+                vuelve a verificar al montarse.
+            --}}
+            <div
+                class="sihla-menu"
+                x-data="{
+                    abierto: false,
+                    ancla: null,
+                    c: { cuenta: null, numero: '', ingreso: '', anula: false, diagnosticos: 0 },
+                    abrir(datos) {
+                        if (this.abierto && this.ancla === datos.ancla) {
+                            this.abierto = false
+
+                            return
+                        }
+
+                        this.c = datos
+                        this.ancla = datos.ancla
+                        this.abierto = true
+                    },
+                    accion(nombre) {
+                        this.abierto = false
+                        this.$wire.mountAction(nombre, { cuenta: this.c.cuenta })
+                    },
+                }"
+                x-on:sihla-menu-de-cuenta.window="abrir($event.detail)"
+                x-on:keydown.escape.window="abierto = false"
+            >
+                <div
+                    x-cloak
+                    x-show="abierto"
+                    x-anchor.bottom-end.offset.6.fixed="ancla"
+                    x-on:click.outside="if (! $event.target.closest('.sihla-mas-boton')) abierto = false"
+                    x-transition:enter-start="fi-opacity-0"
+                    x-transition:leave-end="fi-opacity-0"
+                    class="fi-dropdown-panel sihla-menu-panel"
+                    role="menu"
+                >
+                    <div class="sihla-menu-cabecera">
+                        <x-filament::dropdown.header icon="heroicon-o-hashtag">
+                            <span x-text="c.numero"></span>
+                        </x-filament::dropdown.header>
+
+                        <x-filament::dropdown.header icon="heroicon-o-clock">
+                            <span x-text="c.ingreso" x-bind:title="'Ingreso ' + c.ingreso"></span>
+                        </x-filament::dropdown.header>
+                    </div>
+
+                    <x-filament::dropdown.list x-show="{{ $botones['clinicos'] ? 'true' : 'c.anula' }}">
+                        @if ($botones['clinicos'] && ! $diagnosticoAfuera)
+                            <x-filament::dropdown.list.item
+                                icon="heroicon-o-clipboard-document-list"
+                                x-on:click="accion('diagnosticar')"
+                            >
+                                Diagnóstico
+                                <span class="sihla-contador" x-cloak x-show="c.diagnosticos > 0" x-text="c.diagnosticos"></span>
+                            </x-filament::dropdown.list.item>
+                        @endif
+
+                        @if ($botones['clinicos'])
+                            <x-filament::dropdown.list.item
+                                icon="heroicon-o-beaker"
+                                :disabled="true"
+                                tooltip="La receta es una orden médica y se firma. Se habilita cuando SESAL confirme si la firma electrónica vale en el expediente clínico."
+                            >
+                                Tratamiento
+                            </x-filament::dropdown.list.item>
+                        @endif
+
+                        <x-filament::dropdown.list.item
+                            icon="heroicon-o-x-circle"
+                            color="danger"
+                            x-show="c.anula"
+                            x-on:click="accion('anularCuenta')"
+                        >
+                            Anular cuenta
+                        </x-filament::dropdown.list.item>
+                    </x-filament::dropdown.list>
+                </div>
             </div>
         @endif
     </div>
@@ -409,7 +480,7 @@
          * abajo quedaba DEBAJO de la tarjeta de la fila siguiente.
          */
         .sihla-tarjeta {
-            display: flex; flex-direction: column; height: 100%;
+            position: relative; display: flex; flex-direction: column; height: 100%;
             padding: .875rem .95rem .75rem; border-radius: .75rem; border: 1px solid rgb(228 228 231);
             background: rgb(255 255 255);
             transition: box-shadow .15s ease, border-color .15s ease;
@@ -432,7 +503,8 @@
         .sihla-tarjeta-cuerpo:focus-visible {
             outline: 2px solid var(--primary-600, rgb(79 70 229)); outline-offset: 4px; border-radius: .5rem;
         }
-        .sihla-tarjeta-cuerpo:disabled { cursor: default; }
+        .sihla-tarjeta-cuerpo:disabled { cursor: progress; }
+        .sihla-tarjeta-cuerpo[data-apagado] { cursor: default; }
         .sihla-tarjeta-lectura .sihla-tarjeta-cuerpo { cursor: default; }
 
         .sihla-nombre {
@@ -509,10 +581,49 @@
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .sihla-accion:hover:not(:disabled) { border-color: rgb(161 161 170); background: rgb(244 244 245); }
-        .sihla-accion:disabled { opacity: .45; cursor: not-allowed; }
 
-        .sihla-mas { flex: none; margin-inline-start: auto; }
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * APAGADO NO ES LO MISMO QUE OCUPADO (28-oct-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * `wire:loading.attr="disabled"` apaga TODOS los botones mientras
+         * hay una petición en camino —es lo que impide el doble clic—, y
+         * antes eso los ponía al 45 %: cada búsqueda o cada modal hacía
+         * parpadear la grilla entera. Ahora el gris es solo para los que
+         * no se pueden usar (`data-apagado`, con el porqué en el título);
+         * los ocupados quedan iguales, con el cursor de espera, y el que
+         * se apretó gira (`data-loading`, que Livewire 4 le pone al botón
+         * que hizo la petición).
+         */
+        .sihla-accion:disabled { cursor: progress; }
+        .sihla-accion[data-apagado] { opacity: .45; cursor: not-allowed; }
+
+        .sihla-girando {
+            display: none; flex: none; width: .9rem; height: .9rem; border-radius: 9999px;
+            border: 2px solid currentColor; border-top-color: transparent;
+            animation: sihla-girar .7s linear infinite;
+        }
+        .sihla-accion[data-loading] .sihla-girando { display: inline-block; }
+        .sihla-accion[data-loading] .sihla-icono-chico { display: none; }
+
+        /*
+         * Al tocar la tarjeta (agregar a la cuenta): el borde se enciende
+         * y gira una ruedita en la esquina hasta que abre el modal.
+         */
+        .sihla-tarjeta:has(> .sihla-tarjeta-cuerpo[data-loading]) {
+            border-color: var(--primary-500, rgb(245 158 11));
+        }
+        .sihla-tarjeta:has(> .sihla-tarjeta-cuerpo[data-loading])::after {
+            content: ''; position: absolute; top: .8rem; right: .8rem;
+            width: 1rem; height: 1rem; border-radius: 9999px;
+            border: 2px solid var(--primary-500, rgb(245 158 11)); border-top-color: transparent;
+            animation: sihla-girar .7s linear infinite;
+        }
+        @keyframes sihla-girar { to { transform: rotate(360deg); } }
+
         .sihla-mas-boton {
+            flex: none; margin-inline-start: auto;
             display: flex; align-items: center; justify-content: center;
             width: 2rem; height: 2rem; border-radius: .5rem;
             border: 1px solid rgb(228 228 231); background: rgb(250 250 250);
@@ -521,6 +632,16 @@
         }
         .sihla-mas-boton:hover { border-color: rgb(161 161 170); background: rgb(244 244 245); }
         .sihla-icono-mas { width: 1.1rem; height: 1.1rem; }
+
+        /*
+         * El menú compartido no ocupa lugar en la columna de la página:
+         * su panel es `fixed` y se pega al «⋯» que lo abrió.
+         */
+        .sihla-menu { display: contents; }
+        .sihla-menu-panel > .sihla-menu-cabecera { border-bottom-width: 0 !important; }
+        .sihla-menu-panel > .fi-dropdown-list { border-top: 1px solid var(--gray-100, rgb(244 244 245)); }
+        .dark .sihla-menu-panel > .fi-dropdown-list { border-top-color: rgb(255 255 255 / .06); }
+        .sihla-menu-panel .sihla-contador { margin-inline-start: .35rem; }
 
         .sihla-contador {
             display: inline-flex; align-items: center; justify-content: center;
