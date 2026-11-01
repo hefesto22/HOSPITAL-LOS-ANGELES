@@ -74,6 +74,13 @@ class HonorariosPorMedico extends Page implements HasTable
     use ElijePeriodo;
     use InteractsWithTable;
 
+    /**
+     * El permiso de esta pantalla (31-oct-2026). Se llama como lo
+     * nombraría Shield para una página —`View:` y la clase— y lo crea
+     * `MatrizDePermisosSeeder`, que se lo da a dirección y auditoría.
+     */
+    public const PERMISO = 'View:HonorariosPorMedico';
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBanknotes;
 
     protected static ?string $slug = 'honorarios-por-medico';
@@ -120,16 +127,19 @@ class HonorariosPorMedico extends Page implements HasTable
     }
 
     /**
-     * ⚠️ Hacen falta LOS DOS permisos.
+     * Solo dirección y auditoría (Mauricio, 31-oct-2026: «honorarios por
+     * médico no deberían poder verlo las cajeras»). Dice cuánto facturó
+     * cada médico, y eso no es trabajo del turno.
      *
-     * Ver médicos lo tiene también el rol `medico`, y esta pantalla dice
-     * cuánto facturó cada uno de sus colegas. Pedir además el permiso de
-     * cargos la deja donde corresponde: dirección, auditoría y caja.
+     * Antes se armaba con dos permisos ajenos —ver médicos y ver cargos—
+     * y caja tenía los dos por otras razones: elige al médico al cargar
+     * el honorario y ve los cargos de la cuenta. Una pantalla que se
+     * decide con permisos prestados se abre sola el día que otro rol los
+     * necesita; por eso tiene el suyo.
      */
     public static function canAccess(): bool
     {
-        return Gate::allows('viewAny', Medico::class)
-            && Gate::allows('viewAny', Cargo::class);
+        return Gate::allows(self::PERMISO);
     }
 
     /**
@@ -138,6 +148,8 @@ class HonorariosPorMedico extends Page implements HasTable
      */
     public function mount(): void
     {
+        abort_unless(static::canAccess(), 403);
+
         $this->leerElPeriodoDeLaUrl();
 
         $medico = request()->query('medico');

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Filament\Pages\BasesDePrecios;
 use App\Filament\Pages\CuentasAbiertas;
+use App\Filament\Pages\HonorariosPorMedico;
 use App\Filament\Resources\ActivityLogResource;
 use App\Filament\Resources\Cargos\CargoResource;
 use App\Filament\Resources\CategoriasItem\CategoriaItemResource;
@@ -134,6 +135,14 @@ it('🔴 rangos de CAI: solo direccion y auditoria, y caja tampoco', function ()
 
     expect(RangoCaiResource::canCreate())->toBeFalse();
 })->note('Mauricio, 22-oct-2026: «rangos de CAI solo debería poder verlo administrador y super admin». Caja lo veía para saber por qué no le dejaba facturar; eso ahora está en su escritorio («Facturas que quedan»). Auditoría lo lee, como los convenios: revisar con qué CAI se facturó es su trabajo.');
+
+it('🔴 honorarios por medico: solo direccion y auditoria, y caja tampoco', function (): void {
+    foreach (array_keys(RoleSeeder::ROLES) as $rol) {
+        entraAlMenuComo($rol);
+
+        expect(HonorariosPorMedico::canAccess())->toBe(in_array($rol, ['direccion', 'auditoria'], true), $rol);
+    }
+})->note('Mauricio, 31-oct-2026: «honorarios por médico no deberían poder verlo las cajeras». La pantalla pedía ver médicos y ver cargos, y caja tiene los dos para cargar el honorario. Ahora tiene su propio permiso, que crea la matriz.');
 
 /*
 |--------------------------------------------------------------------------

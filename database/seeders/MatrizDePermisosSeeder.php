@@ -70,6 +70,27 @@ class MatrizDePermisosSeeder extends Seeder
     ];
 
     /**
+     * ─────────────────────────────────────────────────────────────────
+     * PANTALLAS CON PERMISO PROPIO (31-oct-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Las que no son el listado de un modelo y no se pueden decidir con
+     * los permisos de otro: «Honorarios por médico» pedía ver médicos y
+     * ver cargos, caja tenía los dos por otras razones, y la veía.
+     *
+     * Se llaman como los nombraría Shield para una página —`View:` y la
+     * clase— y este seeder los CREA: no dependen de que alguien corra
+     * `shield:generate` en el servidor. Se otorgan en la matriz como
+     * cualquier otro (`'HonorariosPorMedico' => ['View']`), y dirección
+     * se los lleva por el comodín.
+     *
+     * @var list<string>
+     */
+    public const PERMISOS_DE_PANTALLA = [
+        'View:HonorariosPorMedico',
+    ];
+
+    /**
      * Rol => sujeto del permiso, con las acciones concedidas.
      *
      * El sujeto es el nombre del MODELO en PascalCase, tal como lo arma
@@ -126,6 +147,13 @@ class MatrizDePermisosSeeder extends Seeder
              */
             'Medico'       => ['ViewAny', 'View'],
             'Especialidad' => ['ViewAny', 'View'],
+
+            /*
+             * Y cuánto facturó cada médico en el período. Es una pantalla,
+             * no un modelo (ver `PERMISOS_DE_PANTALLA`). Caja no la tiene
+             * (31-oct-2026).
+             */
+            'HonorariosPorMedico' => ['View'],
 
             /*
              * Las compras también, y es de lo primero que mira una
@@ -324,6 +352,10 @@ class MatrizDePermisosSeeder extends Seeder
              * lista. Sin esto el selector aparece vacío y el honorario
              * termina cobrado al precio del tarifario sin que nadie lo
              * haya decidido.
+             *
+             * Ver médicos NO le abre «Honorarios por médico»: esa pantalla
+             * tiene su propio permiso y caja no lo tiene (Mauricio,
+             * 31-oct-2026: «no deberían poder verlo las cajeras»).
              */
             'Medico'       => ['ViewAny', 'View'],
             'Especialidad' => ['ViewAny', 'View'],
@@ -579,6 +611,14 @@ class MatrizDePermisosSeeder extends Seeder
     public function run(): void
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        /*
+         * Antes de leer el universo: así dirección se los lleva por el
+         * comodín y los demás los encuentran al cruzar.
+         */
+        foreach (self::PERMISOS_DE_PANTALLA as $permiso) {
+            Permission::findOrCreate($permiso, 'web');
+        }
 
         /** @var Collection<int, string> $todos */
         $todos = Permission::query()->where('guard_name', 'web')->pluck('name');

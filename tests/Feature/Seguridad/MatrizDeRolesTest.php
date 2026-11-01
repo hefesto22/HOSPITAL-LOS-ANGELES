@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Filament\Pages\HonorariosPorMedico;
 use App\Models\User;
 use Database\Seeders\MatrizDePermisosSeeder;
 use Database\Seeders\RoleSeeder;
@@ -119,9 +120,14 @@ it('la matriz nombra los permisos con el formato que genera Shield', function ()
 })->note('`config/filament-shield.php` usa separator ":" y case pascal. Un `view_any_item` escrito acá no casaría con nada y el rol quedaría mudo — que es exactamente lo que pasó durante todo el bloque 3.');
 
 it('la matriz solo nombra sujetos que existen como modelo', function (): void {
+    /*
+     * Los de otro paquete, y las pantallas con permiso propio
+     * (`MatrizDePermisosSeeder::PERMISOS_DE_PANTALLA`).
+     */
     $deOtroPaquete = [
-        'Activity' => Activity::class,
-        'Role'     => Role::class,
+        'Activity'            => Activity::class,
+        'Role'                => Role::class,
+        'HonorariosPorMedico' => HonorariosPorMedico::class,
     ];
 
     foreach (MatrizDePermisosSeeder::permisosDeclarados() as $permiso) {
