@@ -48,7 +48,7 @@ function unReciboParaCorregir(): array
     conUnServicioDe($cuenta, '1000.0000');
 
     $cajera = User::factory()->create();
-    $turno = TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id, 'usuario_id' => $cajera->id]);
+    $turno = TurnoDeCaja::factory()->deLaCajera($cajera)->create(['sede_id' => $cuenta->sede_id]);
 
     $recibo = app(ReceptorDeAbono::class)->recibir(
         cuenta: $cuenta->refresh(),

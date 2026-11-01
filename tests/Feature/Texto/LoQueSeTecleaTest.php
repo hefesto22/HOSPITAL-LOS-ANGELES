@@ -47,7 +47,7 @@ function unaCuentaParaTeclear(): array
     conUnServicioDe($cuenta, '1000.0000');
 
     $cajera = User::factory()->create();
-    TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id, 'usuario_id' => $cajera->id]);
+    TurnoDeCaja::factory()->deLaCajera($cajera)->create(['sede_id' => $cuenta->sede_id]);
 
     return ['cuenta' => $cuenta->refresh(), 'cajera' => $cajera];
 }

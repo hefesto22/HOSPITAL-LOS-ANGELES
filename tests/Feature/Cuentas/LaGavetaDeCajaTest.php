@@ -46,9 +46,8 @@ function unaGavetaConTresRecibos(): array
     conUnServicioDe($cuenta, '2000.0000');
 
     $cajera = User::factory()->create();
-    $turno = TurnoDeCaja::factory()->create([
+    $turno = TurnoDeCaja::factory()->deLaCajera($cajera)->create([
         'sede_id'       => $cuenta->sede_id,
-        'usuario_id'    => $cajera->id,
         'fondo_inicial' => '300.00',
     ]);
 

@@ -11,6 +11,7 @@ use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Factura;
 use App\Models\Sede;
+use App\Models\TurnoDeCaja;
 use App\Models\User;
 use App\Services\AbridorDeTurnoDeCaja;
 use App\Services\ReceptorDeAbono;
@@ -37,6 +38,14 @@ use Spatie\Permission\PermissionRegistrar;
  *   · la cajera de OTRO turno no cobra ni cierra en el que está abierto;
  *   · con un turno abierto no se abre otro: la gaveta es una sola;
  *   · el nombre del turno viene solo, el que sigue, y da la vuelta.
+ *
+ * Y desde el 31-oct-2026 (Mauricio: «cada usuario de caja que tiene
+ * turno asignado solo puede abrir y cerrar su turno»):
+ *
+ *   · la cajera abre solo el suyo; quien no tiene turno asignado no abre;
+ *   · haberlo abierto no lo hace suyo: el C que abrió la del A lo cierran
+ *     las del C o la administración;
+ *   · la dirección abre y cierra cualquiera, tenga o no turno asignado.
  *
  * ⚠️ Ayudantes con nombre propio: con `--parallel` dos funciones globales
  * iguales en archivos distintos chocan.
@@ -208,9 +217,85 @@ it('se puede saltar un turno eligiéndolo, y el que sigue cuenta desde ese', fun
         ->and(abridorDeLaGaveta()->siguienteEn($sede))->toBe('TURNO A');
 });
 
-it('quien no tiene turno asignado trabaja en el que abrió', function (): void {
+it('🔴 la cajera sin turno asignado no abre la caja', function (): void {
+    ['sede' => $sede] = gavetaDeLaPrueba();
+    $ana = alguienDeCaja('caja', null, $sede);
+
+    expect(fn () => abridorDeLaGaveta()->abrir($ana, $sede, Decimal::de('100.00')))
+        ->toThrow(CajaException::class, 'No tenés un turno asignado');
+
+    expect(abridorDeLaGaveta()->abiertoEn($sede))->toBeNull();
+})->note('Abriría una gaveta que después no puede cobrar ni cerrar. Hasta el 31-oct trabajaba en la que abría: era la misma puerta por la que la del A cerraba el C.');
+
+it('🔴 la cajera abre solo su turno: el de otra no, aunque sea el que sigue', function (): void {
+    ['sede' => $sede] = gavetaDeLaPrueba();
+    $administracion = alguienDeCaja('direccion', null, $sede);
+    $aida = alguienDeCaja('caja', 'Turno A', $sede);
+
+    $primero = abridorDeLaGaveta()->abrir($administracion, $sede, Decimal::de('0'));
+    abridorDeLaGaveta()->cerrar($primero, Decimal::de('0'), null, $administracion->id);
+
+    expect(abridorDeLaGaveta()->siguienteEn($sede))->toBe('TURNO B');
+
+    expect(fn () => abridorDeLaGaveta()->abrir($aida, $sede, Decimal::de('0'), 'Turno B'))
+        ->toThrow(CajaException::class, 'Tu turno es el TURNO A');
+
+    expect(abridorDeLaGaveta()->abiertoEn($sede))->toBeNull();
+
+    $suyo = abridorDeLaGaveta()->abrir($aida, $sede, Decimal::de('0'));
+
+    expect($suyo->nombre)->toBe('TURNO A');
+})->note('Sin elegir, a la cajera le viene el suyo aunque siga otro. El que sigue lo abren las de ese turno o la administración.');
+
+it('🔴 haberlo abierto no lo hace suyo: el C que abrió la cajera del A lo cierran las del C', function (): void {
+    ['cuenta' => $cuenta, 'sede' => $sede] = gavetaDeLaPrueba();
+    $aida = alguienDeCaja('caja', 'Turno A', $sede);
+    $carmen = alguienDeCaja('caja', 'Turno C', $sede);
+
+    /*
+     * Como quedaron los que se abrieron antes del 31-oct: la del A abría
+     * el C. El servicio ya no lo deja, así que se arma a mano.
+     */
+    $turno = TurnoDeCaja::factory()->create([
+        'sede_id'       => $sede->id,
+        'usuario_id'    => $aida->id,
+        'nombre'        => 'Turno C',
+        'fondo_inicial' => '500.00',
+    ]);
+
+    expect(fn () => abridorDeLaGaveta()->cerrar($turno, Decimal::de('500.00'), null, $aida->id))
+        ->toThrow(CajaException::class, 'Tu turno es el TURNO A');
+
+    expect(fn () => app(ReceptorDeAbono::class)->recibir(
+        cuenta: $cuenta,
+        medios: [efectivoDeLaGaveta('50.00')],
+        quienRecibe: $aida,
+    ))->toThrow(CajaException::class, 'La gaveta está en el TURNO C');
+
+    $cerrado = abridorDeLaGaveta()->cerrar($turno->refresh(), Decimal::de('500.00'), null, $carmen->id);
+
+    expect($cerrado->estaAbierto())->toBeFalse()
+        ->and($cerrado->usuario_id)->toBe($aida->id)
+        ->and($cerrado->cerrado_por)->toBe($carmen->id);
+})->note('Es el caso de Mauricio, 31-oct-2026: la del A abría el C y lo cerraba ella, firmando el arqueo de una gaveta que no era la suya.');
+
+it('la dirección abre y cierra cualquier turno, aunque tenga uno asignado', function (): void {
+    ['sede' => $sede] = gavetaDeLaPrueba();
+    $direccion = alguienDeCaja('direccion', 'Turno C', $sede);
+
+    $turno = abridorDeLaGaveta()->abrir($direccion, $sede, Decimal::de('0'));
+    $cerrado = abridorDeLaGaveta()->cerrar($turno, Decimal::de('0'), null, $direccion->id);
+
+    expect($turno->nombre)->toBe('TURNO A')
+        ->and($cerrado->cerrado_por)->toBe($direccion->id);
+})->note('A la dirección le viene el que sigue, no el suyo: abre el que toque.');
+
+it('en un hospital sin turnos configurados, lo trabaja quien lo abrió', function (): void {
+    config()->set('sihla.caja.turnos', []);
+
     ['cuenta' => $cuenta, 'sede' => $sede] = gavetaDeLaPrueba();
     $ana = alguienDeCaja('caja', null, $sede);
+    $otra = alguienDeCaja('caja', null, $sede);
 
     $turno = abridorDeLaGaveta()->abrir($ana, $sede, Decimal::de('100.00'));
 
@@ -220,8 +305,12 @@ it('quien no tiene turno asignado trabaja en el que abrió', function (): void {
         quienRecibe: $ana,
     );
 
-    expect($recibo->turno_id)->toBe($turno->id);
-});
+    expect($turno->nombre)->toBeNull()
+        ->and($recibo->turno_id)->toBe($turno->id);
+
+    expect(fn () => abridorDeLaGaveta()->cerrar($turno, Decimal::de('125.00'), null, $otra->id))
+        ->toThrow(CajaException::class);
+})->note('La clínica de una sola cajera: abrirle la caja no pide tocar código (§1.1). Ahí no hay a quién más asignarle el turno.');
 
 it('🔴 la cajera del turno factura con el turno que le abrió la administración; la de otro turno no', function (): void {
     permisosDeCajaParaLaPrueba();

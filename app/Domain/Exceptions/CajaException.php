@@ -76,6 +76,29 @@ final class CajaException extends SihlaException
         );
     }
 
+    /**
+     * Quien quiere abrir un turno que no es el suyo, o no tiene turno
+     * asignado (Mauricio, 31-oct-2026): cada cajera abre y cierra solo el
+     * suyo. La administración no pasa por acá.
+     */
+    public static function soloAbrisTuTurno(?string $turno, ?string $elTuyo): self
+    {
+        if ($elTuyo === null || trim($elTuyo) === '') {
+            return new self(
+                'No tenés un turno asignado en tu usuario, así que no abrís la caja: '
+                .'quedaría una gaveta que no podés cobrar ni cerrar. Pedile a la administración que te asigne el tuyo.'
+            );
+        }
+
+        $suyo = mb_strtoupper(trim($elTuyo), 'UTF-8');
+        $otro = $turno === null || trim($turno) === '' ? 'Ese turno' : 'El '.mb_strtoupper(trim($turno), 'UTF-8');
+
+        return new self(
+            "Tu turno es el {$suyo}: abrís y cerrás solo ese. {$otro} lo abren los de ese turno o la administración. "
+            .'Si hoy lo cubrís vos, pedí que te asignen ese turno en tu usuario.'
+        );
+    }
+
     public static function elTurnoYaEstaCerrado(string $numero): self
     {
         return new self("El turno {$numero} ya está cerrado. Su arqueo no se vuelve a tocar.");

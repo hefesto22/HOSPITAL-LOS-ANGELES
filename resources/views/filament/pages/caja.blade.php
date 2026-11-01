@@ -37,7 +37,7 @@
             --}}
             <x-filament::empty-state
                 :heading="'La gaveta está en el '.$ajena->etiquetaCorta()"
-                :description="'La abrió '.($ajena->usuario?->name ?? 'otra persona').' el '.$ajena->abierto_en->format('d/m').' a las '.$ajena->abierto_en->format('H:i').'. Cobran y la cierran quienes son de ese turno, quien la abrió o la administración; después se abre el turno que sigue.'"
+                :description="'La abrió '.($ajena->usuario?->name ?? 'otra persona').' el '.$ajena->abierto_en->format('d/m').' a las '.$ajena->abierto_en->format('H:i').'. Cobran y la cierran quienes son de ese turno o la administración; después se abre el turno que sigue.'"
                 icon="heroicon-o-lock-closed"
                 icon-color="gray"
             >

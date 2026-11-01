@@ -761,7 +761,6 @@ return [
          * revés. Cobrar en el turno abierto, facturar con él y cerrarlo
          * con su arqueo lo pueden hacer:
          *
-         *   · quien lo abrió;
          *   · quien tiene ese turno asignado en su usuario (columna Turno
          *     del listado de usuarios);
          *   · los roles de esta lista, con cualquier turno. El super
@@ -769,6 +768,11 @@ return [
          *
          * Una cajera del turno B no cobra en el A: la plata caería en un
          * arqueo que cuenta otra persona.
+         *
+         * 🔴 Mauricio, 31-oct-2026: cada cajera abre y cierra SOLO su
+         * turno. Quien lo abrió ya no lo opera por haberlo abierto (la del
+         * A abría el C y lo cerraba ella), y quien no tiene turno asignado
+         * no abre la caja. Abrir cualquier turno es de esta lista.
          */
         'operan_cualquier_turno' => ['direccion'],
 
@@ -818,9 +822,8 @@ return [
          * el turno igual.
          *
          * Los demás roles con permiso de facturar necesitan un turno
-         * abierto que puedan operar: el que abrieron, o el de la gaveta
-         * si es el turno que tienen asignado (ver
-         * `operan_cualquier_turno`).
+         * abierto que puedan operar: el de la gaveta, si es el turno que
+         * tienen asignado (ver `operan_cualquier_turno`).
          */
         'facturan_sin_turno' => ['direccion'],
     ],

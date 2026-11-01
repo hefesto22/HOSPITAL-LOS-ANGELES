@@ -141,7 +141,7 @@ it('la caja va en el mismo hilo que los cargos', function (): void {
     ['cuenta' => $cuenta, 'quien' => $quien, 'item' => $item] = unaCuentaParaElHistorial();
     asentadoHaceUnRato($cuenta, $item);
 
-    TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id, 'usuario_id' => $quien->id]);
+    TurnoDeCaja::factory()->deLaCajera($quien)->create(['sede_id' => $cuenta->sede_id]);
 
     $recibo = app(ReceptorDeAbono::class)->recibir(
         cuenta: $cuenta->refresh(),

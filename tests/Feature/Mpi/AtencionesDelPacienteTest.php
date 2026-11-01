@@ -70,7 +70,7 @@ function unaAtencionParaElExpediente(): array
     );
 
     $cajera = User::factory()->create();
-    TurnoDeCaja::factory()->create(['sede_id' => $cuenta->sede_id, 'usuario_id' => $cajera->id]);
+    TurnoDeCaja::factory()->deLaCajera($cajera)->create(['sede_id' => $cuenta->sede_id]);
 
     return ['cuenta' => $cuenta, 'persona' => $persona, 'cajera' => $cajera];
 }

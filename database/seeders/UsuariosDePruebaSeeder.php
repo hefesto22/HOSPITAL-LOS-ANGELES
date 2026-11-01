@@ -16,8 +16,9 @@ use RuntimeException;
  * están en el servidor de pruebas, que son los que van a producción.
  *
  *   · Las cajeras, cada una con su nombre y su correo: Aida (turno A),
- *     Waldina y Ruth (turno B). El turno es solo el nombre que viene
- *     puesto al abrir la gaveta; quien cubre otro turno lo cambia ahí.
+ *     Waldina y Ruth (turno B). Desde el 31-oct-2026 el turno manda:
+ *     cada cajera abre y cierra solo el suyo. Quien cubre otro turno
+ *     pide que se lo cambien en su usuario (o lo abre la dirección).
  *   · Laboratorio y consulta externa: todavía con un usuario por área y
  *     correo provisional (`@hospital.test`). Mauricio: «esos después se
  *     cambiarán». Cuando se cambien, el correo nuevo va en `email` y el

@@ -13,6 +13,12 @@
       3. Si se elige otro que el que sigue, una línea lo dice: saltarse un
          turno tiene que ser a propósito.
 
+    Mauricio, 31-oct-2026: cada cajera abre y cierra SOLO su turno. Para
+    ella el suyo viene marcado y los demás se ven apagados —con quiénes
+    son de cada uno, para que sepa a quién buscar—. La administración
+    (`$soloElSuyo` falso) elige cualquiera. Quien no tiene turno asignado
+    ve todos apagados y el porqué.
+
     El fondo es un campo de Filament debajo de esta vista. El estado es el
     nombre del turno («TURNO B»); Alpine lo sigue con `$entangle`, y el
     servidor lo vuelve a mirar todo al abrir (`AbridorDeTurnoDeCaja`).
@@ -80,6 +86,8 @@
                             type="button"
                             role="radio"
                             wire:key="tc-turno-{{ $loop->index }}"
+                            @disabled(! $turno['puede'])
+                            aria-disabled="{{ $turno['puede'] ? 'false' : 'true' }}"
                             class="tc-turno"
                             x-bind:class="{ 'tc-turno-elegido': elegido() === @js($turno['nombre']) }"
                             x-bind:aria-checked="elegido() === @js($turno['nombre']) ? 'true' : 'false'"
@@ -114,12 +122,26 @@
                     @endforeach
                 </div>
 
-                <p class="tc-chico tc-tenue" x-show="! seSalta()">
-                    Lo cierra quien es de ese turno, quien lo abre o la administración.
-                </p>
-                <p class="tc-chico" style="color: var(--tc-acento);" x-show="seSalta()" x-cloak>
-                    Sigue el <strong x-text="sigue"></strong>. Vas a abrir el <strong x-text="elegido()"></strong>: hacelo solo si hoy ese turno no se trabaja.
-                </p>
+                @if ($soloElSuyo && $mio === null)
+                    <p class="tc-chico" style="color: var(--tc-mal);">
+                        Tu usuario no tiene turno asignado, así que no abrís la caja. Pedile a la administración que te asigne el tuyo.
+                    </p>
+                @elseif ($soloElSuyo)
+                    <p class="tc-chico tc-tenue" x-show="! seSalta()">
+                        Abrís y cerrás solo tu turno. Los otros los abren y los cierran los de ese turno o la administración.
+                    </p>
+                    <p class="tc-chico" style="color: var(--tc-acento);" x-show="seSalta()" x-cloak>
+                        Sigue el <strong x-text="sigue"></strong>, pero vos abrís solo el tuyo: el <strong x-text="elegido()"></strong>.
+                        Si el <strong x-text="sigue"></strong> se trabaja hoy, lo abren los de ese turno o la administración.
+                    </p>
+                @else
+                    <p class="tc-chico tc-tenue" x-show="! seSalta()">
+                        Lo cierran los de ese turno o la administración.
+                    </p>
+                    <p class="tc-chico" style="color: var(--tc-acento);" x-show="seSalta()" x-cloak>
+                        Sigue el <strong x-text="sigue"></strong>. Vas a abrir el <strong x-text="elegido()"></strong>: hacelo solo si hoy el <strong x-text="sigue"></strong> no se trabaja.
+                    </p>
+                @endif
             </div>
         @endif
     </div>

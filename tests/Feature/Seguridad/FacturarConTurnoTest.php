@@ -57,7 +57,7 @@ function alguienConElRol(string $rol, bool $conTurno = false): User
     $usuario->assignRole($rol);
 
     if ($conTurno) {
-        TurnoDeCaja::factory()->create(['usuario_id' => $usuario->id]);
+        TurnoDeCaja::factory()->deLaCajera($usuario)->create();
     }
 
     $usuario = $usuario->fresh() ?? $usuario;

@@ -86,6 +86,9 @@
     .tc-turno:focus-visible { outline: 2px solid var(--tc-acento); outline-offset: 2px; }
     .tc-turno-elegido { background: var(--tc-acento-fondo); box-shadow: 0 0 0 2px var(--tc-acento); }
     .tc-turno-elegido:hover { background: var(--tc-acento-fondo); }
+    /* El turno de otra: se ve —con quiénes son de él—, pero no se elige. */
+    .tc-turno:disabled { cursor: not-allowed; opacity: .45; }
+    .tc-turno:disabled:hover { background: var(--tc-fondo); }
     .tc-turno-cabeza { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: .5rem; }
     .tc-turno-nombre { font-size: 1rem; font-weight: 700; letter-spacing: .01em; }
     .tc-turno-marca {

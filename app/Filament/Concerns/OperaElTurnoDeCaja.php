@@ -53,7 +53,8 @@ use Illuminate\Support\Facades\Gate;
  *   · ABRIR TURNO — la gaveta está cerrada. El turno que sigue ya viene
  *     marcado.
  *   · CERRAR TURNO · TURNO A — está abierta y quien mira puede trabajar
- *     en ella (la abrió, es de ese turno o es de la administración).
+ *     en ella (es de ese turno o es de la administración). Haberla
+ *     abierto no alcanza (31-oct-2026).
  *   · GAVETA EN TURNO A — está abierta en un turno que no es de quien
  *     mira. No cobra ni cierra; el botón explica quién lo hace.
  */
@@ -125,19 +126,26 @@ trait OperaElTurnoDeCaja
             ->modalDescription('Elegí el turno y escribí con cuánto efectivo arranca la gaveta.')
             ->modalWidth(Width::TwoExtraLarge)
             ->modalSubmitActionLabel('Abrir el turno')
+            /*
+             * La cajera sin turno asignado ve el botón —tiene que saber
+             * por qué no abre—, pero «Abrir el turno» queda apagado y la
+             * ventana le dice a quién pedírselo.
+             */
+            ->modalSubmitAction(fn (Action $action): Action => $action->disabled(! $this->puedeAbrirAlgunTurno()))
             ->visible(fn (): bool => ! $this->turnoDeLaGaveta() instanceof TurnoDeCaja
                 && ! $this->turno() instanceof TurnoDeCaja
                 && Gate::allows('create', TurnoDeCaja::class))
             ->schema([
                 /*
-                 * El turno que sigue ya viene marcado: al cerrar el A,
-                 * la caja propone el B. Se puede elegir otro si hoy se
-                 * salta uno.
+                 * Ya viene marcado: la cajera, su turno —es el único que
+                 * puede abrir—; la administración, el que sigue (al
+                 * cerrar el A, la caja propone el B), y puede elegir otro
+                 * si hoy se salta uno.
                  */
                 ViewField::make('nombre')
                     ->hiddenLabel()
                     ->view('filament.forms.abrir-turno')
-                    ->default(fn (): ?string => $this->turnoQueSigue())
+                    ->default(fn (): ?string => $this->puedeAbrirAlgunTurno() ? $this->turnoParaAbrir() : null)
                     ->viewData(fn (): array => $this->datosParaAbrir()),
 
                 TextInput::make('fondo_inicial')
@@ -300,26 +308,34 @@ trait OperaElTurnoDeCaja
 
     /**
      * @return array{
-     *     turnos: list<array{nombre: string, sigue: bool, mio: bool, asignados: list<string>}>,
+     *     turnos: list<array{nombre: string, sigue: bool, mio: bool, puede: bool, asignados: list<string>}>,
      *     sigue: string|null,
+     *     mio: string|null,
+     *     soloElSuyo: bool,
      *     ultimo: array{nombre: string, cerro: string|null, cuando: string, contado: string|null, resultado: string|null, color: string}|null,
      * }
      */
     private function datosParaAbrir(): array
     {
         $sede = $this->sedeDeCaja();
+        $usuario = $this->usuarioDeCaja();
         $abridor = app(AbridorDeTurnoDeCaja::class);
         $sigue = $this->turnoQueSigue();
-        $mio = TextoCanonico::mayusculas($this->usuarioDeCaja()?->turno);
+        $mio = TextoCanonico::mayusculas($usuario?->turno);
         $asignados = $sede instanceof Sede ? $abridor->asignadosEn($sede) : [];
 
         $turnos = [];
 
         foreach (NombresDeTurno::enOrden() as $nombre) {
             $turnos[] = [
-                'nombre'    => $nombre,
-                'sigue'     => $nombre === $sigue,
-                'mio'       => $nombre === $mio,
+                'nombre' => $nombre,
+                'sigue'  => $nombre === $sigue,
+                'mio'    => $nombre === $mio,
+                /*
+                 * Los turnos que no puede abrir se ven igual, apagados:
+                 * la cajera del A tiene que saber quiénes abren el B.
+                 */
+                'puede'     => $usuario instanceof User && $abridor->puedeAbrir($usuario, $nombre),
                 'asignados' => $asignados[$nombre] ?? [],
             ];
         }
@@ -327,9 +343,11 @@ trait OperaElTurnoDeCaja
         $ultimo = $sede instanceof Sede ? $abridor->ultimoEn($sede) : null;
 
         return [
-            'turnos' => $turnos,
-            'sigue'  => $sigue,
-            'ultimo' => $ultimo instanceof TurnoDeCaja ? self::comoCerro($ultimo) : null,
+            'turnos'     => $turnos,
+            'sigue'      => $sigue,
+            'mio'        => $mio,
+            'soloElSuyo' => ! ($usuario instanceof User && $abridor->operaCualquierTurno($usuario)),
+            'ultimo'     => $ultimo instanceof TurnoDeCaja ? self::comoCerro($ultimo) : null,
         ];
     }
 
@@ -478,6 +496,34 @@ trait OperaElTurnoDeCaja
         $sede = $this->sedeDeCaja();
 
         return $sede instanceof Sede ? app(AbridorDeTurnoDeCaja::class)->siguienteEn($sede) : null;
+    }
+
+    /**
+     * El que viene marcado al abrir: el suyo para la cajera, el que sigue
+     * para la administración.
+     */
+    private function turnoParaAbrir(): ?string
+    {
+        $usuario = $this->usuarioDeCaja();
+        $sede = $this->sedeDeCaja();
+
+        if (! $usuario instanceof User || ! $sede instanceof Sede) {
+            return $this->turnoQueSigue();
+        }
+
+        return app(AbridorDeTurnoDeCaja::class)->elQueAbre($usuario, $sede);
+    }
+
+    /**
+     * Si quien mira puede abrir algún turno. Con el turno de su usuario
+     * alcanza: la administración abre cualquiera, la cajera solo el suyo,
+     * y quien no tiene turno asignado, ninguno.
+     */
+    private function puedeAbrirAlgunTurno(): bool
+    {
+        $usuario = $this->usuarioDeCaja();
+
+        return $usuario instanceof User && app(AbridorDeTurnoDeCaja::class)->puedeAbrir($usuario, $usuario->turno);
     }
 
     private function olvidarElTurno(): void

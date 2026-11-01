@@ -39,6 +39,28 @@ class TurnoDeCajaFactory extends Factory
         ];
     }
 
+    /**
+     * El turno abierto por esa cajera y que es SUYO: se llama como el
+     * turno de su usuario (31-oct-2026).
+     *
+     * Abrirlo ya no lo hace de quien lo abre —lo opera quien tiene ese
+     * turno asignado—, así que una cajera sin turno no podría cobrar en
+     * él. Si no tenía uno, se le asigna `$turno` y queda guardado.
+     */
+    public function deLaCajera(User $cajera, string $turno = 'Turno A'): static
+    {
+        if ($cajera->turno === null || trim($cajera->turno) === '') {
+            $cajera->forceFill(['turno' => $turno])->save();
+        }
+
+        $suyo = $cajera->turno;
+
+        return $this->state(fn (): array => [
+            'usuario_id' => $cajera->id,
+            'nombre'     => $suyo,
+        ]);
+    }
+
     public function cerrado(string $contado = '500.00'): static
     {
         return $this->state(fn (array $atributos): array => [

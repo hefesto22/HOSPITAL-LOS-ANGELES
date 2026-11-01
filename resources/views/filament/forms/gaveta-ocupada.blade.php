@@ -6,6 +6,9 @@
     no me aparece Abrir turno?». Dice en qué turno está la gaveta, quién
     la abrió y quiénes la pueden cerrar, para que la cajera del turno B
     sepa a quién buscar en vez de pedir la clave de otro.
+
+    Quien la abrió ya no está en la lista de los que cierran (Mauricio,
+    31-oct-2026): si es de otro turno, haberla abierto no la hace suya.
 --}}
 <div class="tc">
     <div class="tc-franja">
@@ -28,10 +31,6 @@
                         Los del {{ $nombre }}: <strong>{{ implode(', ', $asignados) }}</strong>
                     @endif
                 </span>
-            </li>
-            <li>
-                <x-filament::icon icon="heroicon-m-check-circle" />
-                <span>{{ $abrio }}, que lo abrió</span>
             </li>
             <li>
                 <x-filament::icon icon="heroicon-m-check-circle" />

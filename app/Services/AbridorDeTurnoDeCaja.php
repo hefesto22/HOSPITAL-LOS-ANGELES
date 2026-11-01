@@ -47,14 +47,30 @@ use Illuminate\Support\Facades\DB;
  * cerrarlo y abrir el B. Así que:
  *
  *   · Hay UN turno abierto por sede —una gaveta—, se llame como se llame.
- *   · Lo opera (cobra en él, factura con él, lo cierra) quien lo abrió,
- *     quien tiene ese turno asignado en su usuario, y los roles de
+ *   · Lo opera (cobra en él, factura con él, lo cierra) quien tiene ese
+ *     turno asignado en su usuario y los roles de
  *     `sihla.caja.operan_cualquier_turno`. Ver `puedeOperar()`.
- *   · Al abrir, el nombre ya viene: el que sigue al último en el orden de
- *     `sihla.caja.turnos`.
+ *   · La cajera abre solo SU turno; la administración, cualquiera. Al
+ *     abrir, el nombre ya viene: el suyo para la cajera, y para la
+ *     administración el que sigue al último en el orden de
+ *     `sihla.caja.turnos`. Ver `puedeAbrir()` y `elQueAbre()`.
  *
  * Lo que responsabiliza sigue escrito: `usuario_id` es quién abrió,
  * `cerrado_por` quién contó, y cada recibo dice quién lo cobró.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * 🔴 ABRIRLO NO LO HACE TUYO (Mauricio, 31-oct-2026)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Hasta el 31-oct el turno también lo operaba quien lo abrió, y la
+ * cajera del turno A abría el C y lo cerraba ella: firmaba el arqueo de
+ * una gaveta que no era la suya. Mauricio: cada cajera abre y cierra
+ * solo su turno; el de otra lo cierran las de ese turno, la dirección o
+ * el super administrador.
+ *
+ * Por eso quien abrió ya no cuenta para operar. La única excepción es el
+ * hospital sin turnos configurados: ahí no hay a quién más asignárselo,
+ * y el turno lo trabaja quien lo abrió.
  */
 final class AbridorDeTurnoDeCaja
 {
@@ -65,8 +81,9 @@ final class AbridorDeTurnoDeCaja
     /**
      * Abre la gaveta de la sede.
      *
-     * Sin nombre, toma el turno que sigue (`siguienteEn()`): quien abre
-     * no teclea nada con el primer paciente enfrente.
+     * Sin nombre, toma el que le toca a quien abre (`elQueAbre()`): el
+     * suyo para la cajera, el que sigue para la administración. Nadie
+     * teclea nada con el primer paciente enfrente.
      */
     public function abrir(
         User $usuario,
@@ -121,12 +138,25 @@ final class AbridorDeTurnoDeCaja
                 throw CajaException::yaTenesUnTurnoAbierto($propio->numero);
             }
 
+            /*
+             * 🔴 La cajera abre SU turno, no el que le parezca: abrir el
+             * de otra es dejarle a otra persona una gaveta que no contó,
+             * o quedarse con un arqueo que no es suyo. Se pregunta antes
+             * de pedir el correlativo, para no gastar un número en un
+             * turno que no se abre.
+             */
+            $nombre = TextoCanonico::mayusculas($nombre) ?? $this->elQueAbre($usuario, $sede);
+
+            if (! $this->puedeAbrir($usuario, $nombre)) {
+                throw CajaException::soloAbrisTuTurno($nombre, $usuario->turno);
+            }
+
             $ahora = now();
 
             return TurnoDeCaja::query()->create([
                 'sede_id'    => $sede->id,
                 'numero'     => $this->correlativos->siguiente($sede, TipoCorrelativo::TurnoDeCaja),
-                'nombre'     => TextoCanonico::mayusculas($nombre) ?? $this->siguienteEn($sede),
+                'nombre'     => $nombre,
                 'usuario_id' => $usuario->id,
                 'estado'     => EstadoTurnoDeCaja::Abierto->value,
 
@@ -162,10 +192,10 @@ final class AbridorDeTurnoDeCaja
             }
 
             /*
-             * 🔴 Cuenta la gaveta quien responde por ella: quien la abrió,
-             * quien es de ese turno o la administración. La cajera del
-             * turno B no cierra el A — firmaría un arqueo de plata que no
-             * pasó por sus manos.
+             * 🔴 Cuenta la gaveta quien responde por ella: quien es de ese
+             * turno o la administración. La cajera del turno B no cierra
+             * el A — firmaría un arqueo de plata que no pasó por sus
+             * manos—, y tampoco lo cierra por haberlo abierto ella.
              */
             $quienCierra = $cerradoPor === null ? null : User::query()->find($cerradoPor);
 
@@ -215,50 +245,88 @@ final class AbridorDeTurnoDeCaja
     }
 
     /**
-     * El turno abierto en el que esta persona trabaja: el que abrió ella
-     * o, si no, el de la gaveta de la sede cuando le toca operarlo.
+     * El turno abierto en el que esta persona trabaja: el de la gaveta de
+     * la sede, cuando le toca operarlo.
      *
      * Es lo que pregunta todo lo que mueve plata —recibir un abono,
-     * facturar, cerrar—. Sin sede (no se sabe dónde está parada) solo
-     * cuenta el que abrió ella.
+     * facturar, cerrar—. Sin sede (no se sabe dónde está parada) se mira
+     * el que abrió ella, y también tiene que poder operarlo: haberlo
+     * abierto no alcanza (31-oct-2026).
      */
     public function elQueOpera(User $usuario, Sede|int|null $sede = null): ?TurnoDeCaja
     {
         $sedeId = $sede instanceof Sede ? $sede->id : $sede;
 
-        $propio = $this->abiertoPor($usuario, $sedeId);
+        $turno = $sedeId === null ? $this->abiertoPor($usuario) : $this->abiertoEn($sedeId);
 
-        if ($propio instanceof TurnoDeCaja || $sedeId === null) {
-            return $propio;
-        }
-
-        $deLaGaveta = $this->abiertoEn($sedeId);
-
-        return $deLaGaveta instanceof TurnoDeCaja && $this->puedeOperar($usuario, $deLaGaveta)
-            ? $deLaGaveta
-            : null;
+        return $turno instanceof TurnoDeCaja && $this->puedeOperar($usuario, $turno) ? $turno : null;
     }
 
     /**
      * ─────────────────────────────────────────────────────────────────
-     * QUIÉN PUEDE TRABAJAR EN UN TURNO
+     * QUIÉN PUEDE TRABAJAR EN UN TURNO (31-oct-2026)
      * ─────────────────────────────────────────────────────────────────
      *
-     * Quien lo abrió, quien tiene ese turno asignado en su usuario y los
-     * roles de `sihla.caja.operan_cualquier_turno` (más el super
-     * administrador). El permiso de cobrar o de cerrar se pide aparte:
-     * esto dice EN QUÉ turno, no SI puede.
+     * Quien tiene ese turno asignado en su usuario y los roles de
+     * `sihla.caja.operan_cualquier_turno` (más el super administrador).
+     * Quien lo abrió NO, por haberlo abierto: si es de otro turno, el
+     * arqueo lo cuentan las de este o la administración.
+     *
+     * El permiso de cobrar o de cerrar se pide aparte: esto dice EN QUÉ
+     * turno, no SI puede.
      */
     public function puedeOperar(User $usuario, TurnoDeCaja $turno): bool
     {
-        if ($turno->usuario_id === $usuario->id) {
+        /*
+         * Sin turnos configurados no hay a quién más asignárselo: lo
+         * trabaja quien lo abrió. Es la clínica de una sola cajera, y
+         * abrirle la caja no debería pedir tocar código (§1.1).
+         */
+        $esSuyo = NombresDeTurno::enOrden() === []
+            ? $turno->usuario_id === $usuario->id
+            : NombresDeTurno::mismo($usuario->turno, $turno->nombre);
+
+        return $esSuyo || $this->operaCualquierTurno($usuario);
+    }
+
+    /**
+     * Si esta persona puede abrir la gaveta en ese turno: el suyo, y
+     * cualquiera para la administración (Mauricio, 31-oct-2026).
+     *
+     * Quien no tiene turno asignado no abre: abriría una gaveta que
+     * después no puede cobrar ni cerrar. Para preguntar si puede abrir
+     * alguno, se le pasa el turno de su usuario.
+     */
+    public function puedeAbrir(User $usuario, ?string $nombre): bool
+    {
+        if (NombresDeTurno::enOrden() === [] || NombresDeTurno::mismo($usuario->turno, $nombre)) {
             return true;
         }
 
-        if (NombresDeTurno::mismo($usuario->turno, $turno->nombre)) {
-            return true;
+        return $this->operaCualquierTurno($usuario);
+    }
+
+    /**
+     * El turno que viene marcado al abrir: el suyo para la cajera, el que
+     * sigue al último para la administración —que abre el que toque—.
+     */
+    public function elQueAbre(User $usuario, Sede|int $sede): ?string
+    {
+        $suyo = TextoCanonico::mayusculas($usuario->turno);
+
+        if ($suyo !== null && NombresDeTurno::enOrden() !== [] && ! $this->operaCualquierTurno($usuario)) {
+            return $suyo;
         }
 
+        return $this->siguienteEn($sede);
+    }
+
+    /**
+     * La administración: los roles de `sihla.caja.operan_cualquier_turno`
+     * y el super administrador. Abren, cobran y cierran cualquier turno.
+     */
+    public function operaCualquierTurno(User $usuario): bool
+    {
         return $usuario->hasAnyRole([...self::rolesQueOperanCualquierTurno(), ShieldUtils::getSuperAdminName()]);
     }
 
