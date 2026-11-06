@@ -23,6 +23,19 @@ final class CargoException extends SihlaException
     }
 
     /**
+     * Un honorario sin número: ni lo que cobra el médico, ni el pactado
+     * del seguro, ni una lista real. Cobrar «lo que diga el tarifario»
+     * sería cobrar el L 10 de relleno (Mauricio, 6-nov-2026).
+     */
+    public static function honorarioSinPrecio(string $item): self
+    {
+        return new self(
+            "Escribí cuánto se cobra por «{$item}». Este honorario no tiene precio propio del médico "
+            .'ni en el tarifario, así que el número lo pone quien lo carga.'
+        );
+    }
+
+    /**
      * ⚠️ El mensaje NO pide autorización de nadie, y eso es a propósito.
      *
      * Decía «y quién lo autoriza», y quien lo leía entendía que había que

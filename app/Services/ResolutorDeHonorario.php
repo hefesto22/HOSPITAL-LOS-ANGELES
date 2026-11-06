@@ -121,4 +121,37 @@ final class ResolutorDeHonorario
 
         return $this->memoria[$clave] = $fila instanceof HonorarioMedico ? $fila->monto() : null;
     }
+
+    /**
+     * Solo la fila del médico para ESE pagador, sin caer a su precio
+     * general.
+     *
+     * 🔴 Es la de las cuentas de seguro (Mauricio, 6-nov-2026: «lo que
+     * cobran al Militar y a PALIG ya está fijado»). El precio general del
+     * doctor es lo que le cobra al particular; en la cuenta de un seguro
+     * manda lo pactado con el seguro, y lo único que lo reemplaza es un
+     * precio del médico hecho para ESE seguro.
+     */
+    public function soloDelPagador(
+        int $medicoId,
+        int $itemId,
+        int $convenioId,
+        ?CarbonInterface $momento = null,
+    ): ?Monto {
+        $dia = ($momento ?? now())->toDateString();
+        $clave = $medicoId.':'.$itemId.':solo-'.$convenioId.':'.$dia;
+
+        if (array_key_exists($clave, $this->memoria)) {
+            return $this->memoria[$clave];
+        }
+
+        $fila = HonorarioMedico::query()
+            ->where('medico_id', $medicoId)
+            ->where('item_id', $itemId)
+            ->where('convenio_id', $convenioId)
+            ->vigentes($momento)
+            ->first();
+
+        return $this->memoria[$clave] = $fila instanceof HonorarioMedico ? $fila->monto() : null;
+    }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
@@ -211,7 +212,7 @@ class BasesDePrecios extends Page implements HasTable
         $bases = [[
             'id'      => null,
             'nombre'  => 'PRECIO DE LISTA · PARTICULAR',
-            'cuantos' => $copiador->cuantosTienenPrecio(null),
+            'cuantos' => $copiador->cuantosTienenPrecio(null, sinHonorarios: true),
         ]];
 
         foreach ($this->pagadores() as $convenio) {
@@ -403,10 +404,11 @@ class BasesDePrecios extends Page implements HasTable
         $total = Item::query()
             ->vigentesEn(now())
             ->when($this->convenioId !== null, fn (Builder $q): Builder => $q->where('se_almacena', false))
+            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->where('tipo', '!=', TipoItem::Honorario->value))
             ->count();
 
         $conPrecio = app(CopiadorDeBaseDePrecios::class)
-            ->cuantosTienenPrecio($this->baseActual());
+            ->cuantosTienenPrecio($this->baseActual(), sinHonorarios: $this->convenioId === null);
 
         return [
             'total'     => $total,
@@ -583,6 +585,21 @@ class BasesDePrecios extends Page implements HasTable
              * el intento.
              */
             $query->where('items.se_almacena', false);
+        } else {
+            /*
+             * ─────────────────────────────────────────────────────────
+             * 🔴 LOS HONORARIOS NO VAN EN LA LISTA (Mauricio, 6-nov-2026)
+             * ─────────────────────────────────────────────────────────
+             *
+             * Al particular el honorario se le cobra con el número que se
+             * escribe al cargarlo —lo que cobra ESE médico—, no con un
+             * precio de lista. Acá quedaban para siempre en «Pendientes»
+             * pidiendo un precio que nadie iba a usar.
+             *
+             * En la base de un seguro SÍ aparecen: ahí está lo pactado,
+             * y en la cuenta se cobra sin poder cambiarlo.
+             */
+            $query->where('items.tipo', '!=', TipoItem::Honorario->value);
         }
 
         if ($vista === 'pendientes') {
@@ -896,6 +913,7 @@ class BasesDePrecios extends Page implements HasTable
         return Item::query()
             ->vigentesEn(now())
             ->where('se_almacena', false)
+            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->where('tipo', '!=', TipoItem::Honorario->value))
             ->whereNotExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId))
             ->orderBy('codigo')
             ->get()

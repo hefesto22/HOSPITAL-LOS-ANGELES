@@ -27,11 +27,11 @@ use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
 use App\Domain\Exceptions\FacturaException;
-use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
 use App\Domain\ValueObjects\Decimal;
+use App\Domain\ValueObjects\HonorarioPropuesto;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\MedioDePago;
 use App\Domain\ValueObjects\Monto;
@@ -70,13 +70,12 @@ use App\Services\EmisorDeFactura;
 use App\Services\FormasDeCobro;
 use App\Services\LecturaEnEnvases;
 use App\Services\PoliticaDeDescuentoComercial;
+use App\Services\ProponedorDeHonorario;
 use App\Services\ReceptorDeAbono;
 use App\Services\RegistradorDeAutorizacion;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
 use App\Services\RegistradorDePrestamo;
-use App\Services\ResolutorDeHonorario;
-use App\Services\ResolutorDePrecio;
 use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
@@ -401,12 +400,12 @@ class CuentasAbiertas extends Page
     private array $presentacionesPorItem = [];
 
     /**
-     * Memoria por pintada del precio que el tarifario propone para cada
-     * honorario, en la cuenta que está abierta.
+     * Memoria por pintada del precio con el que se ofrece cada honorario
+     * —por ítem y por médico— en la cuenta que está abierta.
      *
-     * @var array<int, string|null>
+     * @var array<string, HonorarioPropuesto>
      */
-    private array $precioPropuestoPorItem = [];
+    private array $honorarioPropuestoPor = [];
 
     /**
      * Memoria por pintada de los médicos ya leídos.
@@ -1467,6 +1466,21 @@ class CuentasAbiertas extends Page
                             ->columnSpan(4)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
                             /*
+                             * 🔴 SEGURO CON PRECIO PACTADO: BLOQUEADO
+                             * (Mauricio, 6-nov-2026: «lo que cobran al
+                             * Militar y a PALIG ya está fijado»). Un
+                             * campo deshabilitado no viaja al servidor,
+                             * y `honorarioAcordado()` ignora igual lo que
+                             * llegue: el bloqueo no depende del navegador.
+                             *
+                             * En el particular —o en un seguro que no lo
+                             * pactó— es obligatorio: sin número no hay
+                             * honorario que cobrar.
+                             */
+                            ->disabled(fn (Get $get): bool => $this->honorarioDeLaLinea($get)?->fijo === true)
+                            ->required(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id')))
+                                && $this->honorarioDeLaLinea($get)?->fijo !== true)
+                            /*
                              * 🔴 El texto distingue los dos casos, porque
                              * un campo vacío se lee igual en los dos y no
                              * lo son: o el tarifario propuso un número, o
@@ -1477,18 +1491,7 @@ class CuentasAbiertas extends Page
                              * Sin decirlo, quien cobra ve el campo en
                              * blanco y concluye que el sistema falló.
                              */
-                            ->helperText(function (Get $get): string {
-                                $item = $this->itemDe($get('item_id'));
-                                $medico = $this->medicoDe($get('medico_id'));
-
-                                if ($medico instanceof Medico && $this->loQueCobraElMedico($item, $medico) !== null) {
-                                    return 'Es lo que cobra '.$medico->nombre.'. Cambialo solo para este cobro.';
-                                }
-
-                                return $this->precioPropuesto($item, $this->idDelMedico($get('medico_id'))) === null
-                                    ? 'Este honorario no tiene precio en el tarifario: escribí cuánto se le cobra.'
-                                    : 'Propuesto del tarifario. Cambialo si este médico cobra otra cosa.';
-                            }),
+                            ->helperText(fn (Get $get): ?string => $this->honorarioDeLaLinea($get)?->explicacion),
 
                         /*
                          * ─────────────────────────────────────────────
@@ -1716,7 +1719,7 @@ class CuentasAbiertas extends Page
                  * el mismo honorario vale otra cosa. La memoria del
                  * formulario anterior no sirve acá.
                  */
-                $this->precioPropuestoPorItem = [];
+                $this->honorarioPropuestoPor = [];
                 $this->medicosPorId = [];
                 $this->cuentaLeida = null;
 
@@ -3311,21 +3314,48 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        $tecleado = NumeroDeFormulario::aDecimal($data['precio_acordado'] ?? null);
-
-        if (! $tecleado instanceof Decimal) {
-            return null;
-        }
-
         /*
-         * ⚠️ Se compara contra el precio de ESTA cuenta —el de su
-         * pagador—, no contra el de lista. Un paciente de seguro tiene
+         * ⚠️ Con el pagador de ESTA cuenta. Un paciente de seguro tiene
          * otro número, y comparar contra el de lista marcaría como
          * negociado un honorario que salió tal cual del convenio.
          */
         $this->cuentaDelFormulario ??= $cuenta->id;
 
-        $medico = $this->medicoDe($data['medico_id'] ?? null);
+        $propuesto = $this->honorarioPropuesto($item, $this->medicoDe($data['medico_id'] ?? null));
+
+        if (! $propuesto instanceof HonorarioPropuesto) {
+            return null;
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * 🔴 LO PACTADO CON EL SEGURO NO SE TECLEA (6-nov-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El campo va bloqueado, pero un bloqueo de pantalla se salta
+         * desde el navegador (§9.M30): lo que llegue acá se ignora. Si el
+         * pactado es la fila del seguro, nulo, y el motor la resuelve con
+         * su vigencia; si es la lista del médico para ese seguro, viaja
+         * en el cargo porque el tarifario no la conoce.
+         */
+        if ($propuesto->fijo) {
+            return $propuesto->delMedico ? $propuesto->precio : null;
+        }
+
+        $tecleado = NumeroDeFormulario::aDecimal($data['precio_acordado'] ?? null);
+
+        if (! $tecleado instanceof Decimal) {
+            /*
+             * Vacío y sin nada que proponer no se cobra «lo que diga el
+             * motor»: para un honorario sin precio real eso es el L 10
+             * de relleno, o un error a medio guardar.
+             */
+            if (! $propuesto->precio instanceof Monto) {
+                throw CargoException::honorarioSinPrecio($item->nombre);
+            }
+
+            return $propuesto->delMedico ? $propuesto->precio : null;
+        }
 
         /*
          * ─────────────────────────────────────────────────────────────
@@ -3338,13 +3368,11 @@ class CuentasAbiertas extends Page
          * hospital y no los L 500 del doctor Carlos. El número tiene que
          * ir, aunque nadie lo haya cambiado.
          */
-        if ($medico instanceof Medico && $this->loQueCobraElMedico($item, $medico) instanceof Monto) {
+        if ($propuesto->delMedico) {
             return Monto::de($tecleado->redondeado(2));
         }
 
-        $propuesto = $this->precioPropuesto($item);
-
-        if ($propuesto !== null && $tecleado->igualA($propuesto)) {
+        if ($propuesto->precio instanceof Monto && $tecleado->igualA($propuesto->precio->valor())) {
             return null;
         }
 
@@ -3407,38 +3435,6 @@ class CuentasAbiertas extends Page
     private function idDelMedico(mixed $valor): ?int
     {
         return is_numeric($valor) ? (int) $valor : null;
-    }
-
-    /**
-     * Lo que ESE médico cobra por ESE honorario, o nulo si no tiene lista
-     * propia y hay que cobrar el precio del tarifario.
-     */
-    private function loQueCobraElMedico(?Item $item, ?Medico $medico): ?Monto
-    {
-        if (! $item instanceof Item || ! $medico instanceof Medico) {
-            return null;
-        }
-
-        /*
-         * 🔴 CON EL PAGADOR DE ESTA CUENTA. El doctor no le cobra lo
-         * mismo al paciente de la calle que al del Hospital Militar o al
-         * de PALIG; preguntar sin convenio devolvería siempre su precio
-         * general y le cobraría de más al asegurado.
-         */
-        return app(ResolutorDeHonorario::class)->para($medico, $item, $this->pagadorDeLaCuenta());
-    }
-
-    /**
-     * El convenio de la cuenta que se está cobrando.
-     *
-     * Memoriza: se pregunta en cada pintada del modal, y son dos
-     * consultas —la cuenta y su pagador—.
-     */
-    private function pagadorDeLaCuenta(): ?Convenio
-    {
-        $cuenta = $this->cuentaEnCurso();
-
-        return $cuenta instanceof Cuenta ? $cuenta->convenio : null;
     }
 
     /**
@@ -3556,61 +3552,32 @@ class CuentasAbiertas extends Page
     }
 
     /**
-     * El precio que el tarifario le da a este ítem para el pagador de la
-     * cuenta abierta. Nulo si no hay precio: ahí el campo queda vacío y
-     * quien cobra escribe el número, que es mejor que proponerle un cero.
+     * El número con el que arranca el campo del honorario: el pactado, el
+     * propuesto, o nulo para que quede vacío —que es mejor que proponer
+     * un cero—.
      */
     private function precioPropuesto(?Item $item, ?int $medicoId = null): ?string
     {
-        if (! $item instanceof Item || $this->cuentaDelFormulario === null) {
+        return $this->honorarioPropuesto($item, $this->medicoDe($medicoId))?->valor();
+    }
+
+    private function honorarioDeLaLinea(Get $get): ?HonorarioPropuesto
+    {
+        return $this->honorarioPropuesto($this->itemDe($get('item_id')), $this->medicoDe($get('medico_id')));
+    }
+
+    /**
+     * Con qué precio se ofrece el honorario en la cuenta abierta, y si se
+     * puede cambiar. La regla vive en `ProponedorDeHonorario`.
+     *
+     * Memoria por pintada: se pregunta en el valor, en el texto de ayuda,
+     * en «obligatorio» y en «bloqueado» —o sea con cada tecla del
+     * formulario—, y resolverlo son varias consultas (§13.2).
+     */
+    private function honorarioPropuesto(?Item $item, ?Medico $medico): ?HonorarioPropuesto
+    {
+        if (! $item instanceof Item || ! $this->esHonorario($item)) {
             return null;
-        }
-
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * 🔴 MANDA LA LISTA DEL MÉDICO SOBRE EL TARIFARIO
-         * ─────────────────────────────────────────────────────────────
-         *
-         * «CONSULTA EXTERNA MEDICINA INTERNA» es un solo ítem del
-         * catálogo, pero el doctor Carlos cobra L 500 y el doctor Juan L
-         * 100: el precio no es del servicio, es de quien lo presta. Si
-         * ese médico tiene lista propia, es la suya la que se propone.
-         *
-         * Sin lista propia se cae al tarifario, y eso es lo normal: solo
-         * unos pocos doctores negociaron tarifa.
-         */
-        if ($medicoId !== null) {
-            $pagador = $this->pagadorDeLaCuenta();
-
-            $suyo = app(ResolutorDeHonorario::class)->paraId(
-                $medicoId,
-                (int) $item->getKey(),
-                $pagador instanceof Convenio ? (int) $pagador->getKey() : null,
-            );
-
-            if ($suyo instanceof Monto) {
-                return $suyo->valor();
-            }
-        }
-
-        /*
-         * Memoria por pintada. El precio se pregunta al proponerlo Y en
-         * cada evaluación del texto de ayuda, o sea con cada tecla del
-         * buscador — y resolverlo son dos consultas: la cuenta con su
-         * pagador, y el tarifario vigente. El §13.2 otra vez.
-         *
-         * `array_key_exists` y no `isset`: el valor legítimo es NULL
-         * cuando el honorario no tiene precio de lista, y con `isset` ese
-         * caso volvería a consultar cada vez — justo el que más se repite
-         * en los honorarios que cambian con cada médico.
-         */
-        /*
-         * La memoria es del precio DE TARIFARIO —el que no depende del
-         * médico—. El del doctor ya se resolvió arriba y lo memoriza
-         * `ResolutorDeHonorario`.
-         */
-        if (array_key_exists($item->id, $this->precioPropuestoPorItem)) {
-            return $this->precioPropuestoPorItem[$item->id];
         }
 
         $cuenta = $this->cuentaEnCurso();
@@ -3619,27 +3586,9 @@ class CuentasAbiertas extends Page
             return null;
         }
 
-        try {
-            return $this->precioPropuestoPorItem[$item->id] = app(ResolutorDePrecio::class)->para(
-                item: $item,
-                convenio: $cuenta->convenio,
-                fechaServicio: now(),
-                sede: $cuenta->sede,
-                /*
-                 * `valor()` y no `exacto()`: es lo que se va a mostrar en un
-                 * campo y lo que después se compara contra lo tecleado. La
-                 * escala 12 de `exacto()` pondría «1080.000000000000» en la
-                 * pantalla y nunca coincidiría con lo que alguien escribe.
-                 */
-            )->precio->valor();
-        } catch (PrecioNoDefinidoException) {
-            /*
-             * Sin precio de lista NO es un error: hay honorarios que no
-             * tienen tarifa porque cambian con cada médico. El campo
-             * queda vacío y el texto de abajo lo explica.
-             */
-            return $this->precioPropuestoPorItem[$item->id] = null;
-        }
+        $clave = $item->id.':'.($medico instanceof Medico ? $medico->id : 'ninguno');
+
+        return $this->honorarioPropuestoPor[$clave] ??= app(ProponedorDeHonorario::class)->para($item, $cuenta, $medico, now());
     }
 
     /**
