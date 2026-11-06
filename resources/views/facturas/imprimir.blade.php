@@ -396,10 +396,13 @@
                         <td>Emisión</td>
                         <td>{{ $factura->emitida_en->format('d/m/Y') }}</td>
                     </tr>
-                    <tr>
-                        <td>Vencimiento</td>
-                        <td>{{ $factura->vence_el?->format('d/m/Y') ?? $factura->emitida_en->format('d/m/Y') }}</td>
-                    </tr>
+                    {{-- Un seguro sin plazo fijo no vence: no se imprime una fecha que nadie pactó (6-nov-2026). --}}
+                    @if ($factura->vence_el !== null)
+                        <tr>
+                            <td>Vencimiento</td>
+                            <td>{{ $factura->vence_el->format('d/m/Y') }}</td>
+                        </tr>
+                    @endif
                 </table>
             </div>
         </header>

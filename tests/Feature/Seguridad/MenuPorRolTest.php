@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Filament\Pages\BasesDePrecios;
 use App\Filament\Pages\CuentasAbiertas;
 use App\Filament\Pages\HonorariosPorMedico;
+use App\Filament\Pages\ReporteDelMes;
 use App\Filament\Resources\ActivityLogResource;
 use App\Filament\Resources\Cargos\CargoResource;
 use App\Filament\Resources\CategoriasItem\CategoriaItemResource;
@@ -143,6 +144,14 @@ it('🔴 honorarios por medico: solo direccion y auditoria, y caja tampoco', fun
         expect(HonorariosPorMedico::canAccess())->toBe(in_array($rol, ['direccion', 'auditoria'], true), $rol);
     }
 })->note('Mauricio, 31-oct-2026: «honorarios por médico no deberían poder verlo las cajeras». La pantalla pedía ver médicos y ver cargos, y caja tiene los dos para cargar el honorario. Ahora tiene su propio permiso, que crea la matriz.');
+
+it('🔴 el reporte del mes: solo direccion y auditoria', function (): void {
+    foreach (array_keys(RoleSeeder::ROLES) as $rol) {
+        entraAlMenuComo($rol);
+
+        expect(ReporteDelMes::canAccess())->toBe(in_array($rol, ['direccion', 'auditoria'], true), $rol);
+    }
+})->note('Dice cuánto vende el hospital y cuánto le deben los seguros: no es trabajo del turno de caja.');
 
 /*
 |--------------------------------------------------------------------------

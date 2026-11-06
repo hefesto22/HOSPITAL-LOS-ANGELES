@@ -68,6 +68,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property numeric-string $isv_15
  * @property numeric-string $isv_18
  * @property numeric-string $total
+ * @property numeric-string $a_cargo_del_seguro
  * @property int $lineas
  * @property bool $paquetes_desglosados
  * @property string|null $nota
@@ -95,7 +96,7 @@ class Factura extends Model
         'paciente_nombre', 'paciente_documento', 'paciente_documento_tipo', 'paciente_poliza',
         'emitida_en', 'fecha_operacion', 'vence_el', 'terminos', 'facturador',
         'bruto', 'descuento_legal', 'descuento_comercial',
-        'exonerado', 'exento', 'gravado', 'gravado_15', 'gravado_18', 'isv', 'isv_15', 'isv_18', 'total',
+        'exonerado', 'exento', 'gravado', 'gravado_15', 'gravado_18', 'isv', 'isv_15', 'isv_18', 'total', 'a_cargo_del_seguro',
         'lineas', 'paquetes_desglosados', 'nota', 'comentarios', 'anulada_en', 'anulada_por', 'motivo_anulacion',
     ];
 
@@ -143,6 +144,16 @@ class Factura extends Model
     public function rangoCai(): BelongsTo
     {
         return $this->belongsTo(RangoCai::class, 'rango_cai_id');
+    }
+
+    /**
+     * Quién pagaba cuando se emitió: el convenio de la cuenta ese día.
+     *
+     * @return BelongsTo<Convenio, $this>
+     */
+    public function convenio(): BelongsTo
+    {
+        return $this->belongsTo(Convenio::class);
     }
 
     /**

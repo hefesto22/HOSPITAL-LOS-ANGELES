@@ -227,13 +227,20 @@ final class EmisorDeFactura
                 'total'               => $totales['total']->redondeado(2),
 
                 /*
+                 * Lo que se le facturó al seguro, congelado (6-nov-2026):
+                 * el reporte del mes suma esto por seguro. Antes vivía
+                 * solo como texto en «Comentarios».
+                 */
+                'a_cargo_del_seguro' => $this->aCargoDelSeguro($bloqueada, $totales['total'])->redondeado(2),
+
+                /*
                  * Términos y vencimiento salen del convenio: contado
                  * vence el mismo día, y un convenio con crédito a
                  * treinta vence a treinta. Es desde ahí que se cuenta la
                  * mora, así que se congela en el papel.
                  */
                 'terminos'   => $this->terminosDe($bloqueada->convenio),
-                'vence_el'   => $this->venceEl($bloqueada->convenio, $ahora)->toDateString(),
+                'vence_el'   => $this->venceEl($bloqueada->convenio, $ahora)?->toDateString(),
                 'facturador' => $this->nombreDelFacturador($quien),
 
                 /*
@@ -514,6 +521,11 @@ final class EmisorDeFactura
 
     /**
      * «Contado» o el nombre del pagador, tal como sale impreso.
+     *
+     * Un seguro sin días pactados es CRÉDITO SIN PLAZO FIJO (Mauricio,
+     * 6-nov-2026: «no se sabe cada cuánto paga ese seguro, no hay un plazo
+     * fijo»). El papel dice «Crédito» y no promete una fecha que nadie
+     * firmó; si el contrato fija días, salen los días.
      */
     private function terminosDe(?Convenio $convenio): string
     {
@@ -527,17 +539,32 @@ final class EmisorDeFactura
             return $convenio->nombre.' · crédito '.$dias.' días';
         }
 
+        if ($convenio->tipo->pagaUnTercero()) {
+            return 'Crédito · '.$convenio->nombre;
+        }
+
         return $convenio->tipo === TipoConvenio::Contado ? 'Contado' : $convenio->nombre;
     }
 
     /**
-     * Cuándo vence. Sin crédito pactado, el mismo día.
+     * Cuándo vence. Con días pactados, a esos días; con un seguro sin plazo
+     * fijo, NUNCA —`null`: el papel no imprime vencimiento y la cobranza
+     * se sigue por la antigüedad de la factura—. Lo que paga el paciente,
+     * el mismo día.
      */
-    private function venceEl(?Convenio $convenio, CarbonInterface $emision): CarbonInterface
+    private function venceEl(?Convenio $convenio, CarbonInterface $emision): ?CarbonInterface
     {
         $dias = $convenio?->dias_credito;
 
-        return is_int($dias) && $dias > 0 ? $emision->copy()->addDays($dias) : $emision->copy();
+        if (is_int($dias) && $dias > 0) {
+            return $emision->copy()->addDays($dias);
+        }
+
+        if ($convenio instanceof Convenio && $convenio->tipo->pagaUnTercero()) {
+            return null;
+        }
+
+        return $emision->copy();
     }
 
     /**
@@ -566,11 +593,7 @@ final class EmisorDeFactura
         }
 
         $total = Decimal::de($total->redondeado(2));
-        $reembolso = Decimal::de($cuenta->total_aseguradora);
-
-        if ($reembolso->mayorQue($total)) {
-            $reembolso = $total;
-        }
+        $reembolso = $this->aCargoDelSeguro($cuenta, $total);
 
         $reparto = sprintf(
             'COPAGO: %s · REEMBOLSO: %s · %s',
@@ -580,6 +603,29 @@ final class EmisorDeFactura
         );
 
         return $nota === null ? $reparto : $reparto."\n".$nota;
+    }
+
+    /**
+     * Lo que queda a cargo del seguro en esta factura: lo que la cuenta
+     * tiene anotado para la aseguradora, recortado al total del papel.
+     * Quien no paga un tercero —contado, reembolso— no le deja nada a un
+     * seguro. Es el mismo número que dicen los comentarios y el que suma
+     * el reporte del mes.
+     */
+    private function aCargoDelSeguro(Cuenta $cuenta, Decimal $total): Decimal
+    {
+        if (! $cuenta->convenio->tipo->pagaUnTercero()) {
+            return Decimal::cero();
+        }
+
+        $total = Decimal::de($total->redondeado(2));
+        $seguro = Decimal::de($cuenta->total_aseguradora);
+
+        if ($seguro->esNegativo()) {
+            return Decimal::cero();
+        }
+
+        return $seguro->mayorQue($total) ? $total : $seguro;
     }
 
     /**

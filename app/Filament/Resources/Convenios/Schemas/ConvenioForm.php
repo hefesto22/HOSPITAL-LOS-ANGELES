@@ -298,7 +298,14 @@ final class ConvenioForm
                      * nulo y agrega una segunda forma de decir lo mismo.
                      */
                     ->visible(fn (Get $get): bool => self::tipoDe($get('tipo'))?->admiteCredito() ?? false)
-                    ->helperText('Vacío = se cobra al momento.'),
+                    /*
+                     * Este campo solo aparece en quien paga un tercero, y un
+                     * seguro nunca paga «al momento»: vacío es crédito sin
+                     * plazo fijo (Mauricio, 6-nov-2026). La factura dice
+                     * «Crédito» y no imprime vencimiento.
+                     */
+                    ->placeholder('Sin plazo fijo')
+                    ->helperText('Vacío = a crédito, sin plazo fijo: paga cuando paga, y la factura no lleva vencimiento. Si el contrato fija días, escribilos.'),
             ]);
     }
 

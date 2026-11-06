@@ -10,6 +10,8 @@ use App\Models\Convenio;
 use App\Models\RangoCai;
 use App\Services\EmisorDeFactura;
 use App\Services\RegistradorDeAutorizacion;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * FACTURAR CON EL SEGURO A CRÉDITO.
@@ -164,4 +166,66 @@ it('sin seguro los comentarios son solo la nota', function (): void {
     );
 
     expect($factura->comentarios)->toBeNull();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Lo que queda a cargo del seguro, y el plazo (6-nov-2026)
+|--------------------------------------------------------------------------
+*/
+
+it('🔴 la factura congela lo que queda a cargo del seguro, y no se edita', function (): void {
+    $cuenta = unaCuentaCon(unSeguroQueCubre('0.7000'));
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '10000.0000');
+    abonarle($cuenta, '3000.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+    );
+
+    expect($factura->refresh()->a_cargo_del_seguro)->toBe('7000.00');
+
+    DB::table('facturas')->where('id', $factura->id)->update(['a_cargo_del_seguro' => '0.00']);
+})->throws(QueryException::class)
+    ->note('El reporte del mes suma esto por seguro. Antes vivía solo como texto en «Comentarios», y lo que se le facturó a un seguro no puede cambiar después.');
+
+it('🔴 un seguro sin plazo fijo factura a credito y sin vencimiento', function (): void {
+    $seguro = unSeguroQueCubre('0.7000');
+    $seguro->forceFill(['dias_credito' => null])->save();
+
+    $cuenta = unaCuentaCon($seguro);
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '10000.0000');
+    abonarle($cuenta, '3000.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+    );
+
+    expect($factura->terminos)->toBe('Crédito · '.$seguro->nombre)
+        ->and($factura->refresh()->vence_el)->toBeNull();
+})->note('Mauricio, 6-nov-2026: «no se sabe cada cuánto paga ese seguro, no hay un plazo fijo». El papel no promete una fecha que nadie pactó.');
+
+it('con dias pactados la factura vence a esos dias', function (): void {
+    $seguro = unSeguroQueCubre('0.7000');
+    $seguro->forceFill(['dias_credito' => 30])->save();
+
+    $cuenta = unaCuentaCon($seguro);
+    RangoCai::factory()->create(['sede_id' => $cuenta->sede_id]);
+
+    conUnServicioDe($cuenta, '10000.0000');
+    abonarle($cuenta, '3000.00');
+
+    $factura = app(EmisorDeFactura::class)->emitir(
+        cuenta: $cuenta->refresh(),
+        cliente: new ClienteDeFactura('JUAN PEREZ'),
+    );
+
+    expect($factura->terminos)->toBe($seguro->nombre.' · crédito 30 días')
+        ->and($factura->refresh()->vence_el?->toDateString())->toBe(now()->addDays(30)->toDateString());
 });

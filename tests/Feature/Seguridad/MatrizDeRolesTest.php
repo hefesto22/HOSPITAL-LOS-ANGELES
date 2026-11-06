@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Filament\Pages\HonorariosPorMedico;
+use App\Filament\Pages\ReporteDelMes;
 use App\Models\User;
 use Database\Seeders\MatrizDePermisosSeeder;
 use Database\Seeders\RoleSeeder;
@@ -128,6 +129,7 @@ it('la matriz solo nombra sujetos que existen como modelo', function (): void {
         'Activity'            => Activity::class,
         'Role'                => Role::class,
         'HonorariosPorMedico' => HonorariosPorMedico::class,
+        'ReporteDelMes'       => ReporteDelMes::class,
     ];
 
     foreach (MatrizDePermisosSeeder::permisosDeclarados() as $permiso) {

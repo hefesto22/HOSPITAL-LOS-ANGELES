@@ -88,6 +88,7 @@ class MatrizDePermisosSeeder extends Seeder
      */
     public const PERMISOS_DE_PANTALLA = [
         'View:HonorariosPorMedico',
+        'View:ReporteDelMes',
     ];
 
     /**
@@ -154,6 +155,12 @@ class MatrizDePermisosSeeder extends Seeder
              * (31-oct-2026).
              */
             'HonorariosPorMedico' => ['View'],
+
+            /*
+             * Y el reporte del mes: lo facturado, lo cobrado y lo que
+             * quedó a crédito de cada seguro (6-nov-2026). Caja tampoco.
+             */
+            'ReporteDelMes' => ['View'],
 
             /*
              * Las compras también, y es de lo primero que mira una

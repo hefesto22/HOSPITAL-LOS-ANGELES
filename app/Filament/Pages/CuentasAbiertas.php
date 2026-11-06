@@ -4998,14 +4998,15 @@ class CuentasAbiertas extends Page
 
     /**
      * «La verdad nunca se sabe cuánto tiempo» (Mauricio, 13-oct-2026): el
-     * plazo pactado se dice como referencia, no como promesa. Corto,
-     * porque va de nota en la franja de arriba.
+     * plazo pactado se dice como referencia, no como promesa. Sin días en
+     * el convenio es crédito sin plazo fijo (6-nov-2026), y se dice así.
+     * Corto, porque va de nota en la franja de arriba.
      */
     private static function plazoCorto(Convenio $convenio): string
     {
         return $convenio->dias_credito !== null
             ? 'paga a '.$convenio->dias_credito.' días o más'
-            : 'paga a 30, 60 o 90 días';
+            : 'a crédito · sin plazo fijo';
     }
 
     /**

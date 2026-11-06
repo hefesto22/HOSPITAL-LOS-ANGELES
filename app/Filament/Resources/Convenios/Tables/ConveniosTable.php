@@ -119,17 +119,22 @@ final class ConveniosTable
                     ->toggleable(),
 
                 /*
-                 * El «días» se pega con `formatStateUsing` y no con
-                 * `suffix()`: el sufijo se dibuja aunque no haya valor, y
-                 * la fila del contado quedaría diciendo «días» sola.
+                 * El «días» se arma en `state()` y no con `suffix()`: el
+                 * sufijo se dibuja aunque no haya valor, y la fila del
+                 * contado quedaría diciendo «días» sola.
                  */
                 TextColumn::make('dias_credito')
                     ->label('Crédito')
                     ->alignEnd()
-                    ->placeholder('Al momento')
-                    ->formatStateUsing(fn (?int $state): ?string => $state === null
-                        ? null
-                        : $state.' días')
+                    /*
+                     * Sin días: el contado cobra al momento; un seguro es
+                     * crédito sin plazo fijo (6-nov-2026).
+                     */
+                    ->state(fn (Convenio $record): string => match (true) {
+                        $record->dias_credito !== null => $record->dias_credito.' días',
+                        $record->tipo->admiteCredito() => 'Sin plazo fijo',
+                        default                        => 'Al momento',
+                    })
                     ->toggleable(),
 
                 TextColumn::make('vigencia_hasta')
