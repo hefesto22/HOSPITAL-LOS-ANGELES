@@ -9153,7 +9153,7 @@ class CuentasAbiertas extends Page
          * nacimiento (el NN) no hay sigla, y la tarjeta lo muestra así
          * en vez de inventar «normal».
          *
-         * ⚠️ Si el pagador no aplica el Art. 30 (PALIG, 9-oct-2026), el
+         * ⚠️ Si el pagador no aplica el Art. 30 («no lo acepta»), el
          * 3R o 4R sigue saliendo —la edad es un dato del paciente— pero
          * en gris y con el porqué en el título: en color, la cajera lo
          * leería como «este lleva descuento» y no lo lleva.

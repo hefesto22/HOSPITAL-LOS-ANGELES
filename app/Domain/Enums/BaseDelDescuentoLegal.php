@@ -43,9 +43,12 @@ enum BaseDelDescuentoLegal: string
     /**
      * Este pagador no acepta el descuento del Art. 30.
      *
-     * Es la que llevan las aseguradoras privadas por decisión del
-     * hospital (9-oct-2026): la mayoría no asegura a esa población, y
-     * con la que sí, la cuenta se cobra sin el descuento de ley.
+     * 🔴 Hoy no la lleva ningún convenio del hospital. PALIG la tuvo del
+     * 9-oct al 6-nov-2026 y se le quitó: «por ley deben dárselos»
+     * (Mauricio). El Art. 30 obliga al que presta el servicio, no al que
+     * paga, así que elegirla pide respaldo escrito —contrato o dictamen—
+     * en el criterio del convenio. Queda como opción porque el pendiente
+     * #16 (qué pasa cuando paga un tercero) sigue sin opinión legal.
      *
      * ⚠️ El adulto mayor no queda peor que el joven del mismo seguro: el
      * hospital puede darle por su cuenta lo que la ley no le dio, hasta
@@ -75,9 +78,10 @@ enum BaseDelDescuentoLegal: string
                 .'y lo que aprueba el pagador se resta después. Es lo del Hospital Militar: de una '
                 .'cuenta de L 10,000 al 25 % quedan L 7,500, el Militar paga lo aprobado y el '
                 .'paciente el resto.',
-            self::NoAplica => 'La cuenta se cobra sin el descuento de tercera y cuarta edad. Es lo '
-                .'de las aseguradoras privadas. Si el hospital quiere, le puede dar al adulto mayor '
-                .'su propio descuento —con motivo— hasta el mismo techo que tendría con la ley.',
+            self::NoAplica => 'La cuenta se cobra sin el descuento de tercera y cuarta edad. Ojo: el '
+                .'Art. 30 obliga al hospital, lo pague quien lo pague; elegí esto solo con respaldo '
+                .'escrito (contrato o dictamen) y citalo abajo. Si el hospital quiere, le puede dar al '
+                .'adulto mayor su propio descuento —con motivo— hasta el mismo techo que tendría con la ley.',
         };
     }
 

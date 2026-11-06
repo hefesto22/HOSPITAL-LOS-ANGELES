@@ -27,14 +27,19 @@ use Illuminate\Support\Str;
  * EL DESCUENTO DE TERCERA Y CUARTA EDAD SEGÚN QUIÉN PAGA.
  *
  * ─────────────────────────────────────────────────────────────────────
- * DECISIÓN DEL HOSPITAL (9-oct-2026)
+ * DECISIÓN DEL HOSPITAL (9-oct-2026, corregida el 6-nov-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
  *   · Hospital Militar → sobre el TOTAL de la factura: cada línea con el
  *     porcentaje del Art. 30 de su categoría, y lo que aprueba el
  *     Militar se resta después.
- *   · Aseguradoras privadas → NO aplican el descuento de ley.
+ *   · PALIG → también sobre el total desde el 6-nov-2026. Del 9-oct al
+ *     6-nov estuvo en «no lo acepta»; el hospital lo corrigió: si un
+ *     adulto mayor tiene seguro, el descuento de ley va igual.
  *   · Particular → como siempre.
+ *
+ * «No lo acepta» sigue siendo una opción del convenio y estas pruebas
+ * la cubren con una aseguradora de fábrica, sin nombre.
  *
  * Cada pagador lo declara en su convenio; ninguna de estas pruebas
  * depende de un nombre de aseguradora. Es configuración, no código.

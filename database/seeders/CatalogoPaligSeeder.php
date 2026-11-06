@@ -300,15 +300,22 @@ class CatalogoPaligSeeder extends Seeder
                 'nombre' => 'PAN-AMERICAN LIFE INSURANCE GROUP',
                 'tipo'   => TipoConvenio::AseguradoraPrivada,
                 /*
-                 * 🔴 Las aseguradoras NO aplican el descuento de tercera y
-                 * cuarta edad (decisión del hospital, 9-oct-2026). Antes
-                 * PALIG lo calculaba sobre lo que paga el paciente.
+                 * 🔴 El adulto mayor con PALIG recibe SIEMPRE el descuento de
+                 * tercera y cuarta edad, sobre el total y línea por línea,
+                 * igual que con el Militar (Mauricio, 6-nov-2026: «por ley
+                 * deben dárselos; sería raro que un paciente de la tercera
+                 * edad tenga seguro con PALIG, pero puede pasar»).
+                 *
+                 * Historia: el 2-sep-2026 era «sobre lo que paga el
+                 * paciente»; el 9-oct-2026, «no lo acepta», porque casi no
+                 * aseguran a esa población. Eso dejaba sin el descuento de
+                 * ley justo al que sí estaba asegurado.
                  */
-                'base_descuento_legal' => BaseDelDescuentoLegal::NoAplica,
-                'fundamento_descuento' => 'Decisión del hospital comunicada el 9-oct-2026: las aseguradoras '
-                    .'privadas no aplican el descuento de tercera y cuarta edad del Art. 30, porque en su '
-                    .'mayoría no aseguran a esa población. Reemplaza el criterio del 2-sep-2026 (sobre lo que '
-                    .'paga el paciente). Pendiente la opinión del contador (consulta del 9-sep-2026).',
+                'base_descuento_legal' => BaseDelDescuentoLegal::SobreElTotalFacturado,
+                'fundamento_descuento' => 'Decisión del hospital del 6-nov-2026: si un paciente de tercera o '
+                    .'cuarta edad tiene PALIG, se le aplica el descuento del Art. 30 sobre el total, línea por '
+                    .'línea, igual que con el Hospital Militar. Es raro que PALIG asegure a esa población, pero '
+                    .'cuando pasa, el descuento va. Reemplaza el criterio del 9-oct-2026 (no lo acepta).',
                 'requiere_autorizacion' => true,
                 'dias_credito'          => 30,
                 'vigencia_desde'        => self::VIGENCIA_DESDE,

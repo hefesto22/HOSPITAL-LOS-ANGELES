@@ -367,13 +367,22 @@ Va como pregunta **#16** en `dominio.md`.
 |---|---|---|
 | Particular (`CONTADO`) | Sobre lo que paga el paciente — que es el total | Descuento 2,500 → paga 7,500 |
 | **Hospital Militar** | **Sobre el total facturado** | Descuento 2,500 → total 7,500 → el Militar paga lo aprobado (6,000) y el paciente el resto (1,500) |
-| **Aseguradoras privadas** (PALIG y las que se agreguen) | **No aplica** | Sin descuento de ley → total 10,000, repartido según la cobertura |
+| ~~**Aseguradoras privadas** (PALIG y las que se agreguen)~~ | ~~**No aplica**~~ | ~~Sin descuento de ley → total 10,000, repartido según la cobertura~~ — **corregido el 6-nov-2026, ver §5.3** |
 
 - **"Sobre el total" es línea por línea**, cada una con el porcentaje del Art. 30 de su categoría (laboratorio 30 %, medicamento 25 %, hospitalario 25 % en la tercera edad). La suma es el descuento sobre la factura. Nunca un porcentaje parejo sobre el total: eso regalaría descuento en lo que la ley rebaja menos.
 - **Se configura por convenio** en Seguros y convenios → «¿Este pagador acepta el descuento de tercera y cuarta edad?». Una aseguradora nueva declara la suya al darse de alta; no hay default.
 - **El adulto mayor no queda peor que el joven del mismo seguro.** Con un pagador que no aplica el Art. 30, el tope del descuento del hospital suma lo que la ley no le dio: en medicamentos, la tercera edad puede llegar a **35 %** y la cuarta a **40 %**, contra **30 %** de un joven. Es descuento del hospital —con motivo escrito—, no se aplica solo. Ver `PoliticaDeDescuentoComercial::topeParaLaLinea()`.
 - **Con seguro, la factura sale siempre con el RTN del convenio** (10-oct-2026), no con el documento del paciente. Si el convenio no tiene RTN cargado, la factura **no se emite** hasta cargarlo en Seguros y convenios. Ver `EmisorDeFactura::conElRtnDelPagador()`.
 - ⚠️ **Riesgo que se asume a sabiendas:** lo de §5.1 sigue en pie —el Art. 30 obliga al prestador, no al pagador—. El adulto mayor asegurado paga su coaseguro sin descuento de ley. La defensa ante un reclamo al 115 es el fundamento escrito en el convenio, con fecha y autor. La consulta al contador del 9-sep-2026 sigue sin respuesta.
+
+### 5.3 Corrección (6-nov-2026): PALIG también descuenta sobre el total
+
+Mauricio: *«si es de tercera o cuarta edad se le dan siempre los descuentos; por ley deben dárselos. Sería raro que un paciente de la tercera edad tenga seguro con PALIG, pero puede pasar.»*
+
+- **PALIG pasa a «Sí, sobre el total de la factura»**, igual que el Militar. Lo del 9-oct partía de que casi no aseguran a esa población, pero dejaba sin el descuento de ley justo al adulto mayor que sí estaba asegurado.
+- Con la cobertura de PALIG vacía («se decide al facturar»), «sobre el total» y «sobre lo que paga el paciente» dan lo mismo. Se separan si un día se carga un porcentaje fijo: con «sobre el total», el adulto mayor recibe el descuento sobre la cuenta entera y PALIG cubre su parte de lo que queda.
+- **«No lo acepta» queda como opción, pero ningún convenio la lleva.** Su texto en pantalla ahora advierte que el Art. 30 obliga al hospital y pide respaldo escrito para elegirla.
+- El riesgo que §5.2 asumía para las aseguradoras privadas deja de existir para PALIG.
 
 ---
 
