@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Database\Seeders;
 
 use App\Models\Especialidad;
+use App\Support\NormalizadorDeTexto;
 use Illuminate\Database\Seeder;
 
 /**
@@ -22,18 +23,24 @@ use Illuminate\Database\Seeder;
  * Esta lista es un piso, no un límite: el hospital agrega las que le
  * falten desde la pantalla.
  *
- * ⚠️ `firstOrCreate` por código: correr los seeders dos veces no puede
- * duplicar el catálogo ni pisar un nombre que el hospital haya
- * corregido a mano.
+ * ⚠️ Idempotente por código Y por nombre: correr los seeders dos veces
+ * no puede duplicar el catálogo ni pisar un nombre que el hospital haya
+ * corregido a mano. Y si el hospital ya creó la especialidad desde el
+ * «crear al vuelo» con OTRO código —«NEUROCIRUGÍA» con NEUROC—, no se
+ * crea una segunda con el código de acá: dos «NEUROCIRUGIA» en el
+ * selector reparten a los médicos entre las dos al azar.
  */
 class EspecialidadesSeeder extends Seeder
 {
     /**
      * Código => nombre.
      *
+     * Pública porque `MedicosDelHospitalSeeder` busca por nombre la que
+     * el hospital haya creado con otro código.
+     *
      * @var array<string, string>
      */
-    private const ESPECIALIDADES = [
+    public const ESPECIALIDADES = [
         'MEDGEN' => 'MEDICINA GENERAL',
         'MEDINT' => 'MEDICINA INTERNA',
         'CIRGEN' => 'CIRUGIA GENERAL',
@@ -68,18 +75,52 @@ class EspecialidadesSeeder extends Seeder
         'REUMAT' => 'REUMATOLOGIA',
         'NUTRIC' => 'NUTRICION',
         'PSICOL' => 'PSICOLOGIA',
+
+        /*
+         * Las que trae la lista «Servicios Médicos» del hospital
+         * (6-nov-2026) y no estaban: cada hoja del libro es una
+         * especialidad, y estas once tienen médicos que cobran honorario
+         * hoy. Sin ellas, el neonatólogo queda como «PEDIATRIA» y el
+         * reporte por especialidad miente.
+         */
+        'CIRPLA' => 'CIRUGIA PLASTICA',
+        'MAXILO' => 'CIRUGIA MAXILOFACIAL',
+        'NEUCIR' => 'NEUROCIRUGIA',
+        'ENDOCR' => 'ENDOCRINOLOGIA',
+        'INFECT' => 'INFECTOLOGIA',
+        'INTENS' => 'MEDICINA INTENSIVA',
+        'NEONAT' => 'NEONATOLOGIA',
+        'CARPED' => 'CARDIOLOGIA PEDIATRICA',
+        'GASPED' => 'GASTROENTEROLOGIA PEDIATRICA',
+        'NEUPED' => 'NEUMOLOGIA PEDIATRICA',
+        'INTPED' => 'MEDICINA INTENSIVA PEDIATRICA',
     ];
 
     public function run(): void
     {
+        $codigos = [];
+        $nombres = [];
+
+        foreach (Especialidad::query()->get(['id', 'codigo', 'nombre']) as $especialidad) {
+            $codigos[$especialidad->codigo] = true;
+            $nombres[NormalizadorDeTexto::clave($especialidad->nombre)] = true;
+        }
+
         foreach (self::ESPECIALIDADES as $codigo => $nombre) {
-            Especialidad::query()->firstOrCreate(
-                ['codigo' => $codigo],
-                [
-                    'nombre'         => $nombre,
-                    'vigencia_desde' => now()->toDateString(),
-                ],
-            );
+            $clave = NormalizadorDeTexto::clave($nombre);
+
+            if (isset($codigos[$codigo]) || isset($nombres[$clave])) {
+                continue;
+            }
+
+            Especialidad::query()->create([
+                'codigo'         => $codigo,
+                'nombre'         => $nombre,
+                'vigencia_desde' => now()->toDateString(),
+            ]);
+
+            $codigos[$codigo] = true;
+            $nombres[$clave] = true;
         }
     }
 }
