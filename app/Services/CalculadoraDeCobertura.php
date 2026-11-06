@@ -35,6 +35,8 @@ use App\Models\Tarifario;
  *      Entonces manda su bandera `elegible` — es donde se declaran las
  *      exclusiones de la póliza (§8.5-6).
  *   3. Si no hay fila propia, manda `cubre_por_defecto` del convenio.
+ *      Salvo que el pagador lo haya pactado por otro lado —el precio de
+ *      un médico hecho para ESE seguro—: lo pactado se cubre (6-nov-2026).
  *
  * ─────────────────────────────────────────────────────────────────────
  * ⚠️ LO QUE ESTA CLASE NO HACE TODAVÍA
@@ -47,7 +49,7 @@ use App\Models\Tarifario;
  */
 final class CalculadoraDeCobertura
 {
-    public function para(Cuenta $cuenta, ?Tarifario $fila): CoberturaAplicada
+    public function para(Cuenta $cuenta, ?Tarifario $fila, bool $pactadoConElPagador = false): CoberturaAplicada
     {
         $convenio = $cuenta->convenio;
 
@@ -57,7 +59,7 @@ final class CalculadoraDeCobertura
             );
         }
 
-        if (! $this->esElegible($convenio, $fila)) {
+        if (! $pactadoConElPagador && ! $this->esElegible($convenio, $fila)) {
             return CoberturaAplicada::ninguna(
                 $convenio->nombre.' no cubre este ítem: se cobra completo al paciente.'
             );

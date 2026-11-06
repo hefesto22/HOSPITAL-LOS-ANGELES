@@ -12,6 +12,7 @@ use App\Domain\Exceptions\CargoException;
 use App\Domain\Exceptions\CuentaException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\PrecioNoDefinidoException;
+use App\Domain\ValueObjects\CoberturaAplicada;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\DescuentoAplicable;
 use App\Domain\ValueObjects\LineaDeCargo;
@@ -95,6 +96,7 @@ final class RegistradorDeCargo
         private readonly ConsultorDeExistencias $existencias,
         private readonly FormasDeCobro $formas,
         private readonly UbicadorDeProducto $ubicaciones,
+        private readonly ResolutorDeHonorario $honorarios,
     ) {}
 
     /**
@@ -298,7 +300,7 @@ final class RegistradorDeCargo
 
         $precio = $this->resolverPrecio($linea, $cuenta, $fechaServicio);
         $descuento = $this->descuentoDe($encuentro->persona, $item, $fechaServicio);
-        $cobertura = $this->coberturas->para($cuenta, $precio->fila);
+        $cobertura = $this->coberturaDe($linea, $cuenta, $precio, $fechaServicio);
 
         /*
          * El monto fijo va solo en la primera fila; el porcentaje, en
@@ -761,6 +763,74 @@ final class RegistradorDeCargo
             fila: $fila instanceof Tarifario ? $fila : null,
             condicion: $condicion instanceof ConvenioCondicion ? $condicion : null,
         );
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * 🔴 EL HONORARIO CON PRECIO PROPIO LO SIGUE CUBRIENDO EL SEGURO
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio, 6-nov-2026: con «cubre 100 %» al facturar el Militar ponía
+     * L 0.00 y con 80 % sí ponía. El honorario se cargó con el precio del
+     * médico —o con un monto escrito para ese doctor especial—, que no
+     * sale de una fila del tarifario, y sin fila la cobertura caía a «cubre
+     * lo que no tiene precio propio», apagado en el Militar. El renglón
+     * nacía entero del paciente aunque el seguro sí lo tiene pactado.
+     *
+     * Para un honorario sin fila propia se mira lo que el seguro pactó
+     * para ESE ítem: su fila en la base del seguro —con su «elegible»,
+     * que es donde se excluye—, o el precio del médico hecho para ese
+     * seguro. Sin ninguno de los dos, la política general, como siempre.
+     */
+    private function coberturaDe(
+        LineaDeCargo $linea,
+        Cuenta $cuenta,
+        PrecioResuelto $precio,
+        CarbonInterface $fechaServicio,
+    ): CoberturaAplicada {
+        if ($precio->fila instanceof Tarifario
+            || $linea->item->tipo !== TipoItem::Honorario
+            || ! $cuenta->convenio->tipo->pagaUnTercero()) {
+            return $this->coberturas->para($cuenta, $precio->fila);
+        }
+
+        $delSeguro = $this->filaDelSeguro($linea->item, $cuenta, $fechaServicio);
+
+        if ($delSeguro instanceof Tarifario) {
+            return $this->coberturas->para($cuenta, $delSeguro);
+        }
+
+        $conElMedico = $linea->medicoId !== null
+            && $this->honorarios->soloDelPagador(
+                $linea->medicoId,
+                (int) $linea->item->getKey(),
+                (int) $cuenta->convenio->getKey(),
+                $fechaServicio,
+            ) instanceof Monto;
+
+        return $this->coberturas->para($cuenta, null, pactadoConElPagador: $conElMedico);
+    }
+
+    /**
+     * La fila que el seguro de la cuenta firmó para el ítem, o nula si no
+     * tiene —la de lista no cuenta: no dice nada de lo que cubre—.
+     */
+    private function filaDelSeguro(Item $item, Cuenta $cuenta, CarbonInterface $fechaServicio): ?Tarifario
+    {
+        try {
+            $fila = $this->precios->para(
+                item: $item,
+                convenio: $cuenta->convenio,
+                fechaServicio: $fechaServicio,
+                sede: $cuenta->sede,
+            )->fila;
+        } catch (PrecioNoDefinidoException) {
+            return null;
+        }
+
+        return $fila instanceof Tarifario && (int) $fila->convenio_id === (int) $cuenta->convenio->getKey()
+            ? $fila
+            : null;
     }
 
     /**

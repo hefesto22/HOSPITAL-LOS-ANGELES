@@ -10,6 +10,7 @@ use App\Domain\ValueObjects\HonorarioPropuesto;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Pages\CuentasAbiertas;
+use App\Models\Cargo;
 use App\Models\Convenio;
 use App\Models\Cuenta;
 use App\Models\Especialidad;
@@ -99,7 +100,7 @@ it('🔴 en un seguro se propone lo pactado aunque el medico tenga precio genera
     expect($conMedico->fijo)->toBeFalse()
         ->and($conMedico->valor())->toBe('850.00')
         ->and($conMedico->delMedico)->toBeFalse()
-        ->and($conMedico->explicacion)->toContain('Cambialo solo si este médico cobra distinto')
+        ->and($conMedico->explicacion)->toContain('vale solo para este cargo')
         ->and($sinMedico->fijo)->toBeTrue()
         ->and($sinMedico->valor())->toBe('850.00');
 })->note('Mauricio, 6-nov-2026: «deja que se pueda editar el monto cuando se agregue qué médico, ya que con unos son especiales». El precio general del médico sigue siendo del particular.');
@@ -400,3 +401,72 @@ it('en la factura, el honorario de la especialidad dice el medico sin repetir la
 
     expect($cargos->firstOrFail()->texto)->toBe('CONSULTA EXTERNA CIRUGIA GENERAL · ROBERTO ABNER SANABRIA PEÑA');
 });
+
+/*
+|--------------------------------------------------------------------------
+| El seguro cubre el honorario con precio propio (6-nov-2026)
+|--------------------------------------------------------------------------
+|
+| Con «cubre 100 %» al facturar, el Militar ponía L 0.00 y con 80 % sí. El
+| honorario con el monto del doctor no salía de una fila del tarifario, y
+| sin fila la cobertura caía a «cubre lo que no tiene precio propio»,
+| apagado en el Militar.
+*/
+
+function militarQueSoloCubreLoDeclarado(): Convenio
+{
+    return Convenio::factory()->create([
+        'nombre'             => 'HOSPITAL MILITAR',
+        'cobertura_fraccion' => '1.0000',
+        'cubre_por_defecto'  => false,
+    ]);
+}
+
+function honorarioCargadoEn(Cuenta $cuenta, Item $item, string $monto, ?Medico $medico): Cargo
+{
+    return app(RegistradorDeCargo::class)->registrar($cuenta, new LineaDeCargo(
+        item: $item,
+        cantidad: Decimal::de('1'),
+        claveIdempotencia: (string) Str::uuid(),
+        precioAcordado: Monto::de($monto),
+        medicoId: $medico?->id,
+    ))->firstOrFail()->refresh();
+}
+
+it('🔴 el seguro cubre el honorario cambiado a mano si tiene pactado ese item', function (): void {
+    [$consulta, $cirujano] = cirujanoConSuConsulta();
+    $militar = militarQueSoloCubreLoDeclarado();
+    Tarifario::factory()->delItem($consulta)->paraElConvenio($militar)->a('1000.0000')->create();
+
+    $cargo = honorarioCargadoEn(unaCuentaCon($militar), $consulta, '1100.00', $cirujano);
+
+    expect($cargo->elegible)->toBeTrue()
+        ->and((string) $cargo->porcion_aseguradora)->toBe('1100.00')
+        ->and((string) $cargo->porcion_paciente)->toBe('0.00');
+});
+
+it('el seguro cubre el honorario del medico que tiene su precio pactado con el', function (): void {
+    $item = honorarioParaLaCuenta();
+    $militar = militarQueSoloCubreLoDeclarado();
+    $medico = Medico::factory()->create();
+    HonorarioMedico::factory()->paraElPagador($militar)->create([
+        'medico_id' => $medico->id,
+        'item_id'   => $item->id,
+        'precio'    => '900.0000',
+    ]);
+
+    $cargo = honorarioCargadoEn(unaCuentaCon($militar), $item, '900.00', $medico);
+
+    expect($cargo->elegible)->toBeTrue()
+        ->and((string) $cargo->porcion_aseguradora)->toBe('900.00');
+});
+
+it('sin nada pactado, el honorario escrito sigue la politica general del seguro', function (): void {
+    $item = honorarioParaLaCuenta();
+    $militar = militarQueSoloCubreLoDeclarado();
+
+    $cargo = honorarioCargadoEn(unaCuentaCon($militar), $item, '500.00', Medico::factory()->create());
+
+    expect($cargo->elegible)->toBeFalse()
+        ->and((string) $cargo->porcion_aseguradora)->toBe('0.00');
+})->note('«Solo cubre lo que está declarado»: lo que el seguro no pactó lo paga el paciente, como cualquier otro renglón.');

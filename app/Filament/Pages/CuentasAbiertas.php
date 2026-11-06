@@ -1364,6 +1364,158 @@ class CuentasAbiertas extends Page
                                 )?->id);
                             }),
 
+                        /*
+                         * ─────────────────────────────────────────────
+                         * EL HONORARIO SE LEE «DE QUIÉN, CUÁNTO, CUÁNTOS»
+                         * ─────────────────────────────────────────────
+                         *
+                         * Mauricio, 6-nov-2026: al elegir al doctor «se
+                         * ve muy feo». El médico iba al final, apretado
+                         * en un tercio, con su nombre partido en dos
+                         * renglones, y el precio cargaba un párrafo de
+                         * tres líneas debajo. Ahora el médico va primero
+                         * y ancho, el precio al lado y la cantidad —que
+                         * casi siempre es 1— angosta al final. Lo que hay
+                         * que leer va en el recuadro de abajo, a lo ancho.
+                         *
+                         * Los dos campos solo existen con un honorario:
+                         * para el resto del catálogo la fila sigue igual.
+                         *
+                         * ─────────────────────────────────────────────
+                         * 🔴 EL MÉDICO SE ELIGE, NO SE ESCRIBE
+                         * ─────────────────────────────────────────────
+                         *
+                         * Esto era un campo de texto libre, y con texto
+                         * libre «Dr. Carlos», «Dr Carlos Pineda» y
+                         * «CARLOS PINEDA» son tres doctores para un GROUP
+                         * BY y uno solo para quien firma el cheque a fin
+                         * de mes.
+                         *
+                         * Elegirlo además trae su precio: el doctor
+                         * Carlos cobra L 500 por la consulta y el doctor
+                         * Juan L 100, y eso ya no hay que acordarse de
+                         * teclearlo.
+                         */
+                        Select::make('medico_id')
+                            ->label('¿De quién es el honorario?')
+                            ->native(false)
+                            ->searchable()
+                            ->live()
+                            ->columnSpan(6)
+                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
+                            ->placeholder('Escribí el apellido')
+                            /*
+                             * El «HONORARIO MÉDICO» sin médico no dice de
+                             * quién es: ni en la factura ni en la
+                             * liquidación. Los otros honorarios —turnos
+                             * de enfermería, circulante— pueden ir sin él.
+                             */
+                            ->required(fn (Get $get): bool => $this->esElHonorarioDelMedico($this->itemDe($get('item_id'))))
+                            ->options(fn (): array => $this->medicosVigentes())
+                            ->getSearchResultsUsing(fn (string $search): array => $this->medicosVigentes($search))
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->medicoDe($value)?->etiqueta())
+                            /*
+                             * Elegir al médico repone el precio: el suyo
+                             * si tiene lista propia, y si no el del
+                             * tarifario. Se PISA lo que hubiera —incluso
+                             * algo tecleado a mano— porque cambiar de
+                             * médico es cambiar de honorario, y dejar el
+                             * número del doctor anterior es cobrarle al
+                             * paciente la tarifa de alguien que no lo
+                             * atendió.
+                             */
+                            ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
+                                $set('precio_acordado', $this->precioPropuesto(
+                                    $this->itemDe($get('item_id')),
+                                    is_numeric($state) ? (int) $state : null,
+                                ));
+                            })
+                            /*
+                             * El cirujano nuevo que opera un sábado se da
+                             * de alta sin salir de acá. Solo para quien
+                             * puede crear médicos: al resto ni le aparece
+                             * el botón.
+                             */
+                            ->createOptionForm(fn (): ?array => Gate::allows('create', Medico::class)
+                                ? self::altaRapidaDeMedico()
+                                : null)
+                            /*
+                             * ⚠️ El `abort_unless` se queda aunque el
+                             * botón no se pinte: esconder un control en
+                             * Livewire no cierra la puerta, la acción se
+                             * sigue pudiendo llamar desde el navegador.
+                             * Y como corta el flujo, el retorno es `int`
+                             * y no `?int` — nunca hay un camino que
+                             * devuelva nulo.
+                             */
+                            ->createOptionUsing(function (array $data): int {
+                                abort_unless(Gate::allows('create', Medico::class), 403);
+
+                                return (int) Medico::create([
+                                    'nombre'          => $data['nombre'] ?? '',
+                                    'especialidad_id' => $data['especialidad_id'] ?? null,
+                                    'colegiacion'     => $data['colegiacion'] ?? null,
+                                    'vigencia_desde'  => now()->toDateString(),
+                                ])->getKey();
+                            }),
+
+                        /*
+                         * ─────────────────────────────────────────────
+                         * 🔴 EL HONORARIO SÍ LLEVA PRECIO A LA VISTA
+                         * ─────────────────────────────────────────────
+                         *
+                         * Es la única familia del catálogo donde el
+                         * precio de lista es una referencia y no una
+                         * regla: el honorario cambia por médico, por
+                         * complejidad y por lo que se acordó con la
+                         * familia. Obligarlo a pasar por el tarifario
+                         * significaba una fila nueva por cada médico, o
+                         * —lo que de verdad pasaba— cobrar el de lista y
+                         * arreglarlo después con un descuento que no
+                         * explica nada.
+                         *
+                         * Viene PROPUESTO con el precio del pagador de
+                         * esta cuenta. Si no se toca, el cargo sigue el
+                         * camino de siempre y sale del tarifario; solo se
+                         * marca como precio acordado cuando el número
+                         * cambia de verdad.
+                         *
+                         * ⚠️ Y NO se abre para el resto del catálogo. Un
+                         * campo de precio libre en la pantalla de cobro
+                         * es por donde se va la plata sin que nadie lo
+                         * note: un medicamento cobrado a mano no lo
+                         * detecta ningún arqueo, porque el arqueo compara
+                         * contra lo que dice el sistema.
+                         */
+                        TextInput::make('precio_acordado')
+                            ->label('Precio del honorario')
+                            ->numeric()
+                            ->minValue(0)
+                            ->step('0.01')
+                            ->prefix('L')
+                            ->columnSpan(4)
+                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
+                            /*
+                             * 🔴 SEGURO CON PRECIO PACTADO: BLOQUEADO
+                             * (Mauricio, 6-nov-2026: «lo que cobran al
+                             * Militar y a PALIG ya está fijado»). Un
+                             * campo deshabilitado no viaja al servidor,
+                             * y `honorarioAcordado()` ignora igual lo que
+                             * llegue: el bloqueo no depende del navegador.
+                             *
+                             * Con el médico elegido se abre aunque el seguro
+                             * lo tenga pactado: «con unos son especiales»
+                             * (Mauricio, 6-nov-2026). Lo escrito vale para
+                             * ese cargo; el tarifario no se toca.
+                             *
+                             * En el particular —o en un seguro que no lo
+                             * pactó— es obligatorio: sin número no hay
+                             * honorario que cobrar.
+                             */
+                            ->disabled(fn (Get $get): bool => $this->honorarioDeLaLinea($get)?->fijo === true)
+                            ->required(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id')))
+                                && $this->honorarioDeLaLinea($get)?->fijo !== true),
+
                         TextInput::make('cantidad')
                             ->label('Cantidad')
                             ->numeric()
@@ -1451,149 +1603,6 @@ class CuentasAbiertas extends Page
 
                         /*
                          * ─────────────────────────────────────────────
-                         * 🔴 EL HONORARIO SÍ LLEVA PRECIO A LA VISTA
-                         * ─────────────────────────────────────────────
-                         *
-                         * Es la única familia del catálogo donde el
-                         * precio de lista es una referencia y no una
-                         * regla: el honorario cambia por médico, por
-                         * complejidad y por lo que se acordó con la
-                         * familia. Obligarlo a pasar por el tarifario
-                         * significaba una fila nueva por cada médico, o
-                         * —lo que de verdad pasaba— cobrar el de lista y
-                         * arreglarlo después con un descuento que no
-                         * explica nada.
-                         *
-                         * Viene PROPUESTO con el precio del pagador de
-                         * esta cuenta. Si no se toca, el cargo sigue el
-                         * camino de siempre y sale del tarifario; solo se
-                         * marca como precio acordado cuando el número
-                         * cambia de verdad.
-                         *
-                         * ⚠️ Y NO se abre para el resto del catálogo. Un
-                         * campo de precio libre en la pantalla de cobro
-                         * es por donde se va la plata sin que nadie lo
-                         * note: un medicamento cobrado a mano no lo
-                         * detecta ningún arqueo, porque el arqueo compara
-                         * contra lo que dice el sistema.
-                         */
-                        TextInput::make('precio_acordado')
-                            ->label('Precio del honorario')
-                            ->numeric()
-                            ->minValue(0)
-                            ->step('0.01')
-                            ->prefix('L')
-                            ->columnSpan(4)
-                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
-                            /*
-                             * 🔴 SEGURO CON PRECIO PACTADO: BLOQUEADO
-                             * (Mauricio, 6-nov-2026: «lo que cobran al
-                             * Militar y a PALIG ya está fijado»). Un
-                             * campo deshabilitado no viaja al servidor,
-                             * y `honorarioAcordado()` ignora igual lo que
-                             * llegue: el bloqueo no depende del navegador.
-                             *
-                             * En el particular —o en un seguro que no lo
-                             * pactó— es obligatorio: sin número no hay
-                             * honorario que cobrar.
-                             */
-                            ->disabled(fn (Get $get): bool => $this->honorarioDeLaLinea($get)?->fijo === true)
-                            ->required(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id')))
-                                && $this->honorarioDeLaLinea($get)?->fijo !== true)
-                            /*
-                             * 🔴 El texto distingue los dos casos, porque
-                             * un campo vacío se lee igual en los dos y no
-                             * lo son: o el tarifario propuso un número, o
-                             * este honorario no tiene precio de lista
-                             * —que es normal en los que cambian con cada
-                             * médico— y hay que escribirlo sí o sí.
-                             *
-                             * Sin decirlo, quien cobra ve el campo en
-                             * blanco y concluye que el sistema falló.
-                             */
-                            ->helperText(fn (Get $get): ?string => $this->honorarioDeLaLinea($get)?->explicacion),
-
-                        /*
-                         * ─────────────────────────────────────────────
-                         * 🔴 EL MÉDICO SE ELIGE, NO SE ESCRIBE
-                         * ─────────────────────────────────────────────
-                         *
-                         * Esto era un campo de texto libre, y con texto
-                         * libre «Dr. Carlos», «Dr Carlos Pineda» y
-                         * «CARLOS PINEDA» son tres doctores para un GROUP
-                         * BY y uno solo para quien firma el cheque a fin
-                         * de mes.
-                         *
-                         * Elegirlo además trae su precio: el doctor
-                         * Carlos cobra L 500 por la consulta y el doctor
-                         * Juan L 100, y eso ya no hay que acordarse de
-                         * teclearlo.
-                         */
-                        Select::make('medico_id')
-                            ->label('¿De quién es el honorario?')
-                            ->native(false)
-                            ->searchable()
-                            ->live()
-                            ->columnSpan(6)
-                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
-                            ->placeholder('Escribí el apellido')
-                            /*
-                             * El «HONORARIO MÉDICO» sin médico no dice de
-                             * quién es: ni en la factura ni en la
-                             * liquidación. Los otros honorarios —turnos
-                             * de enfermería, circulante— pueden ir sin él.
-                             */
-                            ->required(fn (Get $get): bool => $this->esElHonorarioDelMedico($this->itemDe($get('item_id'))))
-                            ->options(fn (): array => $this->medicosVigentes())
-                            ->getSearchResultsUsing(fn (string $search): array => $this->medicosVigentes($search))
-                            ->getOptionLabelUsing(fn (mixed $value): ?string => $this->medicoDe($value)?->etiqueta())
-                            /*
-                             * Elegir al médico repone el precio: el suyo
-                             * si tiene lista propia, y si no el del
-                             * tarifario. Se PISA lo que hubiera —incluso
-                             * algo tecleado a mano— porque cambiar de
-                             * médico es cambiar de honorario, y dejar el
-                             * número del doctor anterior es cobrarle al
-                             * paciente la tarifa de alguien que no lo
-                             * atendió.
-                             */
-                            ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
-                                $set('precio_acordado', $this->precioPropuesto(
-                                    $this->itemDe($get('item_id')),
-                                    is_numeric($state) ? (int) $state : null,
-                                ));
-                            })
-                            /*
-                             * El cirujano nuevo que opera un sábado se da
-                             * de alta sin salir de acá. Solo para quien
-                             * puede crear médicos: al resto ni le aparece
-                             * el botón.
-                             */
-                            ->createOptionForm(fn (): ?array => Gate::allows('create', Medico::class)
-                                ? self::altaRapidaDeMedico()
-                                : null)
-                            /*
-                             * ⚠️ El `abort_unless` se queda aunque el
-                             * botón no se pinte: esconder un control en
-                             * Livewire no cierra la puerta, la acción se
-                             * sigue pudiendo llamar desde el navegador.
-                             * Y como corta el flujo, el retorno es `int`
-                             * y no `?int` — nunca hay un camino que
-                             * devuelva nulo.
-                             */
-                            ->createOptionUsing(function (array $data): int {
-                                abort_unless(Gate::allows('create', Medico::class), 403);
-
-                                return (int) Medico::create([
-                                    'nombre'          => $data['nombre'] ?? '',
-                                    'especialidad_id' => $data['especialidad_id'] ?? null,
-                                    'colegiacion'     => $data['colegiacion'] ?? null,
-                                    'vigencia_desde'  => now()->toDateString(),
-                                ])->getKey();
-                            }),
-
-                        /*
-                         * ─────────────────────────────────────────────
                          * UNA SOLA LÍNEA DE CONTEXTO, A LO ANCHO
                          * ─────────────────────────────────────────────
                          *
@@ -1625,7 +1634,8 @@ class CuentasAbiertas extends Page
                                 'default' => 1,
                                 'lg'      => $this->sePuedePedirPrestado($get) ? 9 : 12,
                             ])
-                            ->visible(fn (Get $get): bool => $this->hayLecturaDeLaLinea($get))
+                            ->visible(fn (Get $get): bool => $this->hayLecturaDeLaLinea($get)
+                                || $this->esHonorario($this->itemDe($get('item_id'))))
                             ->content(fn (Get $get): HtmlString => $this->comoQuedaLaLinea($get)),
 
                         /*
@@ -9188,6 +9198,11 @@ class CuentasAbiertas extends Page
     private function comoQuedaLaLinea(Get $get): HtmlString
     {
         $item = $this->itemDe($get('item_id'));
+
+        if ($item instanceof Item && $this->esHonorario($item)) {
+            return $this->comoQuedaElHonorario($get, $item);
+        }
+
         $forma = $this->formaEnUso($get);
 
         if (! $item instanceof Item || $forma === null) {
@@ -9269,6 +9284,48 @@ class CuentasAbiertas extends Page
         }
 
         return self::recuadro(implode(' · ', $partes));
+    }
+
+    /**
+     * El recuadro del honorario: qué ítem se carga, de dónde sale el
+     * precio y si se puede cambiar.
+     *
+     * Es el texto que antes colgaba debajo del precio en tres renglones
+     * (Mauricio, 6-nov-2026: «se ve muy feo»). A lo ancho cabe en uno, y
+     * dice lo que Mauricio preguntó al verlo: cambiar el monto vale solo
+     * para este cargo; el precio del seguro no se toca.
+     */
+    private function comoQuedaElHonorario(Get $get, Item $item): HtmlString
+    {
+        $propuesto = $this->honorarioDeLaLinea($get);
+
+        if (! $propuesto instanceof HonorarioPropuesto) {
+            return new HtmlString('&nbsp;');
+        }
+
+        [$rotulo, $color] = match (true) {
+            $propuesto->fijo                      => ['Pactado · no se cambia', 'inherit'],
+            ! $propuesto->precio instanceof Monto => ['Sin precio pactado', 'rgb(217 119 6)'],
+            default                               => ['Propuesto', 'inherit'],
+        };
+
+        $cifra = $propuesto->precio instanceof Monto ? e($propuesto->precio->formateado()) : '—';
+
+        return new HtmlString(
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;'
+            .'background:rgba(148,163,184,.07);border:1px solid rgba(148,163,184,.25);border-radius:.625rem;'
+            .'padding:.625rem .875rem;font-size:.8125rem;line-height:1.45">'
+            .'<div style="min-width:0">'
+            .'<div style="font-weight:600">'.e($item->nombre).'</div>'
+            .'<div style="opacity:.75">'.e($propuesto->explicacion).'</div>'
+            .'</div>'
+            .'<div style="text-align:right;white-space:nowrap;flex-shrink:0">'
+            .'<div style="font-size:.6875rem;letter-spacing:.04em;text-transform:uppercase;opacity:.65;color:'.$color.'">'
+            .e($rotulo).'</div>'
+            .'<div style="font-weight:600;font-size:.9375rem">'.$cifra.'</div>'
+            .'</div>'
+            .'</div>'
+        );
     }
 
     /**

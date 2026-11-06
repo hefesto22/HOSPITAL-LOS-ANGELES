@@ -87,7 +87,7 @@ final class ProponedorDeHonorario
                 return HonorarioPropuesto::propuesto(
                     $suyo,
                     delMedico: true,
-                    explicacion: "Lo que {$medico->nombre} tiene pactado con {$seguro->nombre}. Cambialo si este cobro es distinto.",
+                    explicacion: "Lo que {$medico->nombre} tiene pactado con {$seguro->nombre}. Si lo cambiás, vale solo para este cargo.",
                 );
             }
         }
@@ -99,8 +99,8 @@ final class ProponedorDeHonorario
                 ? HonorarioPropuesto::propuesto(
                     $resuelto->precio,
                     delMedico: false,
-                    explicacion: "Pactado con {$seguro->nombre} para todos los médicos de «{$item->nombre}». "
-                        .'Cambialo solo si este médico cobra distinto.',
+                    explicacion: "Pactado con {$seguro->nombre} para todos sus médicos. Si este cobra distinto, "
+                        .'cambialo: vale solo para este cargo.',
                 )
                 : HonorarioPropuesto::pactado(
                     $resuelto->precio,
@@ -136,7 +136,7 @@ final class ProponedorDeHonorario
                 return HonorarioPropuesto::propuesto(
                     $suyo,
                     delMedico: true,
-                    explicacion: "Es lo que cobra {$medico->nombre}. Cambialo solo para este cobro.",
+                    explicacion: "Lo que cobra {$medico->nombre}. Si lo cambiás, vale solo para este cargo.",
                 );
             }
         }
