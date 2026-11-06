@@ -28,9 +28,13 @@ use Carbon\CarbonInterface;
  * a gusto.»
  *
  * SEGURO (el convenio paga un tercero):
- *   1. El precio del médico hecho para ESE seguro → fijo.
+ *   1. El precio del médico hecho para ESE seguro → propuesto.
  *   2. La fila pactada del seguro, o su porcentaje sobre una lista real
- *      → fijo.
+ *      → FIJO sin médico; PROPUESTO con médico. «Deja que se pueda editar
+ *      el monto cuando se agregue qué médico, ya que con unos son
+ *      especiales» (Mauricio, 6-nov-2026). El turno de enfermería del
+ *      Militar sigue sin tocarse; el honorario de un doctor viene con lo
+ *      pactado para su especialidad y se cambia si ese doctor es especial.
  *   3. Nada pactado → libre: se escribe a mano (decisión de Mauricio: no
  *      se traba el cobro). Propone la lista si es real.
  *
@@ -80,10 +84,10 @@ final class ProponedorDeHonorario
             );
 
             if ($suyo instanceof Monto) {
-                return HonorarioPropuesto::pactado(
+                return HonorarioPropuesto::propuesto(
                     $suyo,
                     delMedico: true,
-                    explicacion: "Lo que {$medico->nombre} tiene pactado con {$seguro->nombre}: no se cambia.",
+                    explicacion: "Lo que {$medico->nombre} tiene pactado con {$seguro->nombre}. Cambialo si este cobro es distinto.",
                 );
             }
         }
@@ -91,11 +95,18 @@ final class ProponedorDeHonorario
         $resuelto = $this->resolver($item, $cuenta, $seguro, $momento);
 
         if ($resuelto instanceof PrecioResuelto && $this->esPactado($resuelto)) {
-            return HonorarioPropuesto::pactado(
-                $resuelto->precio,
-                delMedico: false,
-                explicacion: "Precio pactado con {$seguro->nombre}: no se cambia.",
-            );
+            return $medico instanceof Medico
+                ? HonorarioPropuesto::propuesto(
+                    $resuelto->precio,
+                    delMedico: false,
+                    explicacion: "Pactado con {$seguro->nombre} para todos los médicos de «{$item->nombre}». "
+                        .'Cambialo solo si este médico cobra distinto.',
+                )
+                : HonorarioPropuesto::pactado(
+                    $resuelto->precio,
+                    delMedico: false,
+                    explicacion: "Precio pactado con {$seguro->nombre}: no se cambia.",
+                );
         }
 
         $lista = $this->listaReal($resuelto);

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Database\Seeders;
 
+use App\Domain\Enums\TipoItem;
 use App\Models\Especialidad;
+use App\Models\Item;
 use App\Support\NormalizadorDeTexto;
 use Illuminate\Database\Seeder;
 
@@ -96,6 +98,31 @@ class EspecialidadesSeeder extends Seeder
         'INTPED' => 'MEDICINA INTENSIVA PEDIATRICA',
     ];
 
+    /**
+     * Código de la especialidad => el ítem de su honorario.
+     *
+     * Son las consultas externas que el hospital ya les cobra a los
+     * seguros por especialidad —el Militar paga L 1,000 la de cirugía
+     * general a cualquier cirujano— (Mauricio, 6-nov-2026). Solo se
+     * enlaza la especialidad que todavía no tiene: lo que el hospital
+     * eligió en la ficha no se pisa.
+     *
+     * @var array<string, string>
+     */
+    public const HONORARIO_POR_ESPECIALIDAD = [
+        'MEDGEN' => 'CONSULTA EXTERNA MEDICINA GENERAL',
+        'MEDINT' => 'CONSULTA EXTERNA MEDICINA INTERNA',
+        'CIRGEN' => 'CONSULTA EXTERNA CIRUGIA GENERAL',
+        'GINECO' => 'CONSULTA EXTERNA GINECOLOGIA',
+        'PEDIAT' => 'CONSULTA EXTERNA PEDIATRIA',
+        'ORTOPE' => 'CONSULTA EXTERNA ORTOPEDIA',
+        'NEUMOL' => 'CONSULTA EXTERNA NEUMOLOGIA',
+        'REUMAT' => 'CONSULTA EXTERNA REUMATOLOGIA',
+        'NUTRIC' => 'CONSULTA EXTERNA NUTRICION',
+        'ODONTO' => 'CONSULTA EXTERNA ODONTOLOGIA',
+        'PSICOL' => 'CONSULTA EXTERNA PSICOLOGIA',
+    ];
+
     public function run(): void
     {
         $codigos = [];
@@ -121,6 +148,33 @@ class EspecialidadesSeeder extends Seeder
 
             $codigos[$codigo] = true;
             $nombres[$clave] = true;
+        }
+
+        $this->enlazarLosHonorarios();
+    }
+
+    private function enlazarLosHonorarios(): void
+    {
+        foreach (self::HONORARIO_POR_ESPECIALIDAD as $codigo => $nombreDelItem) {
+            $especialidad = Especialidad::query()
+                ->where('codigo', $codigo)
+                ->whereNull('item_id')
+                ->first();
+
+            if (! $especialidad instanceof Especialidad) {
+                continue;
+            }
+
+            $item = Item::query()
+                ->where('nombre', $nombreDelItem)
+                ->where('tipo', TipoItem::Honorario->value)
+                ->vigentesEn(now())
+                ->orderBy('id')
+                ->first();
+
+            if ($item instanceof Item) {
+                $especialidad->update(['item_id' => $item->id]);
+            }
         }
     }
 }

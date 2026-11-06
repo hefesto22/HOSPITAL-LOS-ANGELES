@@ -11,6 +11,7 @@ use Database\Factories\EspecialidadFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -22,6 +23,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int $id
  * @property string $codigo
  * @property string $nombre
+ * @property int|null $item_id
  * @property CarbonInterface $vigencia_desde
  * @property CarbonInterface|null $vigencia_hasta
  */
@@ -53,6 +55,7 @@ class Especialidad extends Model
     protected $fillable = [
         'codigo',
         'nombre',
+        'item_id',
         'vigencia_desde',
         'vigencia_hasta',
     ];
@@ -82,6 +85,18 @@ class Especialidad extends Model
     public function medicos(): HasMany
     {
         return $this->hasMany(Medico::class);
+    }
+
+    /**
+     * El honorario de la especialidad: el ítem cuyo precio en cada seguro
+     * se propone para todos sus médicos (Mauricio, 6-nov-2026). Nulo =
+     * se cobra como HONORARIO MÉDICO, con el monto escrito.
+     *
+     * @return BelongsTo<Item, $this>
+     */
+    public function honorario(): BelongsTo
+    {
+        return $this->belongsTo(Item::class, 'item_id');
     }
 
     public function estaVigente(?CarbonInterface $momento = null): bool

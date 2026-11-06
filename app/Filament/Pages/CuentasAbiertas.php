@@ -415,6 +415,14 @@ class CuentasAbiertas extends Page
     private Item|false|null $honorarioDelMedicoLeido = null;
 
     /**
+     * La especialidad de cada médico ofrecido en el buscador, para el
+     * globito de su botón. Se llena junto con la búsqueda.
+     *
+     * @var array<int, string>
+     */
+    private array $especialidadDelBuscador = [];
+
+    /**
      * Memoria por pintada de los médicos ya leídos.
      *
      * @var array<int, Medico|null>
@@ -1363,9 +1371,14 @@ class CuentasAbiertas extends Page
                             ->default(1)
                             ->minValue(0.0001)
                             ->step('0.0001')
+                            /*
+                             * Con un honorario la cantidad casi siempre es
+                             * 1: va angosta y le deja el ancho al médico,
+                             * que es lo que se lee (Mauricio, 6-nov-2026).
+                             */
                             ->columnSpan(fn (Get $get): array => [
                                 'default' => 1,
-                                'lg'      => $this->laLineaVaEnUnaFila($get) ? 2 : 4,
+                                'lg'      => $this->laLineaVaEnUnaFila($get) || $this->esHonorario($this->itemDe($get('item_id'))) ? 2 : 4,
                             ])
                             ->live(onBlur: true)
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item)
@@ -1521,7 +1534,7 @@ class CuentasAbiertas extends Page
                             ->native(false)
                             ->searchable()
                             ->live()
-                            ->columnSpan(4)
+                            ->columnSpan(6)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
                             ->placeholder('Escribí el apellido')
                             /*
@@ -8675,14 +8688,29 @@ class CuentasAbiertas extends Page
          */
         $buscado = '%'.mb_strtoupper(NormalizadorDeTexto::clave($texto)).'%';
 
-        return $this->resultadosDelBuscador[$clave] = Medico::query()
+        $medicos = Medico::query()
             ->with('especialidad')
             ->vigentes()
             ->whereRaw("translate(nombre, 'ÁÉÍÓÚÜÑ', 'AEIOUUN') like ?", [$buscado])
             ->orderBy('nombre')
             ->limit(self::medicosALaVista())
-            ->get()
-            ->mapWithKeys(fn (Medico $medico): array => [(int) $medico->getKey() => $medico->etiqueta()])
+            ->get();
+
+        /*
+         * El botón lleva el nombre solo —«NOMBRE · ESPECIALIDAD» partía
+         * la fila de botones en tres renglones— y la especialidad va en
+         * el globito. Elegido, el selector de abajo dice las dos cosas.
+         */
+        foreach ($medicos as $medico) {
+            $especialidad = $medico->especialidad;
+            $this->especialidadDelBuscador[(int) $medico->getKey()] = $especialidad instanceof Especialidad
+                ? $especialidad->nombre
+                : 'Sin especialidad';
+            $this->medicosPorId[(int) $medico->getKey()] = $medico;
+        }
+
+        return $this->resultadosDelBuscador[$clave] = $medicos
+            ->mapWithKeys(fn (Medico $medico): array => [(int) $medico->getKey() => $medico->nombre])
             ->all();
     }
 
@@ -8737,7 +8765,7 @@ class CuentasAbiertas extends Page
      */
     private function elegirMedico(int $medicoId, Set $set): void
     {
-        $item = $this->honorarioDelMedico();
+        $item = $this->honorarioParaElMedico($medicoId);
 
         if (! $item instanceof Item) {
             return;
@@ -8751,6 +8779,39 @@ class CuentasAbiertas extends Page
 
         $set('medico_id', $medicoId);
         $set('precio_acordado', $this->precioPropuesto($item, $medicoId));
+    }
+
+    /**
+     * 🔴 A QUÉ HONORARIO VA EL MÉDICO TOCADO (Mauricio, 6-nov-2026).
+     *
+     * Al de su especialidad, si la especialidad tiene uno: «cirugía
+     * general es de L 1,000, entonces todos los doctores de cirugía
+     * general». Así el precio sale de lo que cada seguro ya tiene pactado
+     * para ese ítem, sin una fila por doctor.
+     *
+     * Si no, o si quien cobra no puede cargar ese ítem, al «HONORARIO
+     * MÉDICO» con el monto escrito.
+     */
+    private function honorarioParaElMedico(int $medicoId): ?Item
+    {
+        $especialidad = $this->medicoDe($medicoId)?->especialidad;
+
+        if ($especialidad instanceof Especialidad && $especialidad->item_id !== null) {
+            $consulta = Item::query()
+                ->whereKey($especialidad->item_id)
+                ->where('tipo', TipoItem::Honorario->value)
+                ->vigentesEn(now());
+
+            CatalogoDelRol::filtrar($consulta);
+
+            $item = $consulta->first();
+
+            if ($item instanceof Item) {
+                return $item;
+            }
+        }
+
+        return $this->honorarioDelMedico();
     }
 
     private static function medicosALaVista(): int
@@ -8774,7 +8835,7 @@ class CuentasAbiertas extends Page
         $medico = $this->medicoEn($casillero);
 
         return $medico !== null
-            && $this->esElHonorarioDelMedico($this->itemDe($get('item_id')))
+            && $this->esHonorario($this->itemDe($get('item_id')))
             && $this->idDelMedico($get('medico_id')) === $medico['id'];
     }
 
@@ -8826,6 +8887,7 @@ class CuentasAbiertas extends Page
         for ($casillero = 0; $casillero < self::medicosALaVista(); $casillero++) {
             $botones[] = Action::make('elegir_medico_'.$casillero)
                 ->label(fn (): string => $this->medicoEn($casillero)['nombre'] ?? '')
+                ->tooltip(fn (): ?string => $this->especialidadDelBuscador[$this->medicoEn($casillero)['id'] ?? 0] ?? null)
                 ->visible(fn (): bool => $this->medicoEn($casillero) !== null)
                 ->size(Size::Small)
                 ->color(fn (Get $get): string => $this->esElMedicoElegido($casillero, $get) ? 'primary' : 'gray')

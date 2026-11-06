@@ -20,6 +20,7 @@ use App\Models\Tarifario;
 use App\Services\PreciosDeLaFicha;
 use App\Services\ProponedorDeHonorario;
 use App\Services\RegistradorDeCargo;
+use Database\Seeders\EspecialidadesSeeder;
 use Database\Seeders\HonorarioMedicoSeeder;
 use Illuminate\Support\Str;
 
@@ -81,7 +82,7 @@ function loQueViajaEnElCargo(Item $item, Cuenta $cuenta, array $data): ?Monto
 |--------------------------------------------------------------------------
 */
 
-it('🔴 en un seguro el honorario sale fijo con lo pactado, aunque el medico tenga precio general', function (): void {
+it('🔴 en un seguro se propone lo pactado aunque el medico tenga precio general, y con medico se puede cambiar', function (): void {
     $item = honorarioParaLaCuenta();
     $militar = Convenio::factory()->create(['nombre' => 'HOSPITAL MILITAR']);
 
@@ -91,12 +92,17 @@ it('🔴 en un seguro el honorario sale fijo con lo pactado, aunque el medico te
     $medico = Medico::factory()->create();
     HonorarioMedico::factory()->create(['medico_id' => $medico->id, 'item_id' => $item->id, 'precio' => '500.0000']);
 
-    $propuesto = propuestaDelHonorario($item, unaCuentaCon($militar), $medico);
+    $cuenta = unaCuentaCon($militar);
+    $conMedico = propuestaDelHonorario($item, $cuenta, $medico);
+    $sinMedico = propuestaDelHonorario($item, $cuenta);
 
-    expect($propuesto->fijo)->toBeTrue()
-        ->and($propuesto->valor())->toBe('850.00')
-        ->and($propuesto->delMedico)->toBeFalse();
-})->note('Decisión de Mauricio: el precio general del médico es para el particular; en el seguro manda lo pactado.');
+    expect($conMedico->fijo)->toBeFalse()
+        ->and($conMedico->valor())->toBe('850.00')
+        ->and($conMedico->delMedico)->toBeFalse()
+        ->and($conMedico->explicacion)->toContain('Cambialo solo si este médico cobra distinto')
+        ->and($sinMedico->fijo)->toBeTrue()
+        ->and($sinMedico->valor())->toBe('850.00');
+})->note('Mauricio, 6-nov-2026: «deja que se pueda editar el monto cuando se agregue qué médico, ya que con unos son especiales». El precio general del médico sigue siendo del particular.');
 
 it('en un seguro manda el precio del medico hecho para ESE seguro', function (): void {
     $item = honorarioParaLaCuenta();
@@ -113,7 +119,7 @@ it('en un seguro manda el precio del medico hecho para ESE seguro', function ():
 
     $propuesto = propuestaDelHonorario($item, unaCuentaCon($militar), $medico);
 
-    expect($propuesto->fijo)->toBeTrue()
+    expect($propuesto->fijo)->toBeFalse()
         ->and($propuesto->valor())->toBe('900.00')
         ->and($propuesto->delMedico)->toBeTrue();
 });
@@ -140,7 +146,7 @@ it('🔴 lo tecleado en un seguro con pactado no llega al cargo', function (): v
     expect(loQueViajaEnElCargo($item, unaCuentaCon($militar), ['precio_acordado' => '1']))->toBeNull();
 })->note('Nulo: el motor cobra la fila del seguro. El campo va bloqueado, pero un bloqueo de pantalla se salta desde el navegador (§9.M30).');
 
-it('el precio del medico para ese seguro viaja en el cargo aunque se teclee otro', function (): void {
+it('el precio del medico para ese seguro viaja en el cargo, y lo tecleado lo cambia', function (): void {
     $item = honorarioParaLaCuenta();
     $militar = Convenio::factory()->create();
 
@@ -151,10 +157,27 @@ it('el precio del medico para ese seguro viaja en el cargo aunque se teclee otro
         'precio'    => '900.0000',
     ]);
 
-    $monto = loQueViajaEnElCargo($item, unaCuentaCon($militar), ['precio_acordado' => '1', 'medico_id' => $medico->id]);
+    $cuenta = unaCuentaCon($militar);
 
-    expect($monto?->valor())->toBe('900.00');
-});
+    expect(loQueViajaEnElCargo($item, $cuenta, ['precio_acordado' => null, 'medico_id' => $medico->id])?->valor())
+        ->toBe('900.00')
+        ->and(loQueViajaEnElCargo($item, $cuenta, ['precio_acordado' => '1100', 'medico_id' => $medico->id])?->valor())
+        ->toBe('1100.00');
+})->note('El tarifario no conoce la lista del doctor: el número tiene que ir en el cargo, cambiado o no.');
+
+it('con medico, en un seguro lo tecleado viaja solo si cambia lo pactado', function (): void {
+    $item = honorarioParaLaCuenta();
+    $militar = Convenio::factory()->create();
+
+    Tarifario::factory()->delItem($item)->paraElConvenio($militar)->a('1000.0000')->create();
+
+    $medico = Medico::factory()->create();
+    $cuenta = unaCuentaCon($militar);
+
+    expect(loQueViajaEnElCargo($item, $cuenta, ['precio_acordado' => '1000', 'medico_id' => $medico->id]))->toBeNull()
+        ->and(loQueViajaEnElCargo($item, $cuenta, ['precio_acordado' => '1500', 'medico_id' => $medico->id])?->valor())
+        ->toBe('1500.00');
+})->note('Nulo: el motor cobra la fila del seguro con su vigencia. 1,500: el doctor especial.');
 
 /*
 |--------------------------------------------------------------------------
@@ -277,3 +300,103 @@ it('🔴 en la factura el honorario dice el nombre del medico y su especialidad'
 
     expect($cargos->firstOrFail()->texto)->toBe('HONORARIO MÉDICO · ALEJANDRA BAQUEDANO FIGUEROA · GINECOLOGIA Y OBSTETRICIA');
 })->note('Mauricio, 6-nov-2026: «en la factura sale honorario, nombre del doctor y especialidad». La factura imprime el texto congelado del cargo.');
+
+/*
+|--------------------------------------------------------------------------
+| El precio por especialidad (Mauricio, 6-nov-2026)
+|--------------------------------------------------------------------------
+|
+| «Cirugía general es de L 1,000, entonces todos los doctores de cirugía
+| general»: la especialidad dice cuál es su honorario, y cada seguro ya
+| tiene su precio para ese ítem.
+*/
+
+/**
+ * @return array{0: Item, 1: Medico}
+ */
+function cirujanoConSuConsulta(): array
+{
+    $consulta = Item::factory()
+        ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada)
+        ->create(['nombre' => 'CONSULTA EXTERNA CIRUGIA GENERAL']);
+
+    $cirugia = Especialidad::factory()->create(['nombre' => 'CIRUGIA GENERAL', 'item_id' => $consulta->id]);
+
+    $cirujano = Medico::factory()->create([
+        'nombre'          => 'ROBERTO ABNER SANABRIA PEÑA',
+        'especialidad_id' => $cirugia->id,
+    ]);
+
+    return [$consulta, $cirujano];
+}
+
+function honorarioQueCargaElMedico(Medico $medico): ?Item
+{
+    /** @var Item|null $item */
+    $item = (new ReflectionMethod(CuentasAbiertas::class, 'honorarioParaElMedico'))
+        ->invoke(app(CuentasAbiertas::class), $medico->id);
+
+    return $item;
+}
+
+it('🔴 el medico tocado carga el honorario de su especialidad, con lo que el seguro pacto para ella', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    [$consulta, $cirujano] = cirujanoConSuConsulta();
+    $militar = Convenio::factory()->create(['nombre' => 'HOSPITAL MILITAR']);
+    Tarifario::factory()->delItem($consulta)->paraElConvenio($militar)->a('1000.0000')->create();
+
+    $item = honorarioQueCargaElMedico($cirujano);
+    $propuesto = propuestaDelHonorario($consulta, unaCuentaCon($militar), $cirujano);
+
+    expect($item?->id)->toBe($consulta->id)
+        ->and($propuesto->valor())->toBe('1000.00')
+        ->and($propuesto->fijo)->toBeFalse();
+});
+
+it('sin honorario en su especialidad, el medico va al HONORARIO MEDICO', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    $item = honorarioQueCargaElMedico(laDoctoraAlejandra());
+
+    expect($item?->codigo)->toBe('HON-MED');
+});
+
+it('el seeder enlaza cada especialidad con su consulta externa y no pisa la que ya eligio el hospital', function (): void {
+    $cirugia = Item::factory()
+        ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada)
+        ->create(['nombre' => 'CONSULTA EXTERNA CIRUGIA GENERAL']);
+    $ortopedia = Item::factory()
+        ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada)
+        ->create(['nombre' => 'CONSULTA EXTERNA ORTOPEDIA']);
+    $otra = Item::factory()
+        ->de(TipoItem::Honorario, CategoriaLegalDeDescuento::ConsultaEspecializada)
+        ->create(['nombre' => 'CONSULTA DE ORTOPEDIA PEDIATRICA']);
+
+    $this->seed(EspecialidadesSeeder::class);
+
+    Especialidad::query()->where('codigo', 'ORTOPE')->update(['item_id' => $otra->id]);
+
+    $this->seed(EspecialidadesSeeder::class);
+
+    $enlace = Especialidad::query()->whereIn('codigo', ['CIRGEN', 'ORTOPE', 'GINECO'])->pluck('item_id', 'codigo');
+
+    expect($enlace['CIRGEN'])->toBe($cirugia->id)
+        ->and($enlace['ORTOPE'])->toBe($otra->id)
+        ->and($enlace['GINECO'])->toBeNull()
+        ->and($ortopedia->exists)->toBeTrue();
+})->note('Ginecología sin su consulta en el catálogo queda sin enlazar: se cobra como HONORARIO MÉDICO.');
+
+it('en la factura, el honorario de la especialidad dice el medico sin repetir la especialidad', function (): void {
+    [$consulta, $cirujano] = cirujanoConSuConsulta();
+
+    $cargos = app(RegistradorDeCargo::class)->registrar(unaCuentaCon(contadoParaElHonorario()), new LineaDeCargo(
+        item: $consulta,
+        cantidad: Decimal::de('1'),
+        claveIdempotencia: (string) Str::uuid(),
+        precioAcordado: Monto::de('1000.00'),
+        medicoId: $cirujano->id,
+    ));
+
+    expect($cargos->firstOrFail()->texto)->toBe('CONSULTA EXTERNA CIRUGIA GENERAL · ROBERTO ABNER SANABRIA PEÑA');
+});

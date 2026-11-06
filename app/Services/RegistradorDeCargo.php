@@ -871,9 +871,20 @@ final class RegistradorDeCargo
 
         $medico = Medico::query()->with('especialidad')->find($linea->medicoId);
 
-        return $medico instanceof Medico
-            ? $item->nombre.' · '.$medico->etiqueta()
-            : $item->nombre;
+        if (! $medico instanceof Medico) {
+            return $item->nombre;
+        }
+
+        /*
+         * El honorario de su especialidad ya la nombra —«CONSULTA
+         * EXTERNA CIRUGIA GENERAL»—: repetirla después del doctor es
+         * leerla dos veces en la factura.
+         */
+        if ($medico->especialidad->item_id === $item->id) {
+            return $item->nombre.' · '.$medico->nombre;
+        }
+
+        return $item->nombre.' · '.$medico->etiqueta();
     }
 
     /**
