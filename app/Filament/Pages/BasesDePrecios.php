@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
-use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
@@ -64,16 +63,15 @@ use Illuminate\Support\Facades\Gate;
  *     precio» con casi todo el catálogo en L 10, y lo único accionable
  *     quedaba escondido detrás de un número que tranquilizaba.
  *
- *   · LA BASE DE UN SEGURO es un acuerdo firmado. Arranca en «Pactados».
- *     Lo que no está pactado NO es un hueco: se cobra al precio de lista.
+ *   · LA BASE DE UN SEGURO es un acuerdo firmado y muestra SOLO LO
+ *     PACTADO. Lo que no está pactado NO es un hueco: se cobra al precio
+ *     de lista. Para sumar algo nuevo está «Agregar ítem», que es un acto
+ *     deliberado: se elige el ítem y se escribe SU precio.
  *
- * «Sin pactar» antes no existía: los ítems sin precio en el seguro se
- * escondían para que nadie tecleara un número que nadie negoció, y para
- * sumar uno había que ir de a uno por «Agregar ítem». Mauricio lo pidió
- * más rápido (6-nov-2026). Ahora es una vista aparte, que se elige a
- * propósito, con el precio de lista a la vista en cada fila, y SIN
- * PAQUETES —el «PAQUETE PRESUPUESTADO» se arma caso por caso y un precio
- * fijo ahí le ganaría a la lista sin que nadie lo haya decidido—.
+ * ⚠️ Se probó una vista «Sin pactar» (y «Todos») en el seguro, con el
+ * campo vacío para pactar tecleando. Mauricio la quitó el mismo día
+ * (6-nov-2026): «es confuso; solo los pactados, y si quieren agregar
+ * algo nuevo lo agregan». No volverla a poner sin que él la pida.
  *
  * El campo de precio guarda al salir y Enter salta a la fila siguiente
  * (ver la vista), así que cargar una base es escribir, Enter, escribir.
@@ -132,10 +130,11 @@ class BasesDePrecios extends Page implements HasTable
         'todos'      => 'Todos',
     ];
 
+    /**
+     * Una sola: el seguro muestra lo pactado y nada más (ver arriba).
+     */
     private const VISTAS_DE_UN_SEGURO = [
-        'pactados'   => 'Pactados',
-        'sin_pactar' => 'Sin pactar',
-        'todos'      => 'Todos',
+        'pactados' => 'Pactados',
     ];
 
     public static function getNavigationLabel(): string
@@ -449,7 +448,7 @@ class BasesDePrecios extends Page implements HasTable
                  */
                 TextInputColumn::make('precio_de_la_base')
                     ->label(fn (): string => $this->convenioId === null ? 'Precio de lista' : 'Precio pactado')
-                    ->placeholder(fn (): string => $this->convenioId === null ? 'pendiente' : 'sin pactar')
+                    ->placeholder('pendiente')
                     ->type('number')
                     ->extraInputAttributes(['step' => '0.0001', 'min' => '0', 'class' => 'text-right'])
                     ->updateStateUsing(fn (Item $record, mixed $state): mixed => $this->guardar($record, $state)),
@@ -584,14 +583,6 @@ class BasesDePrecios extends Page implements HasTable
              * el intento.
              */
             $query->where('items.se_almacena', false);
-
-            /*
-             * Los paquetes, solo si ya tenían precio en esta base: se
-             * arman caso por caso y en «Sin pactar» no tienen qué hacer.
-             */
-            $query->where(fn (Builder $q): Builder => $q
-                ->where('items.tipo', '!=', TipoItem::Paquete->value)
-                ->orWhereExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)));
         }
 
         if ($vista === 'pendientes') {
@@ -600,8 +591,6 @@ class BasesDePrecios extends Page implements HasTable
             $query->whereExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
         } elseif ($vista === 'pactados') {
             $query->whereExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId));
-        } elseif ($vista === 'sin_pactar') {
-            $query->whereNotExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId));
         }
 
         if ($categoriaId !== null) {

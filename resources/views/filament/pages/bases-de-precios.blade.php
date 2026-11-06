@@ -22,10 +22,9 @@
     en rojo: cada uno es un ítem que en caja no se le puede cobrar a un
     particular. El L 10 de relleno cuenta como pendiente.
 
-    EN LA BASE DE UN SEGURO, «Sin pactar» NO es una alarma: lo que no se
-    pactó se cobra al precio de lista, que es lo correcto. Va en gris.
-    Pintarlo de rojo empujaría a completarlo, y completar un tarifario
-    que nadie firmó es inventar un descuento.
+    EN LA BASE DE UN SEGURO no hay fichas: se ve solo lo pactado
+    (Mauricio, 6-nov-2026: «Sin pactar» y «Todos» confundían). Lo nuevo
+    entra por «Agregar ítem».
 
     ENTER GUARDA Y SALTA A LA FILA SIGUIENTE. El campo de precio de
     Filament guarda al cambiar; acá solo se mueve el foco al siguiente
@@ -72,7 +71,7 @@
 
             <div class="sihla-barra">
                 <div class="sihla-vistas" role="tablist" aria-label="Qué se ve de esta base">
-                    @foreach ($vistas as $opcion)
+                    @foreach (count($vistas) > 1 ? $vistas : [] as $opcion)
                         <button
                             type="button"
                             role="tab"
@@ -138,20 +137,11 @@
                         @break
                     @case ('pactados')
                         Lo pactado con <strong>{{ $nombre }}</strong>: estos precios le ganan al de lista
-                        cuando el paciente viene por ese pagador.
-                        @break
-                    @case ('sin_pactar')
-                        Lo que <strong>{{ $nombre }}</strong> no tiene pactado se cobra al precio de lista, y
-                        está bien así. Si firmaron un precio para alguno, escribilo y <strong>Enter</strong>:
-                        queda pactado desde hoy. Si no, dejalo vacío.
+                        cuando el paciente viene por ese pagador. Lo que no está acá se cobra al precio de
+                        lista; para pactar algo nuevo, «Agregar ítem».
                         @break
                     @default
-                        @if ($this->convenioId === null)
-                            Todo el catálogo con el precio del hospital. Los vacíos dicen «pendiente».
-                        @else
-                            Todo lo que se le puede pactar a <strong>{{ $nombre }}</strong>: lo vacío se
-                            cobra al precio de lista.
-                        @endif
+                        Todo el catálogo con el precio del hospital. Los vacíos dicen «pendiente».
                 @endswitch
             </p>
         </div>

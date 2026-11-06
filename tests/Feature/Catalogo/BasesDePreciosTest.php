@@ -416,7 +416,7 @@ it('🔴 en la lista, el L 10 de relleno cuenta como pendiente y es la vista de 
     ])->and($pagina->vistaActual())->toBe('pendientes');
 })->note('Antes la pantalla decía «285 con precio, 0 sin precio» con casi todo el catálogo en L 10: lo único accionable quedaba escondido.');
 
-it('en un seguro, sin pactar muestra lo que falta y deja afuera paquetes y farmacia', function (): void {
+it('en un seguro se ve solo lo pactado, sin fichas de sin pactar ni todos', function (): void {
     $palig = Convenio::factory()->create(['codigo' => 'PALIG']);
 
     $pactado = Item::factory()->create();
@@ -428,13 +428,11 @@ it('en un seguro, sin pactar muestra lo que falta y deja afuera paquetes y farma
 
     $pagina = new BasesDePrecios;
     $pagina->convenioId = $palig->id;
+    $pagina->vista = 'sin_pactar';
 
-    expect(lasVistas($pagina))->toBe([
-        'pactados'   => 1,
-        'sin_pactar' => 1,
-        'todos'      => 2,
-    ])->and($pagina->vistaActual())->toBe('pactados');
-});
+    expect(lasVistas($pagina))->toBe(['pactados' => 1])
+        ->and($pagina->vistaActual())->toBe('pactados');
+})->note('Mauricio, 6-nov-2026: «Sin pactar» y «Todos» confundían. Lo nuevo entra por «Agregar ítem».');
 
 it('una vista que no es de esta base vuelve a la de arranque', function (): void {
     $pagina = new BasesDePrecios;
@@ -471,5 +469,5 @@ it('la pantalla se dibuja en la lista y en un seguro', function (): void {
     Tarifario::factory()->delItem(Item::factory()->create())->paraElConvenio($palig)->a('90.0000')->create();
 
     $this->get('/bases-de-precios')->assertOk()->assertSee('Pendientes');
-    $this->get('/bases-de-precios?base='.$palig->id)->assertOk()->assertSee('Sin pactar');
+    $this->get('/bases-de-precios?base='.$palig->id)->assertOk()->assertSee('Lo pactado con')->assertDontSee('Sin pactar');
 });
