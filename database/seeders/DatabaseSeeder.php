@@ -72,6 +72,11 @@ class DatabaseSeeder extends Seeder
             //     la semana hay tres formas de escribir «cirugía».
             EspecialidadesSeeder::class,
 
+            // 12. El honorario del médico: el ítem al que va lo que se
+            //     cobra cuando en la cuenta se busca al doctor por su
+            //     nombre. Sin él, el buscador no ofrece médicos.
+            HonorarioMedicoSeeder::class,
+
             BrandingSettingSeeder::class,
         ]);
     }

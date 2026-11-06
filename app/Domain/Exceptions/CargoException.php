@@ -36,6 +36,17 @@ final class CargoException extends SihlaException
     }
 
     /**
+     * El honorario médico sin médico no le dice a nadie de quién es: ni
+     * al paciente en la factura ni a la liquidación de fin de mes.
+     */
+    public static function honorarioSinMedico(): self
+    {
+        return new self(
+            'Elegí de qué médico es el honorario. Escribí su nombre en el buscador o en «¿De quién es el honorario?».'
+        );
+    }
+
+    /**
      * ⚠️ El mensaje NO pide autorización de nadie, y eso es a propósito.
      *
      * Decía «y quién lo autoriza», y quien lo leía entendía que había que

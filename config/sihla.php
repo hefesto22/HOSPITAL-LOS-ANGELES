@@ -617,6 +617,20 @@ return [
          * se lee: se teclea otra letra o se escanea el código.
          */
         'resultados_de_busqueda' => 12,
+
+        /*
+         * El ítem al que va el honorario cuando en el buscador se escribe
+         * el nombre del doctor (Mauricio, 6-nov-2026): uno solo para
+         * todos, con el médico y su especialidad en el renglón de la
+         * factura. Lo crea `HonorarioMedicoSeeder`; sin él, el buscador no
+         * ofrece médicos.
+         */
+        'item_del_honorario_medico' => 'HON-MED',
+
+        /*
+         * Cuántos médicos ofrece el buscador debajo de los productos.
+         */
+        'medicos_en_la_busqueda' => 6,
     ],
 
     /*

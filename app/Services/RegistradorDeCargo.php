@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\RangoEdad;
+use App\Domain\Enums\TipoItem;
 use App\Domain\Enums\TipoMovimiento;
 use App\Domain\Exceptions\CargoException;
 use App\Domain\Exceptions\CuentaException;
@@ -23,6 +24,7 @@ use App\Models\Cuenta;
 use App\Models\Item;
 use App\Models\ItemPresentacion;
 use App\Models\Lote;
+use App\Models\Medico;
 use App\Models\MovimientoKardex;
 use App\Models\Persona;
 use App\Models\Tarifario;
@@ -414,7 +416,7 @@ final class RegistradorDeCargo
             'ocurrido_en'           => $ocurridoEn,
             'registrado_en'         => now(),
             'cantidad'              => $cantidad->redondeado(4),
-            'texto'                 => $linea->textoDelCargo ?? $this->textoCongelado($item->nombre, $lote),
+            'texto'                 => $linea->textoDelCargo ?? $this->textoCongelado($this->nombreDelRenglon($item, $linea), $lote),
             'convenio_id'           => $convenio->id,
             'motivo_descuento'      => $llevaDescuento ? TextoCanonico::parrafoEnMayusculas($linea->motivoDescuento) : null,
             'autorizado_por'        => $llevaDescuento ? $linea->autorizadoPor : null,
@@ -849,6 +851,29 @@ final class RegistradorDeCargo
             : $nombre;
 
         return mb_substr($texto, 0, 200);
+    }
+
+    /**
+     * Lo que dice el renglón: el nombre del ítem y, si es un honorario
+     * con médico, de quién es.
+     *
+     * 🔴 Mauricio, 6-nov-2026: en la factura el honorario sale con el
+     * nombre del doctor y su especialidad —«HONORARIO MÉDICO · ALEJANDRA
+     * BAQUEDANO FIGUEROA · GINECOLOGIA Y OBSTETRICIA»—. Va congelado en el
+     * cargo como todo el texto: si mañana el doctor cambia de
+     * especialidad, la factura de hoy sigue diciendo lo que decía.
+     */
+    private function nombreDelRenglon(Item $item, LineaDeCargo $linea): string
+    {
+        if ($item->tipo !== TipoItem::Honorario || $linea->medicoId === null) {
+            return $item->nombre;
+        }
+
+        $medico = Medico::query()->with('especialidad')->find($linea->medicoId);
+
+        return $medico instanceof Medico
+            ? $item->nombre.' · '.$medico->etiqueta()
+            : $item->nombre;
     }
 
     /**

@@ -80,6 +80,7 @@ use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
 use App\Support\FichaDelPaciente;
+use App\Support\NormalizadorDeTexto;
 use App\Support\NumeroDeFormulario;
 use App\Support\TextoCanonico;
 use App\Support\TiempoDelEncuentro;
@@ -406,6 +407,12 @@ class CuentasAbiertas extends Page
      * @var array<string, HonorarioPropuesto>
      */
     private array $honorarioPropuestoPor = [];
+
+    /**
+     * El ítem «HONORARIO MÉDICO» de esta petición: nulo = no se buscó
+     * todavía; `false` = no existe o quien cobra no lo puede cargar.
+     */
+    private Item|false|null $honorarioDelMedicoLeido = null;
 
     /**
      * Memoria por pintada de los médicos ya leídos.
@@ -1275,7 +1282,7 @@ class CuentasAbiertas extends Page
                             ->hiddenLabel()
                             ->columnSpanFull()
                             ->visible(fn (Get $get): bool => $this->itemDe($get('item_id')) instanceof Item
-                                && $this->resultadosDelBuscador() === [])
+                                && ! $this->hayResultadosALaVista())
                             ->content(fn (Get $get): HtmlString => $this->resumenDeLoElegido($get)),
 
                         /*
@@ -1517,6 +1524,13 @@ class CuentasAbiertas extends Page
                             ->columnSpan(4)
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
                             ->placeholder('Escribí el apellido')
+                            /*
+                             * El «HONORARIO MÉDICO» sin médico no dice de
+                             * quién es: ni en la factura ni en la
+                             * liquidación. Los otros honorarios —turnos
+                             * de enfermería, circulante— pueden ir sin él.
+                             */
+                            ->required(fn (Get $get): bool => $this->esElHonorarioDelMedico($this->itemDe($get('item_id'))))
                             ->options(fn (): array => $this->medicosVigentes())
                             ->getSearchResultsUsing(fn (string $search): array => $this->medicosVigentes($search))
                             ->getOptionLabelUsing(fn (mixed $value): ?string => $this->medicoDe($value)?->etiqueta())
@@ -3312,6 +3326,10 @@ class CuentasAbiertas extends Page
     {
         if (! $this->esHonorario($item)) {
             return null;
+        }
+
+        if ($this->esElHonorarioDelMedico($item) && ! $this->medicoDe($data['medico_id'] ?? null) instanceof Medico) {
+            throw CargoException::honorarioSinMedico();
         }
 
         /*
@@ -8550,15 +8568,26 @@ class CuentasAbiertas extends Page
 
         $encontrados = $this->buscarEnElCatalogo($texto);
 
-        if ($encontrados === []) {
-            $this->avisoDelBuscador = 'No hay nada con «'.$texto.'», ni como código ni como nombre. Si el '
-                .'producto existe, falta cargarle el código de barras en su ficha, en Identificación.';
+        /*
+         * 🔴 Y LOS MÉDICOS (Mauricio, 6-nov-2026): «alejandra» encuentra a
+         * la doctora, y tocarla deja puesto su honorario con el monto
+         * listo para escribir.
+         */
+        $medicos = $this->buscarMedicos($texto);
+
+        if ($encontrados === [] && $medicos === []) {
+            $this->avisoDelBuscador = 'No hay nada con «'.$texto.'», ni como código, ni como nombre, ni como médico. '
+                .'Si el producto existe, falta cargarle el código de barras en su ficha, en Identificación.';
 
             return;
         }
 
-        if (count($encontrados) === 1) {
-            $this->elegir((int) array_key_first($encontrados), $set);
+        if (count($encontrados) + count($medicos) === 1) {
+            if ($encontrados === []) {
+                $this->elegirMedico((int) array_key_first($medicos), $set);
+            } else {
+                $this->elegir((int) array_key_first($encontrados), $set);
+            }
 
             return;
         }
@@ -8619,6 +8648,137 @@ class CuentasAbiertas extends Page
     }
 
     /**
+     * Los médicos cuyo nombre lleva lo escrito, para el buscador.
+     *
+     * Solo si existe el ítem al que va su honorario y quien cobra lo
+     * puede cargar: farmacia no ve médicos en su buscador.
+     *
+     * @return array<int, string>
+     */
+    private function buscarMedicos(string $texto): array
+    {
+        if (! $this->honorarioDelMedico() instanceof Item) {
+            return [];
+        }
+
+        $clave = 'm:'.$texto;
+
+        if (array_key_exists($clave, $this->resultadosDelBuscador)) {
+            return $this->resultadosDelBuscador[$clave];
+        }
+
+        /*
+         * Sin tildes de los dos lados: el nombre se guarda «ORDOÑEZ» y
+         * quien cobra escribe «ordonez». `translate` y no `lower`: con la
+         * base en un locale C, `lower` no toca la Ñ — y el nombre ya está
+         * en mayúsculas (`GuardaEnMayusculas`).
+         */
+        $buscado = '%'.mb_strtoupper(NormalizadorDeTexto::clave($texto)).'%';
+
+        return $this->resultadosDelBuscador[$clave] = Medico::query()
+            ->with('especialidad')
+            ->vigentes()
+            ->whereRaw("translate(nombre, 'ÁÉÍÓÚÜÑ', 'AEIOUUN') like ?", [$buscado])
+            ->orderBy('nombre')
+            ->limit(self::medicosALaVista())
+            ->get()
+            ->mapWithKeys(fn (Medico $medico): array => [(int) $medico->getKey() => $medico->etiqueta()])
+            ->all();
+    }
+
+    /**
+     * Los médicos que se ofrecen debajo del campo.
+     *
+     * @return array<int, string>
+     */
+    private function medicosDelBuscador(): array
+    {
+        return $this->busquedaEscrita === null || $this->principioEscaneado !== null
+            ? []
+            : $this->buscarMedicos($this->busquedaEscrita);
+    }
+
+    private function hayResultadosALaVista(): bool
+    {
+        return $this->resultadosDelBuscador() !== [] || $this->medicosDelBuscador() !== [];
+    }
+
+    /**
+     * El ítem «HONORARIO MÉDICO», si existe y quien cobra lo puede cargar.
+     */
+    private function honorarioDelMedico(): ?Item
+    {
+        if ($this->honorarioDelMedicoLeido === null) {
+            $consulta = Item::query()
+                ->where('codigo', (string) config('sihla.facturacion.item_del_honorario_medico', 'HON-MED'))
+                ->where('tipo', TipoItem::Honorario->value)
+                ->vigentesEn(now());
+
+            CatalogoDelRol::filtrar($consulta);
+
+            $item = $consulta->first();
+
+            $this->honorarioDelMedicoLeido = $item instanceof Item ? $item : false;
+        }
+
+        return $this->honorarioDelMedicoLeido instanceof Item ? $this->honorarioDelMedicoLeido : null;
+    }
+
+    private function esElHonorarioDelMedico(?Item $item): bool
+    {
+        $delMedico = $this->honorarioDelMedico();
+
+        return $item instanceof Item && $delMedico instanceof Item && $item->id === $delMedico->id;
+    }
+
+    /**
+     * Deja puesto el honorario del médico tocado, con su precio propuesto
+     * —o el campo vacío para escribirlo—.
+     */
+    private function elegirMedico(int $medicoId, Set $set): void
+    {
+        $item = $this->honorarioDelMedico();
+
+        if (! $item instanceof Item) {
+            return;
+        }
+
+        /*
+         * `elegir()` limpia el médico —cambiar de producto es cambiar de
+         * honorario—, así que el médico va DESPUÉS, y con él su precio.
+         */
+        $this->elegir($item->id, $set);
+
+        $set('medico_id', $medicoId);
+        $set('precio_acordado', $this->precioPropuesto($item, $medicoId));
+    }
+
+    private static function medicosALaVista(): int
+    {
+        return max(1, (int) config('sihla.facturacion.medicos_en_la_busqueda', 6));
+    }
+
+    /**
+     * @return array{id: int, nombre: string}|null
+     */
+    private function medicoEn(int $casillero): ?array
+    {
+        $medicos = $this->medicosDelBuscador();
+        $id = array_keys($medicos)[$casillero] ?? null;
+
+        return $id === null ? null : ['id' => $id, 'nombre' => $medicos[$id]];
+    }
+
+    private function esElMedicoElegido(int $casillero, Get $get): bool
+    {
+        $medico = $this->medicoEn($casillero);
+
+        return $medico !== null
+            && $this->esElHonorarioDelMedico($this->itemDe($get('item_id')))
+            && $this->idDelMedico($get('medico_id')) === $medico['id'];
+    }
+
+    /**
      * Un botón por resultado. El elegido va marcado, y los demás siguen
      * ahí para cambiar de idea sin volver a escribir.
      *
@@ -8655,6 +8815,27 @@ class CuentasAbiertas extends Page
 
                     if ($resultado !== null) {
                         $this->elegir($resultado['id'], $set);
+                    }
+                });
+        }
+
+        /*
+         * Los médicos, con su ícono, después de los productos. Mismo
+         * criterio de casilleros fijos que arriba.
+         */
+        for ($casillero = 0; $casillero < self::medicosALaVista(); $casillero++) {
+            $botones[] = Action::make('elegir_medico_'.$casillero)
+                ->label(fn (): string => $this->medicoEn($casillero)['nombre'] ?? '')
+                ->visible(fn (): bool => $this->medicoEn($casillero) !== null)
+                ->size(Size::Small)
+                ->color(fn (Get $get): string => $this->esElMedicoElegido($casillero, $get) ? 'primary' : 'gray')
+                ->outlined(fn (Get $get): bool => ! $this->esElMedicoElegido($casillero, $get))
+                ->icon(fn (Get $get): Heroicon => $this->esElMedicoElegido($casillero, $get) ? Heroicon::CheckCircle : Heroicon::UserCircle)
+                ->action(function (Set $set) use ($casillero): void {
+                    $medico = $this->medicoEn($casillero);
+
+                    if ($medico !== null) {
+                        $this->elegirMedico($medico['id'], $set);
                     }
                 });
         }
@@ -8749,7 +8930,7 @@ class CuentasAbiertas extends Page
             }
         }
 
-        $nombre = $this->resultadosDelBuscador() === []
+        $nombre = ! $this->hayResultadosALaVista()
             ? '<div style="font-weight:600;font-size:.9375rem;line-height:1.3">'.e($item->nombre).'</div>'
             : '';
 

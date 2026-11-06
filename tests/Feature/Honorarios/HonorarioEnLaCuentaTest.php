@@ -5,17 +5,23 @@ declare(strict_types=1);
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\CargoException;
+use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\HonorarioPropuesto;
+use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Pages\CuentasAbiertas;
 use App\Models\Convenio;
 use App\Models\Cuenta;
+use App\Models\Especialidad;
 use App\Models\HonorarioMedico;
 use App\Models\Item;
 use App\Models\Medico;
 use App\Models\Tarifario;
 use App\Services\PreciosDeLaFicha;
 use App\Services\ProponedorDeHonorario;
+use App\Services\RegistradorDeCargo;
+use Database\Seeders\HonorarioMedicoSeeder;
+use Illuminate\Support\Str;
 
 /*
  * El precio del honorario al cargarlo en la cuenta (Mauricio, 6-nov-2026).
@@ -199,3 +205,75 @@ it('al particular con lista real se le propone la lista', function (): void {
         ->and($propuesto->valor())->toBe('600.00')
         ->and($propuesto->delMedico)->toBeFalse();
 });
+
+/*
+|--------------------------------------------------------------------------
+| El doctor por su nombre, y su nombre en la factura
+|--------------------------------------------------------------------------
+*/
+
+function laDoctoraAlejandra(): Medico
+{
+    return Medico::factory()->create([
+        'nombre'          => 'ALEJANDRA BAQUEDANO FIGUEROA',
+        'especialidad_id' => Especialidad::factory()->create(['nombre' => 'GINECOLOGIA Y OBSTETRICIA'])->id,
+    ]);
+}
+
+it('el seeder deja un solo HONORARIO MEDICO aunque se corra dos veces', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    $items = Item::query()->where('codigo', 'HON-MED')->get();
+
+    expect($items)->toHaveCount(1)
+        ->and($items->firstOrFail()->tipo)->toBe(TipoItem::Honorario)
+        ->and($items->firstOrFail()->categoria_legal_descuento)->toBe(CategoriaLegalDeDescuento::ConsultaEspecializada);
+});
+
+it('🔴 el buscador encuentra al medico por su nombre, sin importar tildes ni mayusculas', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    $kenia = Medico::factory()->create(['nombre' => 'KENIA DEL CARMEN ORDOÑEZ']);
+    Medico::factory()->create(['nombre' => 'JOSE SANDOVAL BUESO']);
+
+    /** @var array<int, string> $encontrados */
+    $encontrados = (new ReflectionMethod(CuentasAbiertas::class, 'buscarMedicos'))
+        ->invoke(app(CuentasAbiertas::class), 'ordonez');
+
+    expect(array_keys($encontrados))->toBe([$kenia->id]);
+});
+
+it('sin el item HONORARIO MEDICO el buscador no ofrece medicos', function (): void {
+    Medico::factory()->create(['nombre' => 'KENIA DEL CARMEN ORDOÑEZ']);
+
+    $encontrados = (new ReflectionMethod(CuentasAbiertas::class, 'buscarMedicos'))
+        ->invoke(app(CuentasAbiertas::class), 'kenia');
+
+    expect($encontrados)->toBe([]);
+})->note('Un médico tocado sin ítem al que ir dejaría una línea sin nada que cobrar.');
+
+it('🔴 el HONORARIO MEDICO sin medico no se carga', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    $item = Item::query()->where('codigo', 'HON-MED')->firstOrFail();
+
+    loQueViajaEnElCargo($item, unaCuentaCon(contadoParaElHonorario()), ['precio_acordado' => '500']);
+})->throws(CargoException::class, 'Elegí de qué médico es el honorario');
+
+it('🔴 en la factura el honorario dice el nombre del medico y su especialidad', function (): void {
+    $this->seed(HonorarioMedicoSeeder::class);
+
+    $item = Item::query()->where('codigo', 'HON-MED')->firstOrFail();
+    $alejandra = laDoctoraAlejandra();
+
+    $cargos = app(RegistradorDeCargo::class)->registrar(unaCuentaCon(contadoParaElHonorario()), new LineaDeCargo(
+        item: $item,
+        cantidad: Decimal::de('1'),
+        claveIdempotencia: (string) Str::uuid(),
+        precioAcordado: Monto::de('1500.00'),
+        medicoId: $alejandra->id,
+    ));
+
+    expect($cargos->firstOrFail()->texto)->toBe('HONORARIO MÉDICO · ALEJANDRA BAQUEDANO FIGUEROA · GINECOLOGIA Y OBSTETRICIA');
+})->note('Mauricio, 6-nov-2026: «en la factura sale honorario, nombre del doctor y especialidad». La factura imprime el texto congelado del cargo.');
