@@ -84,7 +84,7 @@ final class PreciosDeLaFicha
 
     private const PREFIJO = 'c';
 
-    private const MARCA_PENDIENTE = 'PENDIENTE PRECIO DE LISTA';
+    public const MARCA_PENDIENTE = 'PENDIENTE PRECIO DE LISTA';
 
     public function __construct(
         private readonly FijadorDePrecio $fijador,

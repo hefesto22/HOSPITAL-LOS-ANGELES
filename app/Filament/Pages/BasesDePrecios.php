@@ -8,11 +8,13 @@ use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Models\CategoriaItem;
 use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\Tarifario;
 use App\Services\AjustadorDeBaseDePrecios;
 use App\Services\CopiadorDeBaseDePrecios;
+use App\Services\PreciosDeLaFicha;
 use App\Support\NumeroDeFormulario;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -26,8 +28,6 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
-use Filament\Tables\Filters\Filter;
-use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -52,28 +52,31 @@ use Illuminate\Support\Facades\Gate;
  * propia fila.
  *
  * ─────────────────────────────────────────────────────────────────────
- * LA LISTA MUESTRA TODO; LA DE UN SEGURO, SOLO LO PACTADO
+ * TRES VISTAS POR BASE, Y CADA UNA DICE CUÁNTAS FILAS TRAE (6-nov-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * No son la misma clase de cosa y por eso no se listan igual:
+ * No son la misma clase de cosa y por eso no se miran igual:
  *
- *   · EL PRECIO DE LISTA es obligatorio. Todo lo que el hospital ofrece
- *     tiene que tener uno, así que ahí se ve el catálogo ENTERO y los
- *     huecos son lo accionable.
+ *   · EL PRECIO DE LISTA es obligatorio: todo lo que el hospital ofrece
+ *     tiene que tener uno. Arranca en «Pendientes», que es el trabajo
+ *     que falta. El centinela de L 10 («PENDIENTE PRECIO DE LISTA») CUENTA
+ *     COMO PENDIENTE: antes la pantalla decía «285 con precio, 0 sin
+ *     precio» con casi todo el catálogo en L 10, y lo único accionable
+ *     quedaba escondido detrás de un número que tranquilizaba.
  *
- *   · LA BASE DE UN SEGURO es un acuerdo firmado, y un acuerdo tiene las
- *     líneas que tiene. Lo que no está pactado NO es un hueco: se cobra
- *     al precio de lista, que es exactamente lo correcto.
+ *   · LA BASE DE UN SEGURO es un acuerdo firmado. Arranca en «Pactados».
+ *     Lo que no está pactado NO es un hueco: se cobra al precio de lista.
  *
- * Mostrar el catálogo entero en la base de un seguro tenía dos costos.
- * Uno de forma: cien filas vacías donde hay que buscar las que importan.
- * Y uno de fondo: dejaba a mano un campo de precio en ítems que ahí no
- * pintan nada —«PAQUETE PRESUPUESTADO», que se arma caso por caso—
- * invitando a teclear un número que después le gana al de lista sin que
- * nadie lo haya negociado.
+ * «Sin pactar» antes no existía: los ítems sin precio en el seguro se
+ * escondían para que nadie tecleara un número que nadie negoció, y para
+ * sumar uno había que ir de a uno por «Agregar ítem». Mauricio lo pidió
+ * más rápido (6-nov-2026). Ahora es una vista aparte, que se elige a
+ * propósito, con el precio de lista a la vista en cada fila, y SIN
+ * PAQUETES —el «PAQUETE PRESUPUESTADO» se arma caso por caso y un precio
+ * fijo ahí le ganaría a la lista sin que nadie lo haya decidido—.
  *
- * Para sumar uno está «Agregar ítem», que es un acto deliberado: se
- * elige el ítem y se escribe SU precio para ese pagador.
+ * El campo de precio guarda al salir y Enter salta a la fila siguiente
+ * (ver la vista), así que cargar una base es escribir, Enter, escribir.
  *
  * ─────────────────────────────────────────────────────────────────────
  * LA COLUMNA «VS LISTA» NO ES UN ADORNO
@@ -111,6 +114,29 @@ class BasesDePrecios extends Page implements HasTable
      * hospital, que es el que responde cuando nadie negoció nada.
      */
     public ?int $convenioId = null;
+
+    /**
+     * Qué filas se ven dentro de la base. Vacío = la vista con la que
+     * arranca cada base (ver `vistaActual()`).
+     */
+    public string $vista = '';
+
+    /**
+     * La categoría elegida en las fichas de arriba. `null` = todas.
+     */
+    public ?int $categoriaId = null;
+
+    private const VISTAS_DE_LA_LISTA = [
+        'pendientes' => 'Pendientes',
+        'reales'     => 'Con precio',
+        'todos'      => 'Todos',
+    ];
+
+    private const VISTAS_DE_UN_SEGURO = [
+        'pactados'   => 'Pactados',
+        'sin_pactar' => 'Sin pactar',
+        'todos'      => 'Todos',
+    ];
 
     public static function getNavigationLabel(): string
     {
@@ -222,8 +248,114 @@ class BasesDePrecios extends Page implements HasTable
     public function cambiarDeBase(?int $convenioId): void
     {
         $this->convenioId = $convenioId;
+        $this->vista = '';
+        $this->categoriaId = null;
 
         $this->resetTable();
+    }
+
+    // ── Las vistas y las categorías ───────────────────────────────────
+
+    /**
+     * La lista arranca en lo pendiente; un seguro, en lo pactado. Un
+     * valor que no corresponde a la base —el de la otra, o uno tecleado
+     * desde el navegador— vuelve al de arranque en vez de romper.
+     */
+    public function vistaActual(): string
+    {
+        $validas = $this->convenioId === null ? self::VISTAS_DE_LA_LISTA : self::VISTAS_DE_UN_SEGURO;
+
+        return array_key_exists($this->vista, $validas) ? $this->vista : (string) array_key_first($validas);
+    }
+
+    public function cambiarDeVista(string $vista): void
+    {
+        $this->vista = $vista;
+
+        $this->resetTable();
+    }
+
+    public function cambiarDeCategoria(?int $categoriaId): void
+    {
+        $this->categoriaId = $categoriaId;
+
+        $this->resetTable();
+    }
+
+    /**
+     * Las fichas de arriba, cada una con cuántas filas trae dentro de la
+     * categoría elegida. «Pendientes» con algo adentro va en alerta: cada
+     * uno es un ítem que en caja no se puede cobrar a un particular.
+     *
+     * @return list<array{clave: string, rotulo: string, cuantos: int, activa: bool, alerta: bool}>
+     */
+    public function vistas(): array
+    {
+        $validas = $this->convenioId === null ? self::VISTAS_DE_LA_LISTA : self::VISTAS_DE_UN_SEGURO;
+        $actual = $this->vistaActual();
+        $vistas = [];
+
+        foreach ($validas as $clave => $rotulo) {
+            $cuantos = $this->filas($clave, $this->categoriaId)->count();
+
+            $vistas[] = [
+                'clave'   => $clave,
+                'rotulo'  => $rotulo,
+                'cuantos' => $cuantos,
+                'activa'  => $clave === $actual,
+                'alerta'  => $clave === 'pendientes' && $cuantos > 0,
+            ];
+        }
+
+        return $vistas;
+    }
+
+    /**
+     * Las categorías que tienen algo en la vista elegida, con cuántos.
+     *
+     * Dos consultas y no un JOIN: `vigentesEn()` filtra por columnas sin
+     * calificar y `categorias_item` también tiene `vigencia_desde`, así
+     * que el JOIN las volvería ambiguas.
+     *
+     * @return list<array{id: int, nombre: string, cuantos: int}>
+     */
+    public function categorias(): array
+    {
+        /** @var array<int, int> $conteos */
+        $conteos = $this->filas($this->vistaActual(), null)
+            ->toBase()
+            ->whereNotNull('items.categoria_id')
+            ->groupBy('items.categoria_id')
+            ->pluck(DB::raw('count(*) as cuantos'), 'items.categoria_id')
+            ->map(fn (mixed $cuantos): int => (int) $cuantos)
+            ->all();
+
+        /*
+         * La elegida se sigue mostrando aunque en esta vista quede en
+         * cero: si desapareciera, no habría ficha encendida y la tabla
+         * vacía no diría por qué.
+         */
+        $ids = array_keys($conteos);
+
+        if ($this->categoriaId !== null && ! in_array($this->categoriaId, $ids, true)) {
+            $ids[] = $this->categoriaId;
+        }
+
+        if ($ids === []) {
+            return [];
+        }
+
+        return array_values(CategoriaItem::query()
+            ->whereIn('id', $ids)
+            ->orderBy('orden')
+            ->orderBy('nombre')
+            ->get(['id', 'nombre'])
+            ->map(fn (CategoriaItem $categoria): array => [
+                'id'      => $categoria->id,
+                'nombre'  => $categoria->nombre,
+                'cuantos' => $conteos[$categoria->id] ?? 0,
+            ])
+            ->all());
     }
 
     /**
@@ -316,14 +448,16 @@ class BasesDePrecios extends Page implements HasTable
                  * decide si eso fue una corrección o un cambio de precio.
                  */
                 TextInputColumn::make('precio_de_la_base')
-                    ->label('Precio L.')
+                    ->label(fn (): string => $this->convenioId === null ? 'Precio de lista' : 'Precio pactado')
+                    ->placeholder(fn (): string => $this->convenioId === null ? 'pendiente' : 'sin pactar')
                     ->type('number')
                     ->extraInputAttributes(['step' => '0.0001', 'min' => '0', 'class' => 'text-right'])
                     ->updateStateUsing(fn (Item $record, mixed $state): mixed => $this->guardar($record, $state)),
 
                 TextColumn::make('precio_de_lista')
-                    ->label('Lista')
+                    ->label('Precio de lista')
                     ->alignEnd()
+                    ->placeholder('pendiente')
                     ->formatStateUsing(fn (mixed $state): string => $state === null
                         ? '—'
                         : number_format((float) $state, 2))
@@ -338,28 +472,11 @@ class BasesDePrecios extends Page implements HasTable
                     ->color(fn (Item $record): string => $this->colorDeLaDiferencia($record))
                     ->visible(fn (): bool => $this->convenioId !== null),
             ])
-            ->filters([
-                SelectFilter::make('tipo')
-                    ->label('Tipo')
-                    ->options(fn (): array => collect(TipoItem::cases())
-                        ->mapWithKeys(fn (TipoItem $t): array => [$t->value => $t->etiqueta()])
-                        ->all()),
-
-                /*
-                 * El filtro que de verdad se usa: qué me falta cargar.
-                 */
-                /*
-                 * ⚠️ Solo en el precio de lista. En la base de un pagador
-                 * la tabla ya lista únicamente lo pactado, así que este
-                 * filtro no devolvería nunca una sola fila.
-                 */
-                Filter::make('sin_precio')
-                    ->label('Solo los que no tienen precio en esta base')
-                    ->visible(fn (): bool => $this->convenioId === null)
-                    ->query(fn (Builder $query): Builder => $query->whereNotExists(
-                        fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)
-                    )),
-            ])
+            /*
+             * Sin filtros: las vistas y las categorías van arriba, a un
+             * clic y con su número. Escondidos en el embudo no los usaba
+             * nadie.
+             */
             /*
              * La contraparte de «Agregar»: sacar un ítem de la base de un
              * pagador. Solo del lado de un pagador —del precio de lista
@@ -389,38 +506,7 @@ class BasesDePrecios extends Page implements HasTable
      */
     private function consulta(): Builder
     {
-        /** @var Builder<Item> $query */
-        $query = Item::query()->with('unidadDispensacion');
-
-        /*
-         * ─────────────────────────────────────────────────────────────
-         * CON UN SEGURO ELEGIDO, FARMACIA NO SE LISTA
-         * ─────────────────────────────────────────────────────────────
-         *
-         * A un seguro no se le pacta precio de medicamentos: paga el de
-         * lista, que se recalcula solo con cada compra. Dejarlos en la
-         * lista no era solo ruido — arruinaba el ÚNICO número accionable
-         * de la pantalla. «38 sin precio» contaba medicamentos que nadie
-         * va a pactar nunca, así que ese número no se podía bajar a cero
-         * y dejaba de significar algo.
-         *
-         * La regla de verdad la impone `FijadorDePrecio`, que rechaza el
-         * intento venga de donde venga. Esto es lo que hace que no haga
-         * falta intentarlo.
-         */
-        if ($this->convenioId !== null) {
-            $query->where('items.se_almacena', false);
-
-            /*
-             * ⚠️ Y SOLO LO QUE YA TIENE PRECIO EN ESTA BASE. Ver el
-             * encabezado: la base de un seguro es un acuerdo, no el
-             * catálogo con huecos. Lo que falta se agrega a mano con el
-             * botón, no tecleando en una fila que estaba ahí de paso.
-             */
-            $query->whereExists(
-                fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)
-            );
-        }
+        $query = $this->filas($this->vistaActual(), $this->categoriaId)->with('unidadDispensacion');
 
         /*
          * Subconsultas y no JOIN: un ítem puede tener varias filas de
@@ -453,20 +539,94 @@ class BasesDePrecios extends Page implements HasTable
                 fn ($sub) => $sub->where('tarifarios.convenio_id', $this->convenioId),
             )
             ->whereNull('tarifarios.sede_id')
+            /*
+             * En la lista, el centinela de L 10 sale como campo VACÍO con
+             * «pendiente»: un 10 en la casilla parece un precio y se le
+             * escribe al lado en vez de encima.
+             */
+            ->when($this->convenioId === null, fn ($sub) => $this->sinElCentinela($sub))
             ->vigentesEn(now())
             ->limit(1),
         ]);
 
+        /*
+         * Igual para la columna de referencia: contra L 10 la diferencia
+         * daba «+9900 %», que no le dice nada a nadie.
+         */
         $query->addSelect(['precio_de_lista' => Tarifario::query()
             ->selectRaw('trim_scale(tarifarios.precio)')
             ->whereColumn('tarifarios.item_id', 'items.id')
             ->whereNull('tarifarios.convenio_id')
             ->whereNull('tarifarios.sede_id')
+            ->tap(fn ($sub) => $this->sinElCentinela($sub))
             ->vigentesEn(now())
             ->limit(1),
         ]);
 
         return $query;
+    }
+
+    /**
+     * Las filas de una vista, sin columnas: lo usan la tabla y los
+     * conteos de las fichas, y por eso cuentan lo mismo que se ve.
+     *
+     * @return Builder<Item>
+     */
+    private function filas(string $vista, ?int $categoriaId): Builder
+    {
+        $query = Item::query()->vigentesEn(now());
+
+        if ($this->convenioId !== null) {
+            /*
+             * A un seguro no se le pacta precio de medicamentos: paga el
+             * de lista, que se recalcula solo con cada compra. La regla
+             * de verdad la impone `FijadorDePrecio`; esto evita ofrecer
+             * el intento.
+             */
+            $query->where('items.se_almacena', false);
+
+            /*
+             * Los paquetes, solo si ya tenían precio en esta base: se
+             * arman caso por caso y en «Sin pactar» no tienen qué hacer.
+             */
+            $query->where(fn (Builder $q): Builder => $q
+                ->where('items.tipo', '!=', TipoItem::Paquete->value)
+                ->orWhereExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId)));
+        }
+
+        if ($vista === 'pendientes') {
+            $query->whereNotExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
+        } elseif ($vista === 'reales') {
+            $query->whereExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
+        } elseif ($vista === 'pactados') {
+            $query->whereExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId));
+        } elseif ($vista === 'sin_pactar') {
+            $query->whereNotExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId));
+        }
+
+        if ($categoriaId !== null) {
+            $query->where('items.categoria_id', $categoriaId);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Deja afuera el precio de lista que nadie fijó (L 10 con el motivo
+     * «PENDIENTE PRECIO DE LISTA»). Para esta pantalla ese ítem NO tiene
+     * precio: en caja no se le puede cobrar a un particular.
+     *
+     * @template TSub of \Illuminate\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder<Tarifario>
+     *
+     * @param TSub $sub
+     *
+     * @return TSub
+     */
+    private function sinElCentinela($sub)
+    {
+        $sub->whereRaw('upper(trim(tarifarios.motivo)) not like ?', [PreciosDeLaFicha::MARCA_PENDIENTE.'%']);
+
+        return $sub;
     }
 
     /**
@@ -535,10 +695,15 @@ class BasesDePrecios extends Page implements HasTable
             return null;
         }
 
+        /*
+         * Corto y sin cuerpo: cargando una base se guardan decenas
+         * seguidas, y un aviso de seis segundos por cada una tapaba la
+         * pantalla. Los errores sí se quedan.
+         */
         Notification::make()
             ->success()
-            ->title($item->codigo)
-            ->body('Precio actualizado en '.$this->nombreDeLaBase().'.')
+            ->title('✓ '.$item->codigo)
+            ->duration(1500)
             ->send();
 
         return $numero->redondeado(4);
@@ -549,7 +714,15 @@ class BasesDePrecios extends Page implements HasTable
         $base = $item->getAttribute('precio_de_la_base');
         $lista = $item->getAttribute('precio_de_lista');
 
-        if ($base === null || $lista === null || (float) $lista === 0.0) {
+        if ($base === null) {
+            return '—';
+        }
+
+        if ($lista === null) {
+            return 'lista pendiente';
+        }
+
+        if (Decimal::de((string) $lista)->esCero()) {
             return '—';
         }
 
@@ -567,7 +740,7 @@ class BasesDePrecios extends Page implements HasTable
     {
         $texto = $this->diferencia($item);
 
-        if ($texto === '—') {
+        if ($texto === '—' || $texto === 'lista pendiente') {
             return 'gray';
         }
 

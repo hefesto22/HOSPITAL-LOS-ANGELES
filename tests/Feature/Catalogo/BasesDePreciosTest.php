@@ -2,16 +2,21 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Pages\BasesDePrecios;
 use App\Filament\Resources\Convenios\Tables\ConveniosTable;
+use App\Models\CategoriaItem;
 use App\Models\Convenio;
 use App\Models\Item;
 use App\Models\Tarifario;
 use App\Services\AjustadorDeBaseDePrecios;
 use App\Services\CopiadorDeBaseDePrecios;
+use App\Services\PreciosDeLaFicha;
 use App\Services\ResolutorDePrecio;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 
 function elAjustadorDeBases(): AjustadorDeBaseDePrecios
 {
@@ -371,3 +376,100 @@ it('el resumen dice cuantos items faltan por cargar en la base', function (): vo
         'sinPrecio' => 2,
     ]);
 })->note('El número que se mira es el de «sin precio»: cada uno de esos ítems es una discusión en el mostrador esperando a que alguien lo pida.');
+
+/*
+|--------------------------------------------------------------------------
+| Las vistas (6-nov-2026)
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Cuántas filas trae cada ficha de vista, por clave.
+ *
+ * @return array<string, int>
+ */
+function lasVistas(BasesDePrecios $pagina): array
+{
+    $cuantos = [];
+
+    foreach ($pagina->vistas() as $vista) {
+        $cuantos[$vista['clave']] = $vista['cuantos'];
+    }
+
+    return $cuantos;
+}
+
+it('🔴 en la lista, el L 10 de relleno cuenta como pendiente y es la vista de arranque', function (): void {
+    $real = Item::factory()->create();
+    $relleno = Item::factory()->create();
+    Item::factory()->create();
+
+    Tarifario::factory()->delItem($real)->a('450.0000')->create();
+    Tarifario::factory()->delItem($relleno)->a('10.0000')->create(['motivo' => PreciosDeLaFicha::MARCA_PENDIENTE]);
+
+    $pagina = new BasesDePrecios;
+
+    expect(lasVistas($pagina))->toBe([
+        'pendientes' => 2,
+        'reales'     => 1,
+        'todos'      => 3,
+    ])->and($pagina->vistaActual())->toBe('pendientes');
+})->note('Antes la pantalla decía «285 con precio, 0 sin precio» con casi todo el catálogo en L 10: lo único accionable quedaba escondido.');
+
+it('en un seguro, sin pactar muestra lo que falta y deja afuera paquetes y farmacia', function (): void {
+    $palig = Convenio::factory()->create(['codigo' => 'PALIG']);
+
+    $pactado = Item::factory()->create();
+    Item::factory()->create();
+    Item::factory()->create(['tipo' => TipoItem::Paquete]);
+    Item::factory()->medicamento()->create();
+
+    Tarifario::factory()->delItem($pactado)->paraElConvenio($palig)->a('90.0000')->create();
+
+    $pagina = new BasesDePrecios;
+    $pagina->convenioId = $palig->id;
+
+    expect(lasVistas($pagina))->toBe([
+        'pactados'   => 1,
+        'sin_pactar' => 1,
+        'todos'      => 2,
+    ])->and($pagina->vistaActual())->toBe('pactados');
+});
+
+it('una vista que no es de esta base vuelve a la de arranque', function (): void {
+    $pagina = new BasesDePrecios;
+    $pagina->vista = 'sin_pactar';
+
+    expect($pagina->vistaActual())->toBe('pendientes');
+});
+
+it('las categorias cuentan lo de la vista, y la elegida no desaparece aunque quede en cero', function (): void {
+    $consultas = CategoriaItem::factory()->create(['nombre' => 'CONSULTAS']);
+    $laboratorio = CategoriaItem::factory()->create(['nombre' => 'LABORATORIO']);
+    $rayos = CategoriaItem::factory()->create(['nombre' => 'RAYOS X']);
+
+    Item::factory()->count(2)->create(['categoria_id' => $consultas->id]);
+    $examen = Item::factory()->create(['categoria_id' => $laboratorio->id]);
+    Tarifario::factory()->delItem($examen)->a('300.0000')->create();
+
+    $pagina = new BasesDePrecios;
+    $pagina->categoriaId = $rayos->id;
+
+    expect($pagina->categorias())->toBe([
+        ['id' => $consultas->id, 'nombre' => 'CONSULTAS', 'cuantos' => 2],
+        ['id' => $rayos->id, 'nombre' => 'RAYOS X', 'cuantos' => 0],
+    ]);
+});
+
+it('la pantalla se dibuja en la lista y en un seguro', function (): void {
+    $rol = Role::findOrCreate('direccion', 'web');
+    $rol->givePermissionTo(Permission::findOrCreate('ViewAny:Item', 'web'));
+
+    actingAsAdmin()->assignRole($rol);
+
+    $palig = Convenio::factory()->create(['codigo' => 'PALIG']);
+    Tarifario::factory()->delItem(Item::factory()->create())->paraElConvenio($palig)->a('90.0000')->create();
+
+    $this->get('/bases-de-precios')->assertOk()->assertSee('Pendientes');
+    $this->get('/bases-de-precios?base='.$palig->id)->assertOk()->assertSee('Sin pactar');
+});

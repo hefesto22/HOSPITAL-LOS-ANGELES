@@ -15,24 +15,41 @@
     propósito: la redundancia acá cuesta dos líneas y evita facturar mal.
 
     ─────────────────────────────────────────────────────────────────────
-    EL MISMO NÚMERO SIGNIFICA DOS COSAS DISTINTAS
+    LAS VISTAS DICEN CUÁNTO HAY EN CADA UNA (6-nov-2026)
     ─────────────────────────────────────────────────────────────────────
 
-    EN EL PRECIO DE LISTA, «8 sin precio» es lo accionable y va en rojo:
-    cada uno de esos ocho es una discusión en el mostrador esperando a
-    que alguien lo pida. «131 con precio» tranquiliza y no sirve de nada.
+    EN EL PRECIO DE LISTA, «Pendientes» es lo accionable y su número va
+    en rojo: cada uno es un ítem que en caja no se le puede cobrar a un
+    particular. El L 10 de relleno cuenta como pendiente.
 
-    EN LA BASE DE UN SEGURO, ese mismo número NO es una alarma: es lo que
-    no se pactó, y lo que no se pactó se cobra al precio de lista, que es
-    lo correcto. Ahí se rotula «sin pactar» y va en gris. Pintarlo de
-    rojo empujaría a alguien a completarlo, y completar un tarifario que
-    nadie firmó es inventar un descuento.
+    EN LA BASE DE UN SEGURO, «Sin pactar» NO es una alarma: lo que no se
+    pactó se cobra al precio de lista, que es lo correcto. Va en gris.
+    Pintarlo de rojo empujaría a completarlo, y completar un tarifario
+    que nadie firmó es inventar un descuento.
+
+    ENTER GUARDA Y SALTA A LA FILA SIGUIENTE. El campo de precio de
+    Filament guarda al cambiar; acá solo se mueve el foco al siguiente
+    campo habilitado, así que cargar una base es escribir y Enter.
 --}}
 <x-filament-panels::page>
     @php($bases = $this->bases())
-    @php($resumen = $this->resumenDeLaBase())
+    @php($vistas = $this->vistas())
+    @php($categorias = $this->categorias())
+    @php($vista = $this->vistaActual())
+    @php($nombre = $this->nombreDeLaBase())
 
-    <div class="sihla-bases">
+    <div
+        class="sihla-bases"
+        x-data
+        x-on:keydown.enter="
+            if (! $event.target.matches('.fi-ta-text-input input')) return;
+            $event.preventDefault();
+            const campos = [...$el.querySelectorAll('.fi-ta-text-input input:not([disabled])')];
+            const siguiente = campos[campos.indexOf($event.target) + 1];
+            $event.target.blur();
+            if (siguiente) { siguiente.focus(); siguiente.select(); }
+        "
+    >
         <div class="sihla-panel">
             <div class="sihla-toggle" role="tablist" aria-label="Base de precios">
                 @foreach ($bases as $base)
@@ -54,27 +71,25 @@
             </div>
 
             <div class="sihla-barra">
-                <div class="sihla-cifras">
-                    <div class="sihla-cifra">
-                        <span class="sihla-cifra-valor">{{ number_format($resumen['conPrecio']) }}</span>
-                        <span class="sihla-cifra-rotulo">con precio</span>
-                    </div>
-
-                    <div @class([
-                        'sihla-cifra',
-                        'sihla-cifra-alerta' => $this->convenioId === null && $resumen['sinPrecio'] > 0,
-                        'sihla-cifra-tenue' => $this->convenioId !== null,
-                    ])>
-                        <span class="sihla-cifra-valor">{{ number_format($resumen['sinPrecio']) }}</span>
-                        <span class="sihla-cifra-rotulo">
-                            {{ $this->convenioId === null ? 'sin precio' : 'sin pactar' }}
-                        </span>
-                    </div>
-
-                    <div class="sihla-cifra sihla-cifra-tenue">
-                        <span class="sihla-cifra-valor">{{ number_format($resumen['total']) }}</span>
-                        <span class="sihla-cifra-rotulo">en el catálogo</span>
-                    </div>
+                <div class="sihla-vistas" role="tablist" aria-label="Qué se ve de esta base">
+                    @foreach ($vistas as $opcion)
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected="{{ $opcion['activa'] ? 'true' : 'false' }}"
+                            wire:key="vista-{{ $opcion['clave'] }}"
+                            wire:click="cambiarDeVista('{{ $opcion['clave'] }}')"
+                            wire:loading.attr="disabled"
+                            @class([
+                                'sihla-vista',
+                                'sihla-vista-activa' => $opcion['activa'],
+                                'sihla-vista-alerta' => $opcion['alerta'],
+                            ])
+                        >
+                            <span>{{ $opcion['rotulo'] }}</span>
+                            <span class="sihla-vista-cuantos">{{ number_format($opcion['cuantos']) }}</span>
+                        </button>
+                    @endforeach
                 </div>
 
                 <div class="sihla-acciones">
@@ -83,16 +98,61 @@
                 </div>
             </div>
 
+            @if (count($categorias) > 1 || $this->categoriaId !== null)
+                <div class="sihla-categorias" aria-label="Categoría">
+                    <button
+                        type="button"
+                        wire:key="categoria-todas"
+                        wire:click="cambiarDeCategoria(null)"
+                        wire:loading.attr="disabled"
+                        @class(['sihla-categoria', 'sihla-categoria-activa' => $this->categoriaId === null])
+                    >
+                        Todas
+                    </button>
+
+                    @foreach ($categorias as $categoria)
+                        <button
+                            type="button"
+                            wire:key="categoria-{{ $categoria['id'] }}"
+                            wire:click="cambiarDeCategoria({{ $categoria['id'] }})"
+                            wire:loading.attr="disabled"
+                            @class(['sihla-categoria', 'sihla-categoria-activa' => $this->categoriaId === $categoria['id']])
+                        >
+                            {{ $categoria['nombre'] }}
+                            <span class="sihla-categoria-cuantos">{{ number_format($categoria['cuantos']) }}</span>
+                        </button>
+                    @endforeach
+                </div>
+            @endif
+
             <p class="sihla-leyenda">
-                @if ($this->convenioId === null)
-                    Este es el precio del hospital: el que se le cobra a quien paga de su bolsillo
-                    y a cualquier pagador que no tenga precio propio para el ítem.
-                @else
-                    Acá está lo pactado con <strong>{{ $this->nombreDeLaBase() }}</strong>: estos
-                    precios le ganan al de lista cuando el paciente viene por ese pagador. Lo que
-                    no aparece en esta base no es un hueco — se cobra al precio de lista. Para
-                    sumar un ítem, «Agregar ítem».
-                @endif
+                @switch ($vista)
+                    @case ('pendientes')
+                        Estos ítems todavía no tienen precio de lista —o tienen el L 10 de relleno— y en caja
+                        no se le pueden cobrar a un particular. Escribí el precio y <strong>Enter</strong>:
+                        se guarda y pasa al siguiente.
+                        @break
+                    @case ('reales')
+                        El precio del hospital: el que paga quien viene de su bolsillo y cualquier pagador
+                        que no tenga precio propio para el ítem.
+                        @break
+                    @case ('pactados')
+                        Lo pactado con <strong>{{ $nombre }}</strong>: estos precios le ganan al de lista
+                        cuando el paciente viene por ese pagador.
+                        @break
+                    @case ('sin_pactar')
+                        Lo que <strong>{{ $nombre }}</strong> no tiene pactado se cobra al precio de lista, y
+                        está bien así. Si firmaron un precio para alguno, escribilo y <strong>Enter</strong>:
+                        queda pactado desde hoy. Si no, dejalo vacío.
+                        @break
+                    @default
+                        @if ($this->convenioId === null)
+                            Todo el catálogo con el precio del hospital. Los vacíos dicen «pendiente».
+                        @else
+                            Todo lo que se le puede pactar a <strong>{{ $nombre }}</strong>: lo vacío se
+                            cobra al precio de lista.
+                        @endif
+                @endswitch
             </p>
         </div>
 
@@ -215,7 +275,7 @@
             color: rgb(255 255 255);
         }
 
-        /* ── Las cifras y el botón ────────────────────────────────────── */
+        /* ── Las vistas, las acciones y las categorías ───────────────── */
 
         .sihla-barra {
             display: flex; flex-direction: column; gap: 1rem;
@@ -225,29 +285,99 @@
             .sihla-barra { flex-direction: row; align-items: center; justify-content: space-between; }
         }
 
-        .sihla-cifras { display: flex; align-items: stretch; gap: 1.5rem; }
+        .sihla-vistas { display: flex; flex-wrap: wrap; gap: .5rem; }
 
-        .sihla-cifra { display: flex; flex-direction: column; gap: .1rem; }
+        .sihla-vista {
+            display: inline-flex; align-items: center; gap: .5rem;
+            padding: .45rem .8rem;
+            border-radius: .6rem;
+            border: 1px solid rgb(228 228 231);
+            background: transparent;
+            cursor: pointer;
+            font-size: .8125rem; font-weight: 500; line-height: 1.2;
+            color: rgb(82 82 91);
+            transition: background .12s ease, color .12s ease, border-color .12s ease;
+        }
+        .sihla-vista:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
+        .sihla-vista:disabled { opacity: .55; cursor: progress; }
+        .sihla-vista:focus-visible {
+            outline: 2px solid rgb(245 158 11);
+            outline: 2px solid var(--primary-500);
+            outline-offset: 1px;
+        }
+        .dark .sihla-vista { border-color: rgb(63 63 70); color: rgb(161 161 170); }
+        .dark .sihla-vista:hover { background: rgb(39 39 42); color: rgb(244 244 245); }
 
-        .sihla-cifra-valor {
-            font-size: 1.375rem; font-weight: 600; line-height: 1.1;
+        .sihla-vista-activa,
+        .sihla-vista-activa:hover {
+            border-color: rgb(245 158 11 / .45);
+            border-color: color-mix(in oklab, var(--primary-500) 45%, transparent);
+            background: rgb(245 158 11 / .12);
+            background: color-mix(in oklab, var(--primary-500) 12%, transparent);
+            color: rgb(217 119 6);
+            color: var(--primary-600);
+            font-weight: 600;
+        }
+        .dark .sihla-vista-activa,
+        .dark .sihla-vista-activa:hover {
+            background: rgb(245 158 11 / .16);
+            background: color-mix(in oklab, var(--primary-500) 16%, transparent);
+            color: rgb(251 191 36);
+            color: var(--primary-400);
+        }
+
+        .sihla-vista-cuantos {
+            min-width: 1.75rem; padding: .1rem .45rem;
+            border-radius: 999px;
+            font-size: .6875rem; font-weight: 600;
+            font-variant-numeric: tabular-nums; text-align: center;
+            background: rgb(228 228 231); color: rgb(82 82 91);
+        }
+        .dark .sihla-vista-cuantos { background: rgb(63 63 70); color: rgb(212 212 216); }
+
+        .sihla-vista-activa .sihla-vista-cuantos {
+            background: rgb(245 158 11);
+            background: var(--primary-500);
+            color: rgb(255 255 255);
+        }
+        .sihla-vista-alerta .sihla-vista-cuantos,
+        .dark .sihla-vista-alerta .sihla-vista-cuantos {
+            background: rgb(220 38 38); color: rgb(255 255 255);
+        }
+
+        .sihla-categorias { display: flex; flex-wrap: wrap; gap: .375rem; }
+
+        .sihla-categoria {
+            display: inline-flex; align-items: center; gap: .375rem;
+            padding: .25rem .65rem;
+            border-radius: 999px;
+            border: 1px solid rgb(228 228 231);
+            background: transparent;
+            cursor: pointer;
+            font-size: .75rem; font-weight: 500; line-height: 1.3;
+            color: rgb(82 82 91);
+        }
+        .sihla-categoria:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
+        .sihla-categoria:disabled { opacity: .55; cursor: progress; }
+        .dark .sihla-categoria { border-color: rgb(63 63 70); color: rgb(161 161 170); }
+        .dark .sihla-categoria:hover { background: rgb(39 39 42); color: rgb(244 244 245); }
+
+        .sihla-categoria-activa,
+        .sihla-categoria-activa:hover,
+        .dark .sihla-categoria-activa,
+        .dark .sihla-categoria-activa:hover {
+            border-color: rgb(245 158 11);
+            border-color: var(--primary-500);
+            color: rgb(217 119 6);
+            color: var(--primary-500);
+            font-weight: 600;
+        }
+
+        .sihla-categoria-cuantos {
+            font-size: .6875rem; font-weight: 600;
             font-variant-numeric: tabular-nums;
-            color: rgb(24 24 27);
+            color: rgb(161 161 170);
         }
-        .dark .sihla-cifra-valor { color: rgb(244 244 245); }
-
-        .sihla-cifra-rotulo {
-            font-size: .6875rem; font-weight: 500;
-            letter-spacing: .04em; text-transform: uppercase;
-            color: rgb(113 113 122);
-        }
-        .dark .sihla-cifra-rotulo { color: rgb(113 113 122); }
-
-        .sihla-cifra-alerta .sihla-cifra-valor { color: rgb(220 38 38); }
-        .dark .sihla-cifra-alerta .sihla-cifra-valor { color: rgb(248 113 113); }
-
-        .sihla-cifra-tenue .sihla-cifra-valor { color: rgb(161 161 170); font-weight: 500; }
-        .dark .sihla-cifra-tenue .sihla-cifra-valor { color: rgb(113 113 122); }
 
         .sihla-acciones { display: flex; flex-wrap: wrap; gap: .5rem; flex-shrink: 0; }
 
