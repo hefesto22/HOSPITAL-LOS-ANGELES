@@ -64,10 +64,15 @@ return [
             'tap' => [FilterSensitiveData::class],
         ],
 
+        // 'permission' => 0664: en el servidor escriben el log DOS usuarios —el de
+        // PHP (app_hla) y el que despliega—, y el archivo del día queda de quien lo
+        // crea primero. Con 0644 el otro ya no puede escribir: si el que despliega
+        // lo crea a medianoche, la aplicación revienta al querer anotar un error.
         'single' => [
             'driver'               => 'single',
             'path'                 => storage_path('logs/laravel.log'),
             'level'                => env('LOG_LEVEL', 'debug'),
+            'permission'           => 0664,
             'replace_placeholders' => true,
         ],
 
@@ -76,6 +81,7 @@ return [
             'path'                 => storage_path('logs/laravel.log'),
             'level'                => env('LOG_LEVEL', 'debug'),
             'days'                 => env('LOG_DAILY_DAYS', 14),
+            'permission'           => 0664,
             'replace_placeholders' => true,
         ],
 
