@@ -487,8 +487,8 @@ it('🔴 en la lista no aparece el honorario que se escribe al cobrar, si el de 
     $seguro = new BasesDePrecios;
     $seguro->convenioId = $palig->id;
 
-    expect(lasVistas(new BasesDePrecios))->toBe(['pendientes' => 2, 'reales' => 0, 'todos' => 2])
+    expect(lasVistas(new BasesDePrecios))->toBe(['pendientes' => 1, 'reales' => 0, 'todos' => 2])
         ->and(lasVistas($seguro))->toBe(['pactados' => 1])
         ->and(elCopiadorDeBases()->cuantosTienenPrecio(null, sinHonorarios: true))->toBe(1)
         ->and(elCopiadorDeBases()->cuantosTienenPrecio(null))->toBe(2);
-})->note('Mauricio, 6-nov-2026: el HONORARIO MÉDICO se cobra con lo que se escribe al cargarlo; la consulta de una especialidad sí lleva precio de lista, el que se le propone al particular para todos sus médicos.');
+})->note('Mauricio: el HONORARIO MÉDICO se cobra con lo que se escribe al cargarlo; la consulta de una especialidad se ve en «Todos» para ponerle precio de lista si se quiere, pero sin él no queda pendiente (8-nov-2026).');

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
@@ -606,6 +607,16 @@ class BasesDePrecios extends Page implements HasTable
 
         if ($vista === 'pendientes') {
             $query->whereNotExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
+
+            /*
+             * 🔴 UN HONORARIO SIN PRECIO DE LISTA NO ESTÁ PENDIENTE
+             * (Mauricio, 8-nov-2026: «es a gusto del usuario al
+             * agregarlo»). La consulta de una especialidad se cobra según
+             * el doctor: sin lista, en la cuenta se escribe el monto. Se
+             * ve en «Todos» para ponerle uno si se quiere, pero no pide
+             * nada.
+             */
+            $query->where('items.tipo', '!=', TipoItem::Honorario->value);
         } elseif ($vista === 'reales') {
             $query->whereExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
         } elseif ($vista === 'pactados') {
