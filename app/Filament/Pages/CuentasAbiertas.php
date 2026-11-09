@@ -415,6 +415,14 @@ class CuentasAbiertas extends Page
     private Item|false|null $honorarioDelMedicoLeido = null;
 
     /**
+     * Memoria por pintada: ¿la cuenta que se factura tiene renglones que
+     * el seguro no cubre?
+     *
+     * @var array<int, bool>
+     */
+    private array $renglonesSinCubrirPorCuenta = [];
+
+    /**
      * La especialidad de cada médico ofrecido en el buscador, para el
      * globito de su botón. Se llena junto con la búsqueda.
      *
@@ -4789,10 +4797,15 @@ class CuentasAbiertas extends Page
      * ─────────────────────────────────────────────────────────────────
      *
      *   · El porcentaje general del convenio, sin tocar, en una cuenta
-     *     sin autorización propia. Los cargos ya se partieron con él
-     *     renglón por renglón, respetando lo que la póliza excluye y el
+     *     sin autorización propia y con TODOS sus renglones cubiertos. Los
+     *     cargos ya se partieron con él renglón por renglón, respetando el
      *     tope del evento. Anotarlo como autorización lo aplicaría parejo
-     *     sobre el total y se llevaría puestas las dos cosas.
+     *     sobre el total y se llevaría puesto el tope.
+     *
+     *     🔴 Si hay renglones que el seguro no cubre, SÍ se anota (Mauricio,
+     *     6-nov-2026): con «cubre 100 %» escrito el seguro ponía L 0.00 y
+     *     con 99.99 % ponía L 769.92. Lo que se escribe es lo que autorizó
+     *     el seguro, y es lo que se aplica.
      *   · Lo mismo que la cuenta ya tiene anotado: volver a anotarlo solo
      *     cambiaría quién figura como el que lo autorizó.
      *   · El campo vacío. Si el convenio decide la cobertura al facturar,
@@ -4847,11 +4860,21 @@ class CuentasAbiertas extends Page
 
         $general = $cuenta->convenio->coberturaGeneral();
 
-        if (! $cuenta->tieneAutorizacionPropia() && $general instanceof Decimal && $general->igualA($fraccion)) {
+        if (! $cuenta->tieneAutorizacionPropia() && $general instanceof Decimal && $general->igualA($fraccion)
+            && ! $this->tieneRenglonesSinCubrir($cuenta)) {
             return $nada;
         }
 
         return ['anotar' => true, 'fraccion' => $fraccion, 'monto' => null];
+    }
+
+    /**
+     * `Cuenta::tieneRenglonesQueElSeguroNoCubre()` con memoria por
+     * pintada: el modal lo pregunta en cada campo que se mueve.
+     */
+    private function tieneRenglonesSinCubrir(Cuenta $cuenta): bool
+    {
+        return $this->renglonesSinCubrirPorCuenta[$cuenta->id] ??= $cuenta->tieneRenglonesQueElSeguroNoCubre();
     }
 
     /**

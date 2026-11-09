@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
 use App\Models\Convenio;
@@ -273,10 +272,11 @@ final class CopiadorDeBaseDePrecios
      * Cuántos ítems tienen precio para este pagador hoy. Lo usa la
      * pantalla para el número que va al lado de cada pestaña.
      *
-     * `sinHonorarios` es para la pestaña de la lista: ahí los honorarios
-     * no se muestran (Mauricio, 6-nov-2026), así que tampoco se cuentan —
-     * un número que no coincide con lo que se ve hace desconfiar de los
-     * dos.
+     * `sinHonorarios` es para la pestaña de la lista: ahí no se muestran
+     * los honorarios que se escriben al cobrar —sí los de una
+     * especialidad— (`Item::VA_EN_LA_LISTA`), así que tampoco se
+     * cuentan: un número que no coincide con lo que se ve hace desconfiar
+     * de los dos.
      */
     public function cuantosTienenPrecio(?Convenio $convenio, ?CarbonInterface $dia = null, bool $sinHonorarios = false): int
     {
@@ -287,7 +287,7 @@ final class CopiadorDeBaseDePrecios
                 $sinHonorarios,
                 fn ($consulta) => $consulta->whereHas(
                     'item',
-                    fn (Builder $item): Builder => $item->where('tipo', '!=', TipoItem::Honorario->value),
+                    fn (Builder $item): Builder => $item->whereRaw(Item::VA_EN_LA_LISTA),
                 ),
             )
             ->when(

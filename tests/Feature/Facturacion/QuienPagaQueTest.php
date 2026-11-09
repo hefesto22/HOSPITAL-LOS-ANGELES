@@ -216,6 +216,24 @@ it('🔴 el porcentaje general sin tocar no se anota y respeta el tope del event
         ->and($otro['fraccion']?->redondeado(4))->toBe('0.7000');
 })->note('Antes el 80 % que venía escrito se anotaba igual como autorización, y aplicado parejo sobre el total se llevaba puesto el tope: el seguro terminaba poniendo L 110.80 de un tope de L 50.');
 
+it('🔴 con renglones que el seguro no cubre, el 100 % escrito se aplica a toda la cuenta', function (): void {
+    $seguro = unSeguroQueCubre('1.0000');
+    $seguro->update(['cubre_por_defecto' => false]);
+
+    $cuenta = unaCuentaCon($seguro);
+    conUnServicioDe($cuenta, '138.5000');
+
+    /* Sin fila en la base del seguro y con «solo cubre lo declarado»: el renglón va al paciente. */
+    expect($cuenta->refresh()->total_aseguradora)->toBe('0.00');
+
+    $autorizacion = autorizacionQueLeeLaCaja($cuenta, ['forma_autorizacion' => 'porcentaje', 'cobertura_autorizada' => '100']);
+    $reparto = repartoQueVeLaCaja($cuenta, ['forma_autorizacion' => 'porcentaje', 'cobertura_autorizada' => '100']);
+
+    expect($autorizacion['anotar'])->toBeTrue()
+        ->and($reparto['seguro']->valor())->toBe('138.50')
+        ->and($reparto['paciente']->valor())->toBe('0.00');
+})->note('Mauricio, 6-nov-2026: con 100 % el seguro ponía L 0.00 y con 99.99 % ponía L 769.92. Lo escrito es lo que autorizó el seguro.');
+
 it('volver a escribir lo que la cuenta ya tiene anotado no se anota de nuevo', function (): void {
     $cuenta = unaCuentaCon(seguroQueDecideAlFacturar());
     conUnServicioDe($cuenta, '138.5000');

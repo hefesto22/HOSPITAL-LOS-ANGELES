@@ -9,6 +9,7 @@ use App\Filament\Pages\BasesDePrecios;
 use App\Filament\Resources\Convenios\Tables\ConveniosTable;
 use App\Models\CategoriaItem;
 use App\Models\Convenio;
+use App\Models\Especialidad;
 use App\Models\Item;
 use App\Models\Tarifario;
 use App\Services\AjustadorDeBaseDePrecios;
@@ -472,19 +473,22 @@ it('la pantalla se dibuja en la lista y en un seguro', function (): void {
     $this->get('/bases-de-precios?base='.$palig->id)->assertOk()->assertSee('Lo pactado con')->assertDontSee('Sin pactar');
 });
 
-it('🔴 en la lista no aparecen los honorarios, en la base de un seguro si', function (): void {
+it('🔴 en la lista no aparece el honorario que se escribe al cobrar, si el de una especialidad', function (): void {
     Item::factory()->create();
     $honorario = Item::factory()->create(['tipo' => TipoItem::Honorario]);
+    $consulta = Item::factory()->create(['tipo' => TipoItem::Honorario]);
+    Especialidad::factory()->create(['item_id' => $consulta->id]);
     $palig = Convenio::factory()->create(['codigo' => 'PALIG']);
 
     Tarifario::factory()->delItem($honorario)->a('10.0000')->create(['motivo' => PreciosDeLaFicha::MARCA_PENDIENTE]);
+    Tarifario::factory()->delItem($consulta)->a('10.0000')->create(['motivo' => PreciosDeLaFicha::MARCA_PENDIENTE]);
     Tarifario::factory()->delItem($honorario)->paraElConvenio($palig)->a('850.0000')->create();
 
     $seguro = new BasesDePrecios;
     $seguro->convenioId = $palig->id;
 
-    expect(lasVistas(new BasesDePrecios))->toBe(['pendientes' => 1, 'reales' => 0, 'todos' => 1])
+    expect(lasVistas(new BasesDePrecios))->toBe(['pendientes' => 2, 'reales' => 0, 'todos' => 2])
         ->and(lasVistas($seguro))->toBe(['pactados' => 1])
-        ->and(elCopiadorDeBases()->cuantosTienenPrecio(null, sinHonorarios: true))->toBe(0)
-        ->and(elCopiadorDeBases()->cuantosTienenPrecio(null))->toBe(1);
-})->note('Mauricio, 6-nov-2026: al particular el honorario se le cobra con lo que se escribe al cargarlo; en la lista quedaba para siempre en «Pendientes».');
+        ->and(elCopiadorDeBases()->cuantosTienenPrecio(null, sinHonorarios: true))->toBe(1)
+        ->and(elCopiadorDeBases()->cuantosTienenPrecio(null))->toBe(2);
+})->note('Mauricio, 6-nov-2026: el HONORARIO MÉDICO se cobra con lo que se escribe al cargarlo; la consulta de una especialidad sí lleva precio de lista, el que se le propone al particular para todos sus médicos.');

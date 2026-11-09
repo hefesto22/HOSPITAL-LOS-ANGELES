@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
-use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
@@ -404,7 +403,7 @@ class BasesDePrecios extends Page implements HasTable
         $total = Item::query()
             ->vigentesEn(now())
             ->when($this->convenioId !== null, fn (Builder $q): Builder => $q->where('se_almacena', false))
-            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->where('tipo', '!=', TipoItem::Honorario->value))
+            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->whereRaw(Item::VA_EN_LA_LISTA))
             ->count();
 
         $conPrecio = app(CopiadorDeBaseDePrecios::class)
@@ -588,18 +587,21 @@ class BasesDePrecios extends Page implements HasTable
         } else {
             /*
              * ─────────────────────────────────────────────────────────
-             * 🔴 LOS HONORARIOS NO VAN EN LA LISTA (Mauricio, 6-nov-2026)
+             * 🔴 LOS HONORARIOS DE MOSTRADOR NO VAN EN LA LISTA (6-nov-2026)
              * ─────────────────────────────────────────────────────────
              *
-             * Al particular el honorario se le cobra con el número que se
-             * escribe al cargarlo —lo que cobra ESE médico—, no con un
-             * precio de lista. Acá quedaban para siempre en «Pendientes»
-             * pidiendo un precio que nadie iba a usar.
+             * El HONORARIO MÉDICO genérico se le cobra al particular con
+             * el número que se escribe al cargarlo —lo que cobra ESE
+             * médico—. Acá quedaba para siempre en «Pendientes» pidiendo
+             * un precio que nadie iba a usar.
              *
-             * En la base de un seguro SÍ aparecen: ahí está lo pactado,
-             * y en la cuenta se cobra sin poder cambiarlo.
+             * Los de una especialidad SÍ van: «consulta externa según el
+             * doctor que tenga esa especialidad». Su precio de lista es el
+             * que se le propone al particular para todos sus médicos.
+             *
+             * En la base de un seguro aparecen todos: ahí está lo pactado.
              */
-            $query->where('items.tipo', '!=', TipoItem::Honorario->value);
+            $query->whereRaw(Item::VA_EN_LA_LISTA);
         }
 
         if ($vista === 'pendientes') {
@@ -913,7 +915,7 @@ class BasesDePrecios extends Page implements HasTable
         return Item::query()
             ->vigentesEn(now())
             ->where('se_almacena', false)
-            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->where('tipo', '!=', TipoItem::Honorario->value))
+            ->when($this->convenioId === null, fn (Builder $q): Builder => $q->whereRaw(Item::VA_EN_LA_LISTA))
             ->whereNotExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId))
             ->orderBy('codigo')
             ->get()

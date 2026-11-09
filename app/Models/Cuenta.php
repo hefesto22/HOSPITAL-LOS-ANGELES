@@ -755,6 +755,27 @@ class Cuenta extends Model
         return $this->monto_autorizado !== null || $this->cobertura_autorizada !== null;
     }
 
+    /**
+     * ¿Hay renglones vivos que el seguro NO cubre según sus reglas —no
+     * están en su base, o la póliza los excluye—?
+     *
+     * Con alguno, «cubre 100 %» escrito al facturar no es lo que dicen los
+     * renglones, y se anota como autorización (Mauricio, 6-nov-2026).
+     */
+    public function tieneRenglonesQueElSeguroNoCubre(): bool
+    {
+        return $this->cargos()
+            ->whereNotIn('estado', [
+                EstadoCargo::Anulado->value,
+                EstadoCargo::Anulacion->value,
+                EstadoCargo::Trasladado->value,
+            ])
+            ->where('politica_cargo', PoliticaCargo::Cobrable->value)
+            ->where('elegible', false)
+            ->where('total', '>', 0)
+            ->exists();
+    }
+
     // ── La plata que ya entró ─────────────────────────────────────────
 
     /**

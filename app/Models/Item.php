@@ -80,6 +80,22 @@ class Item extends Model
 
     use SoftDeletes;
 
+    /**
+     * Lo que va en la lista del particular, en Bases de precios.
+     *
+     * Afuera quedan los honorarios que se escriben al cobrar —el HONORARIO
+     * MÉDICO genérico, lo que cobra ESE médico—. Adentro, los de una
+     * especialidad: «consulta externa según el doctor que tenga esa
+     * especialidad» (Mauricio, 6-nov-2026). Su precio de lista es el que
+     * se le propone al particular para todos los médicos de esa
+     * especialidad.
+     *
+     * SQL y no un scope: se usa también adentro de un `whereHas`, y ahí el
+     * analizador no sabe que la consulta es de ítems.
+     */
+    public const VA_EN_LA_LISTA = "(items.tipo <> '".TipoItem::Honorario->value."' OR EXISTS ("
+        .'SELECT 1 FROM especialidades WHERE especialidades.item_id = items.id))';
+
     protected $table = 'items';
 
     /** @var list<string> */
