@@ -3,8 +3,10 @@
     imprimir»).
 
     Lo mismo que la pantalla y en el mismo orden: las cuatro cifras, lo
-    facturado, cómo pagaron los pacientes, lo que queda después de
-    medicamentos y honorarios, y lo que quedó a crédito de cada seguro. Con
+    facturado, lo que ENTRÓ de verdad separado de lo que falta cobrar a los
+    seguros, lo que queda después de medicamentos y honorarios —partido en
+    lo que sale de lo que ya entró y lo que está por cobrar— y lo que quedó
+    a crédito de cada seguro. Con
     «Con las facturas», al final van todas, una por una, las anuladas
     tachadas: el papel tiene que poder cuadrarse contra el talonario.
 
@@ -30,6 +32,8 @@
     $pendiente = \App\Domain\ValueObjects\Decimal::de($cobrado['pendiente']);
     $queda = \App\Domain\ValueObjects\Decimal::de($resultado['despues_de_honorarios']);
     $reparto = \App\Services\ResumenDeFacturacion::repartoDeLosIngresos($resultado);
+    $dinero = $resumen['dinero'];
+    $repartoDelDinero = \App\Services\ResumenDeFacturacion::repartoDeLoFacturado($resumen);
 
     $alPie = str_replace(['"', '\\', '<', '>', "\n", "\r"], '', 'Reporte del mes · '.$etiqueta);
     $conFacturas = $facturas !== null;
@@ -73,6 +77,11 @@
             --parte-medicamentos: #2a78d6;
             --parte-honorarios: #eb6834;
             --parte-queda: #1baf7a;
+
+            /* Lo que entró y lo que falta: aqua, amarillo y magenta de la misma paleta. */
+            --dinero-entro: #1baf7a;
+            --dinero-seguros: #eda100;
+            --dinero-pacientes: #e87ba4;
         }
 
         body {
@@ -207,6 +216,14 @@
         .reparto-medicamentos { background: var(--parte-medicamentos); }
         .reparto-honorarios { background: var(--parte-honorarios); }
         .reparto-queda { background: var(--parte-queda); }
+        .dinero-entro { background: var(--dinero-entro); }
+        .dinero-seguros { background: var(--dinero-seguros); }
+        .dinero-pacientes { background: var(--dinero-pacientes); }
+        .tabla tbody tr.entro td { background: #ecfdf5; font-weight: 700; color: var(--tinta); border-left: 0; }
+        .tabla tbody tr.entro td:first-child { box-shadow: inset 2.5px 0 0 var(--dinero-entro); }
+        .lista tr.de-eso td { font-size: 8.6px; }
+        .lista tr.de-eso td:first-child { padding-left: 6mm; }
+        .punto { display: inline-block; width: 2.2mm; height: 2.2mm; margin-right: 1.2mm; border-radius: .5mm; vertical-align: -.2mm; }
         .reparto-leyenda { display: flex; flex-wrap: wrap; gap: 1mm 5mm; margin-top: 1.5mm; font-size: 8px; color: var(--suave); }
         .reparto-leyenda i { display: inline-block; width: 2.4mm; height: 2.4mm; margin-right: 1.2mm; border-radius: .6mm; vertical-align: -.3mm; }
 
@@ -258,19 +275,19 @@
                 <span class="debajo">{{ $facturado['cuantas'] }} {{ $facturado['cuantas'] === 1 ? 'factura' : 'facturas' }}</span>
             </div>
             <div>
-                <span class="rotulo">Pagado por pacientes</span>
-                <span class="valor">{{ lempiras($cobrado['total']) }}</span>
-                <span class="debajo">{{ $cobrado['recibos'] }} {{ $cobrado['recibos'] === 1 ? 'recibo' : 'recibos' }}</span>
+                <span class="rotulo">Entró</span>
+                <span class="valor">{{ lempiras($dinero['entro']) }}</span>
+                <span class="debajo">efectivo, tarjeta y transferencia</span>
             </div>
             <div>
-                <span class="rotulo">A crédito de seguros</span>
-                <span class="valor">{{ lempiras($facturado['seguros']) }}</span>
-                <span class="debajo">{{ count($seguros) }} {{ count($seguros) === 1 ? 'seguro' : 'seguros' }}</span>
+                <span class="rotulo">Por cobrar a seguros</span>
+                <span class="valor">{{ lempiras($dinero['por_cobrar_seguros']) }}</span>
+                <span class="debajo">todavía no entra · {{ count($seguros) }} {{ count($seguros) === 1 ? 'seguro' : 'seguros' }}</span>
             </div>
             <div class="principal">
                 <span class="rotulo">Queda</span>
                 <span class="valor">{{ lempiras($resultado['despues_de_honorarios']) }}</span>
-                <span class="debajo">después de medicamentos y honorarios</span>
+                <span class="debajo">{{ lempiras($dinero['queda_de_lo_que_entro']) }} de lo que ya entró</span>
             </div>
         </section>
 
@@ -299,9 +316,32 @@
                 </table>
             </section>
 
-            {{-- 3. Cómo pagaron los pacientes --}}
+            {{-- 3. Lo que entró y lo que falta --}}
             <section class="seccion bloque">
-                <h2 class="titulo-de-seccion">Lo que pagaron los pacientes</h2>
+                <h2 class="titulo-de-seccion">Lo que entró y lo que falta</h2>
+
+                @if ($repartoDelDinero !== [])
+                    <div class="reparto" aria-label="Lo facturado: lo que entró y lo que falta">
+                        <div class="reparto-barra">
+                            @foreach ($repartoDelDinero as $parte)
+                                @unless (\App\Domain\ValueObjects\Decimal::de($parte['monto'])->esCero())
+                                    <div
+                                        class="reparto-parte dinero-{{ $parte['clave'] }}"
+                                        style="flex: {{ $parte['parte'] }} 1 0"
+                                    >@if (\App\Domain\ValueObjects\Decimal::de($parte['parte'])->comparar('12') >= 0){{ $parte['parte'] }} %@endif</div>
+                                @endunless
+                            @endforeach
+                        </div>
+                        <div class="reparto-leyenda">
+                            @foreach ($repartoDelDinero as $parte)
+                                @unless (\App\Domain\ValueObjects\Decimal::de($parte['monto'])->esCero())
+                                    <span><i class="dinero-{{ $parte['clave'] }}"></i>{{ $parte['nombre'] }}</span>
+                                @endunless
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
+
                 <table class="tabla">
                     <colgroup><col><col style="width: 14mm"><col style="width: 28mm"></colgroup>
                     <thead>
@@ -315,30 +355,38 @@
                         @foreach ($cobrado['formas'] as $forma)
                             <tr>
                                 <td>
-                                    <span class="fuerte">{{ $forma['etiqueta'] }}</span>
+                                    {{ $forma['etiqueta'] }}
                                     @foreach ($forma['bancos'] as $banco)
                                         <span class="debajo">{{ $banco['banco'] }} · {{ lempiras($banco['monto']) }}</span>
                                     @endforeach
                                 </td>
                                 <td class="num">{{ $forma['recibos'] }}</td>
-                                <td class="num fuerte">{{ lempiras($forma['monto']) }}</td>
+                                <td class="num">{{ lempiras($forma['monto']) }}</td>
                             </tr>
                         @endforeach
+                        <tr class="entro">
+                            <td>Entró <span class="debajo">El dinero que sí llegó a caja y a los bancos</span></td>
+                            <td class="num">{{ $cobrado['recibos'] }}</td>
+                            <td class="num">{{ lempiras($dinero['entro']) }}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2"><span class="fuerte">Por cobrar a los seguros</span> <span class="debajo">Todavía no entra</span></td>
+                            <td class="num fuerte">{{ lempiras($dinero['por_cobrar_seguros']) }}</td>
+                        </tr>
                         @unless ($pendiente->esCero())
                             <tr>
                                 <td colspan="2">
-                                    <span class="fuerte">{{ $pendiente->esNegativo() ? 'Cobrado de más' : 'Falta por cobrar' }}</span>
-                                    <span class="debajo">A cargo de los pacientes menos lo pagado</span>
+                                    <span class="fuerte">{{ $pendiente->esNegativo() ? 'Cobrado de más a los pacientes' : 'Por cobrar a los pacientes' }}</span>
+                                    <span class="debajo">Lo que les tocó menos lo que pagaron</span>
                                 </td>
-                                <td class="num fuerte">{{ lempiras($cobrado['pendiente']) }}</td>
+                                <td class="num fuerte">{{ lempiras($dinero['por_cobrar_pacientes']) }}</td>
                             </tr>
                         @endunless
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td>Total pagado</td>
-                            <td class="num">{{ $cobrado['recibos'] }}</td>
-                            <td class="num">{{ lempiras($cobrado['total']) }}</td>
+                            <td colspan="2">Facturado</td>
+                            <td class="num">{{ lempiras($facturado['total']) }}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -405,6 +453,20 @@
                         <span class="debajo">Todavía no resta los honorarios del personal ni salarios</span>
                     </td>
                     <td class="num">{{ lempiras($resultado['despues_de_honorarios']) }}</td>
+                </tr>
+                <tr class="de-eso">
+                    <td>
+                        <i class="punto dinero-entro"></i>De lo que ya entró
+                        <span class="debajo">Lo que entró, menos ISV, medicamentos y honorarios</span>
+                    </td>
+                    <td class="num fuerte">{{ lempiras($dinero['queda_de_lo_que_entro']) }}</td>
+                </tr>
+                <tr class="de-eso">
+                    <td>
+                        <i class="punto dinero-seguros"></i>Por cobrar
+                        <span class="debajo">Lo que todavía deben los seguros{{ $pendiente->esCero() ? '' : ' y los pacientes' }}</span>
+                    </td>
+                    <td class="num fuerte">{{ lempiras($dinero['queda_por_cobrar']) }}</td>
                 </tr>
             </table>
 
@@ -536,8 +598,9 @@
         <div class="cierre">
             <p class="nota">
                 Todo sale de las facturas emitidas en el período, por la fecha de la factura; las cuentas abiertas
-                no están. Lo pagado son los recibos de esas cuentas, del día que se hayan recibido. El costo de los
-                medicamentos es el que quedó guardado en cada renglón al cargarse.
+                no están. Lo que entró son los recibos de esas cuentas, del día que se hayan recibido; lo de los
+                seguros queda por cobrar hasta que paguen. El costo de los medicamentos es el que quedó guardado en
+                cada renglón al cargarse.
                 @unless ($conFacturas)
                     Las facturas una por una salen con «Con las facturas».
                 @endunless

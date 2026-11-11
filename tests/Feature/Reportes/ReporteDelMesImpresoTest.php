@@ -115,7 +115,7 @@ it('el papel lleva las cifras, y las facturas una por una solo si se piden', fun
         ->assertOk()
         ->assertSee('Facturación del período')
         ->assertSee('L. 1,000.00')
-        ->assertSeeInOrder(['Lo facturado', 'Lo que pagaron los pacientes', 'Lo que queda', 'A crédito de cada seguro'])
+        ->assertSeeInOrder(['Lo facturado', 'Lo que entró y lo que falta', 'Lo que queda', 'De lo que ya entró', 'A crédito de cada seguro'])
         ->assertDontSee('000-001-01-00000042')
         ->assertDontSee('MARIA JOSE HERNANDEZ');
 

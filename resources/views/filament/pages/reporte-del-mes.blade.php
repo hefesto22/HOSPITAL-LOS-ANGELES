@@ -9,10 +9,12 @@
        que quedó a crédito de los seguros y lo que queda después de
        medicamentos y honorarios. Se leen de un vistazo; el resto es el
        porqué de cada una.
-    2. Dos por dos, el detalle: lo facturado y cómo pagaron los pacientes
-       (por forma de pago y, en la transferencia, por banco); lo que queda
-       —con la barra de a dónde se fueron los ingresos— y lo que debe cada
-       seguro.
+    2. Dos por dos, el detalle: lo facturado; lo que ENTRÓ de verdad
+       (efectivo, tarjeta y transferencia, con el banco) separado de lo que
+       falta cobrar a los seguros (Mauricio, 11-nov-2026: «tiene que haber
+       separación del dinero que sí entró»); lo que queda —con la barra de
+       a dónde se fueron los ingresos, y partido en lo que sale de lo que
+       ya entró y lo que está por cobrar— y lo que debe cada seguro.
     3. Las facturas, una por una.
 
     «Imprimir» va arriba a la derecha (acción de la página): el papel es
@@ -36,8 +38,13 @@
     $medicamentos = $resultado['medicamentos'];
     $honorarios = $resultado['honorarios'];
 
+    $dinero = $resumen['dinero'];
     $pendiente = \App\Domain\ValueObjects\Decimal::de($cobrado['pendiente']);
     $reparto = \App\Services\ResumenDeFacturacion::repartoDeLosIngresos($resultado);
+    $repartoDelDinero = \App\Services\ResumenDeFacturacion::repartoDeLoFacturado($resumen);
+    $leidoDelDinero = collect($repartoDelDinero)
+        ->map(fn (array $parte): string => $parte['nombre'].' '.$parte['parte'].' %')
+        ->implode(', ');
     $leidoDelReparto = collect($reparto)
         ->map(fn (array $parte): string => $parte['nombre'].' '.$parte['parte'].' %')
         ->implode(', ');
@@ -78,24 +85,26 @@
                 </span>
             </div>
             <div class="rm-cifra">
-                <span class="rm-cifra-etiqueta">Pagado por los pacientes</span>
-                <span class="rm-cifra-valor">{{ $lempiras($cobrado['total']) }}</span>
+                <span class="rm-cifra-etiqueta"><i class="rm-punto rm-dinero-entro"></i>Entró</span>
+                <span class="rm-cifra-valor">{{ $lempiras($dinero['entro']) }}</span>
                 <span class="rm-cifra-nota">
-                    {{ $cobrado['recibos'] }} {{ $cobrado['recibos'] === 1 ? 'recibo' : 'recibos' }}
+                    efectivo, tarjeta y transferencia · {{ $cobrado['recibos'] }} {{ $cobrado['recibos'] === 1 ? 'recibo' : 'recibos' }}
                     @unless ($pendiente->esCero())
                         · <span class="rm-ojo">{{ $pendiente->esNegativo() ? 'cobrado de más' : 'falta' }} {{ $lempiras($cobrado['pendiente']) }}</span>
                     @endunless
                 </span>
             </div>
             <div class="rm-cifra">
-                <span class="rm-cifra-etiqueta">A crédito de los seguros</span>
-                <span class="rm-cifra-valor">{{ $lempiras($facturado['seguros']) }}</span>
-                <span class="rm-cifra-nota">{{ count($seguros) }} {{ count($seguros) === 1 ? 'seguro' : 'seguros' }}</span>
+                <span class="rm-cifra-etiqueta"><i class="rm-punto rm-dinero-seguros"></i>Por cobrar a los seguros</span>
+                <span class="rm-cifra-valor">{{ $lempiras($dinero['por_cobrar_seguros']) }}</span>
+                <span class="rm-cifra-nota">todavía no entra · {{ count($seguros) }} {{ count($seguros) === 1 ? 'seguro' : 'seguros' }}</span>
             </div>
             <div class="rm-cifra rm-cifra-final">
                 <span class="rm-cifra-etiqueta">Queda</span>
                 <span class="rm-cifra-valor">{{ $lempiras($resultado['despues_de_honorarios']) }}</span>
-                <span class="rm-cifra-nota">después de medicamentos y honorarios de médicos</span>
+                <span class="rm-cifra-nota">
+                    {{ $lempiras($dinero['queda_de_lo_que_entro']) }} de lo que ya entró · {{ $lempiras($dinero['queda_por_cobrar']) }} por cobrar
+                </span>
             </div>
         </div>
 
@@ -159,12 +168,35 @@
                 </table>
             </div>
 
-            {{-- 3. Cómo pagaron los pacientes esas facturas --}}
+            {{-- 3. Lo que entró de verdad y lo que falta cobrar --}}
             <div class="sh-panel">
                 <div class="rm-cabeza">
-                    <span class="rm-titulo">Lo que pagaron los pacientes</span>
-                    <span class="sh-nota">Los recibos de las cuentas facturadas, del día que se hayan recibido</span>
+                    <span class="rm-titulo">Lo que entró y lo que falta</span>
+                    <span class="sh-nota">Lo que entró son los recibos de las cuentas facturadas, del día que se hayan recibido</span>
                 </div>
+
+                @if ($repartoDelDinero !== [])
+                    <div class="rm-reparto">
+                        <div class="rm-reparto-barra" role="img" aria-label="Lo facturado: {{ $leidoDelDinero }}">
+                            @foreach ($repartoDelDinero as $parte)
+                                @unless (\App\Domain\ValueObjects\Decimal::de($parte['monto'])->esCero())
+                                    <div
+                                        class="rm-parte rm-dinero-{{ $parte['clave'] }}"
+                                        style="flex: {{ $parte['parte'] }} 1 0"
+                                        title="{{ $parte['nombre'] }} · {{ $lempiras($parte['monto']) }} · {{ $parte['parte'] }} %"
+                                    >@if (\App\Domain\ValueObjects\Decimal::de($parte['parte'])->comparar('9') >= 0){{ $parte['parte'] }} %@endif</div>
+                                @endunless
+                            @endforeach
+                        </div>
+                        <div class="rm-leyenda">
+                            @foreach ($repartoDelDinero as $parte)
+                                @unless (\App\Domain\ValueObjects\Decimal::de($parte['monto'])->esCero())
+                                    <span><i class="rm-dinero-{{ $parte['clave'] }}"></i>{{ $parte['nombre'] }}</span>
+                                @endunless
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
 
                 <table class="sh-tabla">
                     <thead>
@@ -188,22 +220,36 @@
                                     @endif
                                 </td>
                                 <td class="sh-num rm-tenue">{{ $forma['recibos'] }}</td>
-                                <td class="sh-num sh-total">{{ $lempiras($forma['monto']) }}</td>
+                                <td class="sh-num">{{ $lempiras($forma['monto']) }}</td>
                             </tr>
                         @endforeach
+                        <tr class="rm-subtotal rm-entro">
+                            <td>
+                                <span class="sh-tabla-nombre">Entró</span>
+                                <span class="sh-tabla-detalle">El dinero que sí llegó a caja y a los bancos</span>
+                            </td>
+                            <td class="sh-num">{{ $cobrado['recibos'] }}</td>
+                            <td class="sh-num sh-total">{{ $lempiras($dinero['entro']) }}</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2">
+                                <span class="sh-tabla-nombre">Por cobrar a los seguros</span>
+                                <span class="sh-tabla-detalle">Facturado a su nombre: todavía no entra</span>
+                            </td>
+                            <td class="sh-num sh-total">{{ $lempiras($dinero['por_cobrar_seguros']) }}</td>
+                        </tr>
                         @unless ($pendiente->esCero())
                             <tr>
                                 <td colspan="2">
-                                    <span class="sh-tabla-nombre rm-ojo">{{ $pendiente->esNegativo() ? 'Cobrado de más' : 'Falta por cobrar' }}</span>
-                                    <span class="sh-tabla-detalle">A cargo de los pacientes menos lo pagado</span>
+                                    <span class="sh-tabla-nombre rm-ojo">{{ $pendiente->esNegativo() ? 'Cobrado de más a los pacientes' : 'Por cobrar a los pacientes' }}</span>
+                                    <span class="sh-tabla-detalle">Lo que les tocó menos lo que pagaron</span>
                                 </td>
-                                <td class="sh-num sh-total rm-ojo">{{ $lempiras($cobrado['pendiente']) }}</td>
+                                <td class="sh-num sh-total rm-ojo">{{ $lempiras($dinero['por_cobrar_pacientes']) }}</td>
                             </tr>
                         @endunless
                         <tr class="rm-subtotal">
-                            <td><span class="sh-tabla-nombre">Total pagado</span></td>
-                            <td class="sh-num">{{ $cobrado['recibos'] }}</td>
-                            <td class="sh-num sh-total">{{ $lempiras($cobrado['total']) }}</td>
+                            <td colspan="2"><span class="sh-tabla-nombre">Facturado</span></td>
+                            <td class="sh-num sh-total">{{ $lempiras($facturado['total']) }}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -286,6 +332,20 @@
                             <td><span class="sh-tabla-nombre">Después de honorarios</span></td>
                             <td class="sh-num sh-total">{{ $lempiras($resultado['despues_de_honorarios']) }}</td>
                         </tr>
+                        <tr class="rm-de-eso">
+                            <td>
+                                <span class="sh-tabla-nombre"><i class="rm-punto rm-dinero-entro"></i>De lo que ya entró</span>
+                                <span class="sh-tabla-detalle">Lo que entró, menos ISV, medicamentos y honorarios</span>
+                            </td>
+                            <td @class(['sh-num', 'sh-total', 'rm-ojo' => \App\Domain\ValueObjects\Decimal::de($dinero['queda_de_lo_que_entro'])->esNegativo()])>{{ $lempiras($dinero['queda_de_lo_que_entro']) }}</td>
+                        </tr>
+                        <tr class="rm-de-eso">
+                            <td>
+                                <span class="sh-tabla-nombre"><i class="rm-punto rm-dinero-seguros"></i>Por cobrar</span>
+                                <span class="sh-tabla-detalle">Lo que todavía deben los seguros{{ $pendiente->esCero() ? '' : ' y los pacientes' }}</span>
+                            </td>
+                            <td class="sh-num sh-total">{{ $lempiras($dinero['queda_por_cobrar']) }}</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -352,11 +412,17 @@
             --rm-medicamentos: #2a78d6;
             --rm-honorarios: #eb6834;
             --rm-queda: #1baf7a;
+            --rm-entro: #1baf7a;
+            --rm-seguros: #eda100;
+            --rm-pacientes: #e87ba4;
         }
         .dark .rm {
             --rm-medicamentos: #3987e5;
             --rm-honorarios: #d95926;
             --rm-queda: #199e70;
+            --rm-entro: #199e70;
+            --rm-seguros: #c98500;
+            --rm-pacientes: #d55181;
         }
 
         /* Las cuatro cifras */
@@ -399,6 +465,14 @@
         .rm-parte-medicamentos { background: var(--rm-medicamentos); }
         .rm-parte-honorarios { background: var(--rm-honorarios); }
         .rm-parte-queda { background: var(--rm-queda); }
+        .rm-dinero-entro { background: var(--rm-entro); }
+        .rm-dinero-seguros { background: var(--rm-seguros); }
+        .rm-dinero-pacientes { background: var(--rm-pacientes); }
+        .rm-punto { display: inline-block; width: .5rem; height: .5rem; margin-right: .4rem; border-radius: 2px; vertical-align: .05rem; }
+        .rm-entro td { box-shadow: inset 3px 0 0 var(--rm-entro); }
+        .rm-entro td + td { box-shadow: none; }
+        .rm-de-eso td:first-child { padding-left: 2.5rem; }
+        .rm-de-eso td { font-size: .8125rem; }
         .rm-leyenda { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin-top: .5rem; font-size: .75rem; color: var(--sh-tenue); }
         .rm-leyenda i { display: inline-block; width: .625rem; height: .625rem; margin-right: .375rem; border-radius: 2px; }
 

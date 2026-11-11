@@ -86,7 +86,8 @@ final class ResumenDeFacturacion
      *     anuladas: array{cuantas: int, total: string},
      *     cobrado: array{total: string, recibos: int, pendiente: string, formas: list<array{forma: string, etiqueta: string, monto: string, recibos: int, bancos: list<array{banco: string, monto: string}>}>},
      *     seguros: list<array{convenio_id: int, nombre: string, facturas: int, facturado: string, a_credito: string, copago: string, plazo: string}>,
-     *     resultado: array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string}
+     *     resultado: array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string},
+     *     dinero: array{entro: string, por_cobrar_seguros: string, por_cobrar_pacientes: string, queda_de_lo_que_entro: string, queda_por_cobrar: string}
      * }
      */
     public function delPeriodo(string $desde, string $hasta, ?int $sedeId = null): array
@@ -101,12 +102,79 @@ final class ResumenDeFacturacion
          */
         $cobrado['pendiente'] = Decimal::de($facturado['pacientes'])->restar($cobrado['total'])->redondeado(2);
 
+        $resultado = $this->resultado($desde, $hasta, $sedeId, $facturado['total'], $facturado['isv']);
+
         return [
             'facturado' => $facturado,
             'anuladas'  => $this->anuladas($desde, $hasta, $sedeId),
             'cobrado'   => $cobrado,
             'seguros'   => $this->seguros($desde, $hasta, $sedeId),
-            'resultado' => $this->resultado($desde, $hasta, $sedeId, $facturado['total'], $facturado['isv']),
+            'resultado' => $resultado,
+            'dinero'    => self::dineroQueEntro(
+                seguros: $facturado['seguros'],
+                isv: $facturado['isv'],
+                entro: $cobrado['total'],
+                pendiente: $cobrado['pendiente'],
+                medicamentos: $resultado['medicamentos']['costo'],
+                honorarios: $resultado['honorarios']['total'],
+            ),
+        ];
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * LO QUE ENTRÓ DE VERDAD (Mauricio, 11-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «Se recibieron 50,000 entre efectivo y transferencia y otros 50,000
+     * por seguros: eso fue lo facturado. Pero tiene que haber separación
+     * del dinero que sí entró a cuentas, para saber el valor real de lo
+     * que entró ese mes.»
+     *
+     * Lo facturado se parte en tres, y suman al centavo:
+     *
+     *   entró                 lo que pagaron los pacientes: efectivo,
+     *                         tarjeta y transferencia
+     *   por cobrar a seguros  lo que quedó a crédito: todavía no entra
+     *   por cobrar a pacientes lo que a los pacientes les tocó y no
+     *                         pagaron (debería ser cero; negativo si se
+     *                         les cobró de más)
+     *
+     * Y lo que queda después de medicamentos y honorarios se parte igual:
+     *
+     *   de lo que entró    = entró − ISV − medicamentos − honorarios
+     *   de lo que falta    = por cobrar a seguros + por cobrar a pacientes
+     *
+     * Las dos suman «Después de honorarios» exacto. La primera puede ser
+     * negativa: quiere decir que lo que entró no alcanzó para lo que costó
+     * el mes y el hospital está poniendo plata mientras los seguros pagan.
+     * Los costos se restan enteros de lo que entró a propósito: así se ve
+     * si lo que ya entró alcanza para lo que costó el mes. (Si a los
+     * médicos se les paga cuando paga el seguro, es aquí donde cambia.)
+     *
+     * Los pagos que hagan los seguros todavía no se registran en el
+     * sistema: hasta entonces, lo de los seguros es siempre «por cobrar».
+     *
+     * @return array{entro: string, por_cobrar_seguros: string, por_cobrar_pacientes: string, queda_de_lo_que_entro: string, queda_por_cobrar: string}
+     */
+    private static function dineroQueEntro(
+        string $seguros,
+        string $isv,
+        string $entro,
+        string $pendiente,
+        string $medicamentos,
+        string $honorarios,
+    ): array {
+        return [
+            'entro'                 => self::dinero($entro),
+            'por_cobrar_seguros'    => self::dinero($seguros),
+            'por_cobrar_pacientes'  => self::dinero($pendiente),
+            'queda_de_lo_que_entro' => Decimal::de(self::dinero($entro))
+                ->restar(self::dinero($isv))
+                ->restar(self::dinero($medicamentos))
+                ->restar(self::dinero($honorarios))
+                ->redondeado(2),
+            'queda_por_cobrar' => Decimal::de(self::dinero($seguros))->sumar(self::dinero($pendiente))->redondeado(2),
         ];
     }
 
@@ -453,6 +521,43 @@ final class ResumenDeFacturacion
         foreach ($partes as $parte) {
             $reparto[] = $parte + [
                 'parte' => Decimal::de($parte['monto'])->entre($ingresos)->por('100')->redondeado(1),
+            ];
+        }
+
+        return $reparto;
+    }
+
+    /**
+     * Lo facturado partido en lo que entró y lo que falta cobrar: la
+     * barra de «Lo que entró y lo que falta», en pantalla y en papel.
+     *
+     * Vacío sin facturado, o si a los pacientes se les cobró de más: ahí
+     * lo que entró es más que su parte y una barra no lo puede dibujar.
+     *
+     * @param array{facturado: array{total: string}, dinero: array{entro: string, por_cobrar_seguros: string, por_cobrar_pacientes: string}} $resumen
+     *
+     * @return list<array{clave: string, nombre: string, monto: string, parte: string}>
+     */
+    public static function repartoDeLoFacturado(array $resumen): array
+    {
+        $total = Decimal::de($resumen['facturado']['total']);
+        $dinero = $resumen['dinero'];
+
+        if (! $total->mayorQue('0') || Decimal::de($dinero['por_cobrar_pacientes'])->esNegativo()) {
+            return [];
+        }
+
+        $partes = [
+            ['clave' => 'entro', 'nombre' => 'Entró', 'monto' => $dinero['entro']],
+            ['clave' => 'seguros', 'nombre' => 'Por cobrar a los seguros', 'monto' => $dinero['por_cobrar_seguros']],
+            ['clave' => 'pacientes', 'nombre' => 'Por cobrar a los pacientes', 'monto' => $dinero['por_cobrar_pacientes']],
+        ];
+
+        $reparto = [];
+
+        foreach ($partes as $parte) {
+            $reparto[] = $parte + [
+                'parte' => Decimal::de($parte['monto'])->entre($total)->por('100')->redondeado(1),
             ];
         }
 

@@ -213,7 +213,8 @@ function unMesParaElReporte(): array
  *     anuladas: array{cuantas: int, total: string},
  *     cobrado: array{total: string, recibos: int, pendiente: string, formas: list<array{forma: string, etiqueta: string, monto: string, recibos: int, bancos: list<array{banco: string, monto: string}>}>},
  *     seguros: list<array{convenio_id: int, nombre: string, facturas: int, facturado: string, a_credito: string, copago: string, plazo: string}>,
- *     resultado: array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string}
+ *     resultado: array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string},
+ *     dinero: array{entro: string, por_cobrar_seguros: string, por_cobrar_pacientes: string, queda_de_lo_que_entro: string, queda_por_cobrar: string}
  * }
  */
 function elReporteDeEsteMes(): array
@@ -266,6 +267,25 @@ it('🔴 lo que pagaron los pacientes de las facturas del mes, por forma de pago
     ]);
 })->note('El anticipo del mes pasado sí entra: es de una factura de este mes. No entran el recibo anulado, el de la factura anulada, el de la factura del mes pasado ni el de la cuenta abierta. Lo pagado cuadra con lo que les tocó a los pacientes.');
 
+it('🔴 lo facturado se parte en lo que entró de verdad y lo que falta cobrar a los seguros', function (): void {
+    unMesParaElReporte();
+
+    $reporte = elReporteDeEsteMes();
+
+    expect($reporte['dinero'])->toBe([
+        'entro'                 => '1745.50',
+        'por_cobrar_seguros'    => '2700.00',
+        'por_cobrar_pacientes'  => '0.00',
+        'queda_de_lo_que_entro' => '1745.50',
+        'queda_por_cobrar'      => '2700.00',
+    ])->and(
+        Decimal::de($reporte['dinero']['entro'])
+            ->sumar($reporte['dinero']['por_cobrar_seguros'])
+            ->sumar($reporte['dinero']['por_cobrar_pacientes'])
+            ->redondeado(2)
+    )->toBe($reporte['facturado']['total']);
+})->note('Mauricio, 11-nov-2026: «tiene que haber separación del dinero que sí entró a cuentas». Entró 1,745.50 + por cobrar 2,700.00 = facturado 4,445.50.');
+
 it('si a una factura le falta su recibo, el reporte dice cuánto falta', function (): void {
     facturaParaElReporte(RangoCai::factory()->create(), 1, '345.50');
 
@@ -311,7 +331,10 @@ it('un mes sin movimiento da ceros, no errores', function (): void {
         ->and($reporte['resultado']['ingresos'])->toBe('0.00')
         ->and($reporte['resultado']['medicamentos']['costo'])->toBe('0.00')
         ->and($reporte['resultado']['honorarios']['total'])->toBe('0.00')
-        ->and($reporte['resultado']['despues_de_honorarios'])->toBe('0.00');
+        ->and($reporte['resultado']['despues_de_honorarios'])->toBe('0.00')
+        ->and($reporte['dinero']['entro'])->toBe('0.00')
+        ->and($reporte['dinero']['queda_de_lo_que_entro'])->toBe('0.00')
+        ->and(ResumenDeFacturacion::repartoDeLoFacturado($reporte))->toBe([]);
 });
 
 /*
@@ -429,6 +452,9 @@ function elResultadoDelMes(): void
     honorarioParaElReporte($factura, $dePiso, QuienCobraElHonorario::Medico, '300.00', 2);
     honorarioParaElReporte($factura, $dePiso, QuienCobraElHonorario::Personal, '250.00', 3);
 
+    /* De los 1,265.00 de piso entraron 500.00; el resto está por cobrar. */
+    reciboParaElReporte([[FormaDePago::Efectivo, '500.00']], $factura);
+
     $deLaAnulada = cuentaParaElReporte();
     facturaParaElReporte($rango, 2, '900.00', anulada: true, cuenta: $deLaAnulada);
     renglonParaElReporte($deLaAnulada, unMedicamentoParaElReporte(), '0.00', '500.00', EstadoCargo::Pendiente, PoliticaCargo::GastoDelServicio);
@@ -461,6 +487,43 @@ it('🔴 ingresos sin ISV, después de medicamentos y después de honorarios de 
         'despues_de_honorarios'   => '495.00',
     ]);
 })->note('El ISV es del SAR. Lo del paquete costó aunque no se cobre aparte. El honorario del personal no se resta todavía, y el del médico va completo.');
+
+it('🔴 lo que queda se parte en lo que sale de lo que ya entró y lo que está por cobrar, y puede ser negativo', function (): void {
+    elResultadoDelMes();
+
+    $reporte = elReporteDeEsteMes();
+
+    /*
+     * El honorario de ANA se cobró con un abono sin formas de pago
+     * (`abonarle()`): no es plata que se pueda decir por dónde entró, y no
+     * suma. Entró solo el recibo de 500.00 de la cuenta de piso.
+     *
+     *   de lo que entró  500.00 − 15.00 − 455.00 − 1,300.00 = −1,270.00
+     *   por cobrar       2,265.00 − 500.00                  =  1,765.00
+     *                                                           ─────────
+     *                                                              495.00
+     */
+    expect($reporte['dinero'])->toBe([
+        'entro'                 => '500.00',
+        'por_cobrar_seguros'    => '0.00',
+        'por_cobrar_pacientes'  => '1765.00',
+        'queda_de_lo_que_entro' => '-1270.00',
+        'queda_por_cobrar'      => '1765.00',
+    ])->and(
+        Decimal::de($reporte['dinero']['queda_de_lo_que_entro'])
+            ->sumar($reporte['dinero']['queda_por_cobrar'])
+            ->redondeado(2)
+    )->toBe($reporte['resultado']['despues_de_honorarios']);
+})->note('Negativo quiere decir que lo que ya entró no alcanzó para lo que costó el mes: el hospital está poniendo plata mientras le pagan.');
+
+it('la barra de lo que entró y lo que falta suma el todo, al décimo', function (): void {
+    unMesParaElReporte();
+
+    $reparto = ResumenDeFacturacion::repartoDeLoFacturado(elReporteDeEsteMes());
+
+    expect(array_column($reparto, 'clave'))->toBe(['entro', 'seguros', 'pacientes'])
+        ->and(array_column($reparto, 'parte'))->toBe(['39.3', '60.7', '0.0']);
+});
 
 it('🔴 los honorarios que resta son los mismos que dice «Honorarios por médico»', function (): void {
     elResultadoDelMes();
