@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
@@ -492,3 +493,48 @@ it('🔴 en la lista no aparece el honorario que se escribe al cobrar, si el de 
         ->and(elCopiadorDeBases()->cuantosTienenPrecio(null, sinHonorarios: true))->toBe(1)
         ->and(elCopiadorDeBases()->cuantosTienenPrecio(null))->toBe(2);
 })->note('Mauricio: el HONORARIO MÉDICO se cobra con lo que se escribe al cargarlo; la consulta de una especialidad se ve en «Todos» para ponerle precio de lista si se quiere, pero sin él no queda pendiente (8-nov-2026).');
+
+it('🔴 el honorario del personal va en la lista: tiene precio de particular como un servicio', function (): void {
+    $turno = Item::factory()->create([
+        'tipo'               => TipoItem::Honorario,
+        'cobra_el_honorario' => QuienCobraElHonorario::Personal,
+    ]);
+    $delMedico = Item::factory()->create(['tipo' => TipoItem::Honorario]);
+
+    Tarifario::factory()->delItem($turno)->a('600.0000')->create();
+    Tarifario::factory()->delItem($delMedico)->a('800.0000')->create();
+
+    expect(lasVistas(new BasesDePrecios))->toBe(['pendientes' => 0, 'reales' => 1, 'todos' => 1])
+        ->and(elCopiadorDeBases()->cuantosTienenPrecio(null, sinHonorarios: true))->toBe(1);
+})->note('Mauricio, 11-nov-2026: el turno de enfermería no es de nadie. Su precio no depende de quién lo cubre, así que se le puede poner uno de lista; el del médico sigue afuera.');
+
+it('la ficha HONORARIOS junta los de todas las hojas y en pendientes los muestra sin alarmar', function (): void {
+    $consultas = CategoriaItem::factory()->create(['nombre' => 'CONSULTA EXTERNA']);
+    $hospital = CategoriaItem::factory()->create(['nombre' => 'AREA DE HOSPITALIZACION']);
+
+    Item::factory()->create(['categoria_id' => $hospital->id]);
+    $consulta = Item::factory()->create(['tipo' => TipoItem::Honorario, 'categoria_id' => $consultas->id]);
+    Especialidad::factory()->create(['item_id' => $consulta->id]);
+    Item::factory()->create([
+        'tipo'               => TipoItem::Honorario,
+        'cobra_el_honorario' => QuienCobraElHonorario::Personal,
+        'categoria_id'       => $hospital->id,
+    ]);
+    Item::factory()->create(['tipo' => TipoItem::Honorario]);
+    Tarifario::factory()->delItem($consulta)->a('900.0000')->create();
+
+    $todas = new BasesDePrecios;
+    $honorarios = new BasesDePrecios;
+    $honorarios->soloHonorarios = true;
+
+    $alerta = [];
+
+    foreach ($honorarios->vistas() as $vista) {
+        $alerta[$vista['clave']] = $vista['alerta'];
+    }
+
+    expect(lasVistas($todas))->toBe(['pendientes' => 1, 'reales' => 1, 'todos' => 3])
+        ->and($todas->honorarios())->toBe(1)
+        ->and(lasVistas($honorarios))->toBe(['pendientes' => 1, 'reales' => 1, 'todos' => 2])
+        ->and($alerta['pendientes'])->toBeFalse();
+})->note('Mauricio, 11-nov-2026: «debería haber una que diga honorario, así como aparece medicamentos». Junta por tipo sin sacarlos de su categoría; el HONORARIO MÉDICO genérico sigue afuera de la lista.');

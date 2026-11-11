@@ -125,6 +125,20 @@ class BasesDePrecios extends Page implements HasTable
      */
     public ?int $categoriaId = null;
 
+    /**
+     * La ficha HONORARIOS (Mauricio, 11-nov-2026: «debería haber una que
+     * diga honorario, así como aparece medicamentos, área de
+     * hospitalización»).
+     *
+     * No es una categoría y no se guarda como tal: las categorías calcan
+     * las hojas del tarifario impreso, y ahí los honorarios viven en
+     * cada hoja —la consulta en CONSULTA EXTERNA, el turno de enfermería
+     * en AREA DE HOSPITALIZACION—. Esta ficha los junta por TIPO sin
+     * sacarlos de su hoja. Excluye a la categoría elegida: se ve una u
+     * otra.
+     */
+    public bool $soloHonorarios = false;
+
     private const VISTAS_DE_LA_LISTA = [
         'pendientes' => 'Pendientes',
         'reales'     => 'Con precio',
@@ -250,6 +264,7 @@ class BasesDePrecios extends Page implements HasTable
         $this->convenioId = $convenioId;
         $this->vista = '';
         $this->categoriaId = null;
+        $this->soloHonorarios = false;
 
         $this->resetTable();
     }
@@ -278,6 +293,15 @@ class BasesDePrecios extends Page implements HasTable
     public function cambiarDeCategoria(?int $categoriaId): void
     {
         $this->categoriaId = $categoriaId;
+        $this->soloHonorarios = false;
+
+        $this->resetTable();
+    }
+
+    public function verHonorarios(): void
+    {
+        $this->categoriaId = null;
+        $this->soloHonorarios = true;
 
         $this->resetTable();
     }
@@ -296,18 +320,34 @@ class BasesDePrecios extends Page implements HasTable
         $vistas = [];
 
         foreach ($validas as $clave => $rotulo) {
-            $cuantos = $this->filas($clave, $this->categoriaId)->count();
+            $cuantos = $this->filas($clave, $this->categoriaId, $this->soloHonorarios)->count();
 
             $vistas[] = [
                 'clave'   => $clave,
                 'rotulo'  => $rotulo,
                 'cuantos' => $cuantos,
                 'activa'  => $clave === $actual,
-                'alerta'  => $clave === 'pendientes' && $cuantos > 0,
+                /*
+                 * Un honorario sin precio de lista no traba la caja: se
+                 * escribe el monto al cargarlo (8-nov-2026). Con la ficha
+                 * HONORARIOS se ven, pero no en rojo.
+                 */
+                'alerta' => $clave === 'pendientes' && $cuantos > 0 && ! $this->soloHonorarios,
             ];
         }
 
         return $vistas;
+    }
+
+    /**
+     * Cuántos honorarios hay en la vista elegida, para la ficha
+     * HONORARIOS. En «Pendientes» son los que todavía no tienen precio
+     * de lista: no cuentan en el número rojo, pero se pueden encontrar
+     * para ponerles uno.
+     */
+    public function honorarios(): int
+    {
+        return $this->filas($this->vistaActual(), null, true)->count();
     }
 
     /**
@@ -507,7 +547,8 @@ class BasesDePrecios extends Page implements HasTable
      */
     private function consulta(): Builder
     {
-        $query = $this->filas($this->vistaActual(), $this->categoriaId)->with('unidadDispensacion');
+        $query = $this->filas($this->vistaActual(), $this->categoriaId, $this->soloHonorarios)
+            ->with('unidadDispensacion');
 
         /*
          * Subconsultas y no JOIN: un ítem puede tener varias filas de
@@ -571,9 +612,13 @@ class BasesDePrecios extends Page implements HasTable
      * Las filas de una vista, sin columnas: lo usan la tabla y los
      * conteos de las fichas, y por eso cuentan lo mismo que se ve.
      *
+     * `$soloHonorarios` es la ficha HONORARIOS: deja solo ese tipo y, en
+     * «Pendientes», muestra los que no tienen precio de lista —sin ella
+     * no aparecen ahí—.
+     *
      * @return Builder<Item>
      */
-    private function filas(string $vista, ?int $categoriaId): Builder
+    private function filas(string $vista, ?int $categoriaId, bool $soloHonorarios = false): Builder
     {
         $query = Item::query()->vigentesEn(now());
 
@@ -615,15 +660,23 @@ class BasesDePrecios extends Page implements HasTable
              * el doctor: sin lista, en la cuenta se escribe el monto. Se
              * ve en «Todos» para ponerle uno si se quiere, pero no pide
              * nada.
+             *
+             * Salvo con la ficha HONORARIOS elegida (11-nov-2026): ahí
+             * se piden a propósito, para ponerles precio a los que no
+             * tienen. Siguen sin contar en el número rojo de «Todas».
              */
-            $query->where('items.tipo', '!=', TipoItem::Honorario->value);
+            if (! $soloHonorarios) {
+                $query->where('items.tipo', '!=', TipoItem::Honorario->value);
+            }
         } elseif ($vista === 'reales') {
             $query->whereExists(fn ($sub) => $this->sinElCentinela($this->subconsultaDePrecio($sub, null)));
         } elseif ($vista === 'pactados') {
             $query->whereExists(fn ($sub) => $this->subconsultaDePrecio($sub, $this->convenioId));
         }
 
-        if ($categoriaId !== null) {
+        if ($soloHonorarios) {
+            $query->where('items.tipo', TipoItem::Honorario->value);
+        } elseif ($categoriaId !== null) {
             $query->where('items.categoria_id', $categoriaId);
         }
 

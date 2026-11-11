@@ -92,11 +92,17 @@ class Item extends Model
      * se le propone al particular para todos los médicos de esa
      * especialidad.
      *
+     * Adentro también los del PERSONAL (Mauricio, 11-nov-2026): el turno
+     * de enfermería no depende de quién lo cubre, así que tiene un precio
+     * para el particular como cualquier servicio. Sin precio de lista no
+     * pide nada —se escribe al cargarlo—, pero se le puede poner uno.
+     *
      * SQL y no un scope: se usa también adentro de un `whereHas`, y ahí el
      * analizador no sabe que la consulta es de ítems.
      */
-    public const VA_EN_LA_LISTA = "(items.tipo <> '".TipoItem::Honorario->value."' OR EXISTS ("
-        .'SELECT 1 FROM especialidades WHERE especialidades.item_id = items.id))';
+    public const VA_EN_LA_LISTA = "(items.tipo <> '".TipoItem::Honorario->value."'"
+        ." OR items.cobra_el_honorario = '".QuienCobraElHonorario::Personal->value."'"
+        .' OR EXISTS (SELECT 1 FROM especialidades WHERE especialidades.item_id = items.id))';
 
     protected $table = 'items';
 

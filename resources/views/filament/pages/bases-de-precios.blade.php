@@ -34,6 +34,8 @@
     @php($bases = $this->bases())
     @php($vistas = $this->vistas())
     @php($categorias = $this->categorias())
+    @php($honorarios = $this->honorarios())
+    @php($filtrado = $this->categoriaId !== null || $this->soloHonorarios)
     @php($vista = $this->vistaActual())
     @php($nombre = $this->nombreDeLaBase())
 
@@ -97,14 +99,14 @@
                 </div>
             </div>
 
-            @if (count($categorias) > 1 || $this->categoriaId !== null)
+            @if (count($categorias) + ($honorarios > 0 ? 1 : 0) > 1 || $filtrado)
                 <div class="sihla-categorias" aria-label="Categoría">
                     <button
                         type="button"
                         wire:key="categoria-todas"
                         wire:click="cambiarDeCategoria(null)"
                         wire:loading.attr="disabled"
-                        @class(['sihla-categoria', 'sihla-categoria-activa' => $this->categoriaId === null])
+                        @class(['sihla-categoria', 'sihla-categoria-activa' => ! $filtrado])
                     >
                         Todas
                     </button>
@@ -121,15 +123,35 @@
                             <span class="sihla-categoria-cuantos">{{ number_format($categoria['cuantos']) }}</span>
                         </button>
                     @endforeach
+
+                    {{-- No es una categoría: junta los honorarios de todas las hojas (ver la página). --}}
+                    @if ($honorarios > 0 || $this->soloHonorarios)
+                        <button
+                            type="button"
+                            wire:key="categoria-honorarios"
+                            wire:click="verHonorarios"
+                            wire:loading.attr="disabled"
+                            @class(['sihla-categoria', 'sihla-categoria-activa' => $this->soloHonorarios])
+                        >
+                            HONORARIOS
+                            <span class="sihla-categoria-cuantos">{{ number_format($honorarios) }}</span>
+                        </button>
+                    @endif
                 </div>
             @endif
 
             <p class="sihla-leyenda">
                 @switch ($vista)
                     @case ('pendientes')
-                        Estos ítems todavía no tienen precio de lista —o tienen el L 10 de relleno— y en caja
-                        no se le pueden cobrar a un particular. Escribí el precio y <strong>Enter</strong>:
-                        se guarda y pasa al siguiente.
+                        @if ($this->soloHonorarios)
+                            Estos honorarios no tienen precio de lista. No traban nada: al cargarlos en la
+                            cuenta se escribe el monto. Si les ponés uno, es el que se le propone a un
+                            particular. Escribí el precio y <strong>Enter</strong>.
+                        @else
+                            Estos ítems todavía no tienen precio de lista —o tienen el L 10 de relleno— y en caja
+                            no se le pueden cobrar a un particular. Escribí el precio y <strong>Enter</strong>:
+                            se guarda y pasa al siguiente.
+                        @endif
                         @break
                     @case ('reales')
                         El precio del hospital: el que paga quien viene de su bolsillo y cualquier pagador
