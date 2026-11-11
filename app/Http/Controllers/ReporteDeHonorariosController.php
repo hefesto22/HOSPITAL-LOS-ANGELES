@@ -145,6 +145,12 @@ final class ReporteDeHonorariosController extends Controller
                 default                   => 'Reporte general',
             },
             'conDetalle' => $conDetalle,
+
+            /*
+             * Adentro del modal de la pantalla (11-nov-2026): la hoja sale
+             * sin su barra de botones, que los pone el modal.
+             */
+            'incrustada' => $peticion->boolean('incrustada'),
             'impresoPor' => $usuario instanceof User ? (string) $usuario->name : '',
             'impresoEl'  => now()->format('d/m/Y H:i'),
             'volver'     => HonorariosPorMedico::getUrl(array_filter([

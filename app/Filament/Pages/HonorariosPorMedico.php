@@ -9,6 +9,7 @@ use App\Domain\ValueObjects\Decimal;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Cargo;
 use App\Models\Convenio;
+use App\Models\Item;
 use App\Models\Medico;
 use App\Services\ReporteDeHonorarios;
 use App\Support\NormalizadorDeTexto;
@@ -24,8 +25,10 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Locked;
 
 /**
@@ -429,10 +432,20 @@ class HonorariosPorMedico extends Page implements HasTable
     /**
      * El enlace al reporte impreso del período que se está viendo: de un
      * médico, de un turno o área, o el general de todos.
+     *
+     * `$incrustada` es para el modal: la hoja sale sin su barra de botones
+     * porque los pone el modal. `$conDetalle`, solo el general: el resumen
+     * y después la hoja de cada uno.
      */
-    public function enlaceDelReporte(?int $medicoId = null, ?int $turnoId = null): string
-    {
-        $periodo = ['desde' => $this->desdeEfectivo(), 'hasta' => $this->hastaEfectivo()];
+    public function enlaceDelReporte(
+        ?int $medicoId = null,
+        ?int $turnoId = null,
+        bool $incrustada = false,
+        bool $conDetalle = false,
+    ): string {
+        $periodo = ['desde' => $this->desdeEfectivo(), 'hasta' => $this->hastaEfectivo()]
+            + ($conDetalle && $medicoId === null && $turnoId === null ? ['detalle' => 1] : [])
+            + ($incrustada ? ['incrustada' => 1] : []);
 
         if ($medicoId !== null) {
             return route('honorarios.reporte.medico', ['medico' => $medicoId] + $periodo);
@@ -448,11 +461,106 @@ class HonorariosPorMedico extends Page implements HasTable
     /**
      * El período que se ve, ¿se puede imprimir? Más de un año, no (ver
      * `ReporteDeHonorarios::DIAS_MAXIMOS`): el botón lo dice antes de
-     * abrir una pestaña que va a contestar con un error.
+     * abrir un reporte que va a contestar con un error.
      */
     public function sePuedeImprimir(): bool
     {
         return Periodo::dias($this->desdeEfectivo(), $this->hastaEfectivo()) <= ReporteDeHonorarios::DIAS_MAXIMOS;
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL REPORTE SE IMPRIME DESDE UN MODAL (Mauricio, 11-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «Que no me redirija a una ventana: que se abra un modal y la
+     * ventana de impresión.» Antes cada botón abría una pestaña nueva con
+     * la hoja y había que darle «Imprimir» y después volver.
+     *
+     * Ahora es como la factura: la hoja va en un iframe adentro del
+     * modal, la ventana de imprimir se abre sola cuando terminó de
+     * cargar, y al cerrarla se sigue en la misma pantalla. La hoja es la
+     * MISMA ruta de antes con `?incrustada=1` —sin su barra—, así que lo
+     * que sale en papel no cambia y cada vez que se abre queda en la
+     * bitácora de lectura igual que antes.
+     *
+     * Argumentos: `medico` o `turno` (un id); ninguno = el general. Se
+     * llama desde los botones con `mountAction('imprimirReporte', …)`.
+     */
+    public function imprimirReporteAction(): Action
+    {
+        return Action::make('imprimirReporte')
+            ->modalHeading(fn (array $arguments): string => $this->tituloDelReporte($arguments))
+            ->modalDescription(fn (): string => $this->periodo()
+                .' · La ventana de imprimir se abre sola. Si la cerrás, «Imprimir» la vuelve a abrir.')
+            ->modalWidth('7xl')
+            ->modalContent(fn (array $arguments): View|HtmlString => $this->sePuedeImprimir()
+                ? view('honorarios.modal', $this->hojaDelModal($arguments))
+                : new HtmlString('<p>El reporte impreso cubre como máximo un año: elegí un período más corto.</p>'))
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel('Cerrar');
+    }
+
+    /**
+     * Lo que necesita `honorarios.modal`: la hoja a mostrar y, en el
+     * general, la otra versión —con la hoja de cada uno— para cambiar
+     * sin cerrar el modal.
+     *
+     * @param array<string, mixed> $arguments
+     *
+     * @return array{enlace: string, enlaceConDetalle: string|null, titulo: string}
+     */
+    private function hojaDelModal(array $arguments): array
+    {
+        ['medico' => $medico, 'turno' => $turno] = self::aQuienSeImprime($arguments);
+        $general = $medico === null && $turno === null;
+
+        return [
+            'enlace'           => $this->enlaceDelReporte($medico, $turno, incrustada: true),
+            'enlaceConDetalle' => $general ? $this->enlaceDelReporte(incrustada: true, conDetalle: true) : null,
+            'titulo'           => $this->tituloDelReporte($arguments),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $arguments
+     */
+    private function tituloDelReporte(array $arguments): string
+    {
+        ['medico' => $medico, 'turno' => $turno] = self::aQuienSeImprime($arguments);
+
+        if ($medico !== null) {
+            $nombre = Medico::withTrashed()->whereKey($medico)->value('nombre');
+
+            return 'Honorarios · '.(is_string($nombre) ? $nombre : 'médico');
+        }
+
+        if ($turno !== null) {
+            $nombre = Item::withTrashed()->whereKey($turno)->value('nombre');
+
+            return 'Honorarios · '.(is_string($nombre) ? ReporteDeHonorarios::nombreDelGrupo($nombre) : 'turno o área');
+        }
+
+        return 'Reporte general de honorarios';
+    }
+
+    /**
+     * Los argumentos vienen del navegador: solo se aceptan ids, y si
+     * vienen los dos manda el médico.
+     *
+     * @param array<string, mixed> $arguments
+     *
+     * @return array{medico: int|null, turno: int|null}
+     */
+    private static function aQuienSeImprime(array $arguments): array
+    {
+        $medico = $arguments['medico'] ?? null;
+        $turno = $arguments['turno'] ?? null;
+
+        $medico = is_int($medico) || (is_string($medico) && ctype_digit($medico)) ? (int) $medico : null;
+        $turno = is_int($turno) || (is_string($turno) && ctype_digit($turno)) ? (int) $turno : null;
+
+        return ['medico' => $medico, 'turno' => $medico === null ? $turno : null];
     }
 
     // ── La tabla ──────────────────────────────────────────────────────

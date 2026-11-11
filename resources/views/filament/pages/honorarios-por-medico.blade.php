@@ -108,10 +108,16 @@
 
                         @if ($ficha['tipo'] !== 'sin_medico')
                             @if ($ficha['enlace'] !== null)
-                                <a href="{{ $ficha['enlace'] }}" target="_blank" rel="noopener" class="hm-imprimir">
+                                <button
+                                    type="button"
+                                    wire:click="mountAction('imprimirReporte', { {{ $ficha['tipo'] === 'medico' ? 'medico' : 'turno' }}: {{ (int) $ficha['id'] }} })"
+                                    wire:loading.attr="disabled"
+                                    wire:target="mountAction"
+                                    class="hm-imprimir"
+                                >
                                     <x-filament::icon icon="heroicon-m-printer" class="sh-todos-icono" />
                                     {{ $ficha['tipo'] === 'medico' ? 'Imprimir su reporte' : 'Imprimir el reporte del turno' }}
-                                </a>
+                                </button>
                             @else
                                 <span class="hm-imprimir" data-apagado title="{{ $porQueNo }}">
                                     <x-filament::icon icon="heroicon-m-printer" class="sh-todos-icono" />
@@ -212,10 +218,16 @@
                                 Imprimir reporte general
                             </span>
                         @elseif ($hayTarjetas || $sinMedico)
-                            <a href="{{ $this->enlaceDelReporte() }}" target="_blank" rel="noopener" class="hm-imprimir">
+                            <button
+                                type="button"
+                                wire:click="mountAction('imprimirReporte')"
+                                wire:loading.attr="disabled"
+                                wire:target="mountAction"
+                                class="hm-imprimir"
+                            >
                                 <x-filament::icon icon="heroicon-m-printer" class="sh-todos-icono" />
                                 Imprimir reporte general
-                            </a>
+                            </button>
                         @endif
                     </div>
                 </div>
@@ -414,6 +426,7 @@
         .hm-botones { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
         .hm-imprimir {
             display: inline-flex; align-items: center; gap: .35rem;
+            border: 0; font-family: inherit; line-height: 1.25;
             padding: .45rem .9rem; border-radius: .5rem; cursor: pointer;
             font-size: .8125rem; font-weight: 600; text-decoration: none;
             color: rgb(255 255 255); background: var(--sh-acento);
@@ -423,6 +436,7 @@
         .hm-imprimir:hover { filter: brightness(1.06); }
         .hm-imprimir:focus-visible { outline: 2px solid var(--sh-acento); outline-offset: 2px; }
         .hm-imprimir[data-apagado] { opacity: .45; cursor: not-allowed; filter: none; }
+        .hm-imprimir:disabled { opacity: .65; cursor: progress; filter: none; }
 
         /* ── Las herramientas: buscar, ordenar, ver renglones ── */
         .hm-lista { display: flex; flex-direction: column; gap: .875rem; }
@@ -557,4 +571,7 @@
             .hm-herramientas > * { flex: 1 1 100%; max-width: none; }
         }
     </style>
+
+    {{-- El modal del reporte impreso. Si la tabla está a la vista ya lo dibujó ella y este no se repite. --}}
+    <x-filament-actions::modals />
 </x-filament-panels::page>

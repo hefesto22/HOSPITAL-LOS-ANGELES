@@ -92,6 +92,18 @@
             background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .12);
         }
 
+        /*
+         * Adentro del modal de la pantalla: sin barra, y las hojas sobre el
+         * gris del marco, con un poco menos de aire entre una y otra.
+         *
+         * ⚠️ `width: auto` y no los 216 mm: el iframe mide justo una carta,
+         * y la barra de scroll le come 15 px. Con el ancho fijo la hoja se
+         * desbordaba y salía una barra horizontal debajo. Es solo en
+         * pantalla: al imprimir, `.pagina` ya va en `width: auto`.
+         */
+        body.incrustada { background: #f4f4f5; overflow-x: hidden; }
+        body.incrustada .pagina { width: auto; max-width: 216mm; margin: 0 0 6mm; }
+
         @media print {
             body { background: #fff; }
             .no-imprime { display: none !important; }
@@ -204,21 +216,23 @@
         .firma-rotulo { margin-top: 1.2mm; text-align: center; font-size: 8px; color: var(--suave); }
     </style>
 </head>
-<body>
-    <div class="barra no-imprime">
-        <span class="barra-titulo">
-            {{ $titulo }} · {{ $etiqueta }}
-        </span>
+<body @class(['incrustada' => $incrustada ?? false])>
+    @unless ($incrustada ?? false)
+        <div class="barra no-imprime">
+            <span class="barra-titulo">
+                {{ $titulo }} · {{ $etiqueta }}
+            </span>
 
-        @if ($otraVersion !== null)
-            <a href="{{ $otraVersion }}">
-                {{ $conDetalle ? 'Solo el resumen' : 'Con la hoja de cada uno' }}
-            </a>
-        @endif
+            @if ($otraVersion !== null)
+                <a href="{{ $otraVersion }}">
+                    {{ $conDetalle ? 'Solo el resumen' : 'Con la hoja de cada uno' }}
+                </a>
+            @endif
 
-        <a href="{{ $volver }}">Volver a la pantalla</a>
-        <button type="button" class="principal" onclick="window.print()">Imprimir</button>
-    </div>
+            <a href="{{ $volver }}">Volver a la pantalla</a>
+            <button type="button" class="principal" onclick="window.print()">Imprimir</button>
+        </div>
+    @endunless
 
     @unless ($deUnaHoja)
         <section class="pagina">

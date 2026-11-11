@@ -330,3 +330,35 @@ it('el enlace de la pantalla lleva el período que se está viendo', function ()
     expect($pantalla->enlaceDelReporte())->toBe(route('honorarios.reporte', ['desde' => '2026-10-01', 'hasta' => '2026-10-15']))
         ->and($pantalla->enlaceDelReporte(7))->toBe(route('honorarios.reporte.medico', ['medico' => 7, 'desde' => '2026-10-01', 'hasta' => '2026-10-15']));
 });
+
+it('incrustado en el modal, el papel sale sin su barra de botones', function (): void {
+    Medico::factory()->create();
+
+    imprimeComo('direccion');
+
+    test()->get(route('honorarios.reporte'))->assertOk()->assertSee('Volver a la pantalla');
+    test()->get(route('honorarios.reporte', ['incrustada' => 1]))->assertOk()->assertDontSee('Volver a la pantalla');
+});
+
+it('el modal muestra la hoja incrustada y, en el general, ofrece la hoja de cada uno', function (): void {
+    $pantalla = app(HonorariosPorMedico::class);
+    $pantalla->desde = '2026-10-01';
+    $pantalla->hasta = '2026-10-15';
+
+    $general = $pantalla->enlaceDelReporte(incrustada: true);
+    $conDetalle = $pantalla->enlaceDelReporte(incrustada: true, conDetalle: true);
+
+    expect($general)->toBe(route('honorarios.reporte', ['desde' => '2026-10-01', 'hasta' => '2026-10-15', 'incrustada' => 1]))
+        ->and($conDetalle)->toBe(route('honorarios.reporte', ['desde' => '2026-10-01', 'hasta' => '2026-10-15', 'detalle' => 1, 'incrustada' => 1]))
+        ->and($pantalla->enlaceDelReporte(7, incrustada: true, conDetalle: true))
+        ->toBe(route('honorarios.reporte.medico', ['medico' => 7, 'desde' => '2026-10-01', 'hasta' => '2026-10-15', 'incrustada' => 1]));
+
+    $html = view('honorarios.modal', [
+        'enlace'           => $general,
+        'enlaceConDetalle' => $conDetalle,
+        'titulo'           => 'Reporte general de honorarios',
+    ])->render();
+
+    expect($html)->toContain('src="'.e($general).'"')
+        ->and($html)->toContain('Con la hoja de cada uno');
+})->note('Mauricio, 11-nov-2026: «que no me redirija a una ventana, que se abra un modal y la ventana de impresión». La hoja es la misma ruta de antes, sin su barra.');
