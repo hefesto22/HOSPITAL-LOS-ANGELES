@@ -20,6 +20,7 @@ declare(strict_types=1);
 */
 
 use App\Http\Controllers\ReporteDeHonorariosController;
+use App\Http\Controllers\ReporteDelMesController;
 use App\Models\Factura;
 use App\Models\Item;
 use App\Models\PrincipioActivo;
@@ -208,4 +209,15 @@ Route::middleware(['web', 'auth'])->group(function (): void {
     Route::get('/honorarios/reporte/turno/{item}', [ReporteDeHonorariosController::class, 'turno'])
         ->whereNumber('item')
         ->name('honorarios.reporte.turno');
+
+    /*
+    |------------------------------------------------------------------
+    | El reporte del mes, para papel (11-nov-2026)
+    |------------------------------------------------------------------
+    |
+    | Mismo permiso que la pantalla «Reporte del mes», y cada impresión
+    | queda en la bitácora: con las facturas lleva nombres de pacientes.
+    */
+    Route::get('/reportes/mes', ReporteDelMesController::class)
+        ->name('reportes.mes');
 });

@@ -10,9 +10,10 @@ use App\Domain\ValueObjects\Decimal;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Convenio;
 use App\Models\Factura;
-use App\Models\User;
 use App\Services\ResumenDeFacturacion;
+use App\Support\Periodo;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Support\Enums\FontFamily;
 use Filament\Support\Icons\Heroicon;
@@ -21,8 +22,10 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 
 /**
  * El reporte del mes (Mauricio, 6-nov-2026; 11-nov-2026): de las facturas
@@ -119,6 +122,54 @@ class ReporteDelMes extends Page implements HasTable
         ];
     }
 
+    // ── El papel ──────────────────────────────────────────────────────
+
+    /**
+     * «Imprimir», arriba a la derecha (Mauricio, 11-nov-2026: «sobre todo
+     * que se pueda imprimir»). Abre la hoja en un modal y la ventana de
+     * imprimir sale sola, como los honorarios: el mismo `honorarios.modal`,
+     * con «Solo el resumen» o «Con las facturas».
+     *
+     * @return array<int, Action>
+     */
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('imprimir')
+                ->label('Imprimir')
+                ->icon(Heroicon::OutlinedPrinter)
+                ->modalHeading(fn (): string => 'Reporte del mes · '.$this->periodo())
+                ->modalDescription('La ventana de imprimir se abre sola. Si la cerrás, «Imprimir» la vuelve a abrir.')
+                ->modalWidth('7xl')
+                ->modalContent(fn (): View|HtmlString => $this->sePuedeImprimir()
+                    ? view('honorarios.modal', [
+                        'enlace'             => $this->enlaceDelReporte(incrustada: true),
+                        'enlaceConDetalle'   => $this->enlaceDelReporte(incrustada: true, conFacturas: true),
+                        'etiquetaConDetalle' => 'Con las facturas',
+                        'titulo'             => 'Reporte del mes · '.$this->periodo(),
+                    ])
+                    : new HtmlString('<p>El reporte impreso cubre como máximo un año: elegí un período más corto.</p>'))
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Cerrar'),
+        ];
+    }
+
+    /**
+     * La hoja del período que se está viendo. Público para probarlo; solo
+     * arma una URL que igual pide el permiso al abrirse.
+     */
+    public function enlaceDelReporte(bool $incrustada = false, bool $conFacturas = false): string
+    {
+        return route('reportes.mes', ['desde' => $this->desdeEfectivo(), 'hasta' => $this->hastaEfectivo()]
+            + ($conFacturas ? ['facturas' => 1] : [])
+            + ($incrustada ? ['incrustada' => 1] : []));
+    }
+
+    public function sePuedeImprimir(): bool
+    {
+        return Periodo::dias($this->desdeEfectivo(), $this->hastaEfectivo()) <= ResumenDeFacturacion::DIAS_MAXIMOS;
+    }
+
     // ── El detalle ────────────────────────────────────────────────────
 
     public function table(Table $table): Table
@@ -208,19 +259,11 @@ class ReporteDelMes extends Page implements HasTable
     }
 
     /**
-     * La sede de quien mira. Sin sede asignada —soporte—, todas.
+     * La sede de quien mira, con la misma regla que el papel.
      */
     private function sede(): ?int
     {
-        $usuario = auth()->user();
-
-        if (! $usuario instanceof User) {
-            return null;
-        }
-
-        $sede = $usuario->getAttribute('sede_id');
-
-        return is_numeric($sede) ? (int) $sede : null;
+        return ResumenDeFacturacion::sedeDe(auth()->user());
     }
 
     /**

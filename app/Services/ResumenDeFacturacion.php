@@ -14,6 +14,8 @@ use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDocumentoDeVenta;
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
+use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +58,28 @@ use Illuminate\Support\Facades\DB;
  */
 final class ResumenDeFacturacion
 {
+    /**
+     * El papel cubre como máximo un año, como el de honorarios: con las
+     * facturas una por una, más que eso ya no es un reporte sino un volcado.
+     */
+    public const DIAS_MAXIMOS = 366;
+
+    /**
+     * La sede de quien mira. La pantalla y el papel filtran con esta misma
+     * (§9.L5): si no, el papel podría decir más que la pantalla. Sin sede
+     * asignada —soporte, dirección que cruza sedes—, todas.
+     */
+    public static function sedeDe(mixed $usuario): ?int
+    {
+        if (! $usuario instanceof User) {
+            return null;
+        }
+
+        $sede = $usuario->getAttribute('sede_id');
+
+        return is_numeric($sede) ? (int) $sede : null;
+    }
+
     /**
      * @return array{
      *     facturado: array{cuantas: int, total: string, exento: string, gravado: string, isv: string, descuentos: string, seguros: string, pacientes: string},
@@ -396,6 +420,100 @@ final class ResumenDeFacturacion
             'renglones' => (int) ($fila['renglones'] ?? 0),
             'total'     => self::dinero($fila['total'] ?? 0),
         ];
+    }
+
+    /**
+     * A dónde se fueron los ingresos: medicamentos, honorarios de médicos
+     * y lo que queda, cada parte con su porción de los ingresos. Es la
+     * barra de la pantalla y del papel, armada en un solo lugar.
+     *
+     * Vacío si no hay ingresos o si lo que queda es negativo: una barra no
+     * puede dibujar más del todo, y ahí la cascada ya lo dice en rojo.
+     *
+     * @param array{ingresos: string, medicamentos: array{costo: string}, honorarios: array{total: string}, despues_de_honorarios: string} $resultado
+     *
+     * @return list<array{clave: string, nombre: string, monto: string, parte: string}>
+     */
+    public static function repartoDeLosIngresos(array $resultado): array
+    {
+        $ingresos = Decimal::de($resultado['ingresos']);
+
+        if (! $ingresos->mayorQue('0') || Decimal::de($resultado['despues_de_honorarios'])->esNegativo()) {
+            return [];
+        }
+
+        $partes = [
+            ['clave' => 'medicamentos', 'nombre' => 'Medicamentos y materiales', 'monto' => $resultado['medicamentos']['costo']],
+            ['clave' => 'honorarios', 'nombre' => 'Honorarios de médicos', 'monto' => $resultado['honorarios']['total']],
+            ['clave' => 'queda', 'nombre' => 'Queda', 'monto' => $resultado['despues_de_honorarios']],
+        ];
+
+        $reparto = [];
+
+        foreach ($partes as $parte) {
+            $reparto[] = $parte + [
+                'parte' => Decimal::de($parte['monto'])->entre($ingresos)->por('100')->redondeado(1),
+            ];
+        }
+
+        return $reparto;
+    }
+
+    // ── Las facturas, una por una, para el papel ──────────────────────
+
+    /**
+     * Las facturas del período en el orden en que se emitieron, las
+     * anuladas incluidas —marcadas—: el papel tiene que poder cuadrarse
+     * contra el talonario, y un número que falta es lo primero que se
+     * pregunta.
+     *
+     * Por la fecha de operación, como todo el reporte (§7.5-4).
+     *
+     * @return list<array{numero: string, fecha: string, cliente: string, paciente: string|null, pagador: string|null, total: string, seguro: string, paciente_paga: string, anulada: bool}>
+     */
+    public function facturasDelPeriodo(string $desde, string $hasta, ?int $sedeId = null): array
+    {
+        $filas = $this->facturas($desde, $hasta, $sedeId)
+            ->leftJoin('convenios', 'convenios.id', '=', 'facturas.convenio_id')
+            ->orderBy('facturas.fecha_operacion')
+            ->orderBy('facturas.numero')
+            ->select([
+                'facturas.numero',
+                'facturas.fecha_operacion',
+                'facturas.cliente_nombre',
+                'facturas.paciente_nombre',
+                'facturas.total',
+                'facturas.a_cargo_del_seguro',
+                'facturas.estado',
+                'convenios.nombre as pagador',
+            ])
+            ->get();
+
+        $facturas = [];
+
+        foreach ($filas as $fila) {
+            $fila = (array) $fila;
+
+            $total = self::dinero($fila['total'] ?? 0);
+            $seguro = self::dinero($fila['a_cargo_del_seguro'] ?? 0);
+            $fecha = is_string($fila['fecha_operacion'] ?? null) ? $fila['fecha_operacion'] : '';
+            $paciente = $fila['paciente_nombre'] ?? null;
+            $pagador = $fila['pagador'] ?? null;
+
+            $facturas[] = [
+                'numero'        => is_string($fila['numero'] ?? null) ? $fila['numero'] : '',
+                'fecha'         => $fecha === '' ? '' : CarbonImmutable::parse($fecha)->format('d/m/Y'),
+                'cliente'       => is_string($fila['cliente_nombre'] ?? null) ? $fila['cliente_nombre'] : '',
+                'paciente'      => is_string($paciente) && $paciente !== '' ? $paciente : null,
+                'pagador'       => is_string($pagador) && $pagador !== '' ? $pagador : null,
+                'total'         => $total,
+                'seguro'        => $seguro,
+                'paciente_paga' => Decimal::de($total)->restar($seguro)->redondeado(2),
+                'anulada'       => ($fila['estado'] ?? null) === EstadoFactura::Anulada->value,
+            ];
+        }
+
+        return $facturas;
     }
 
     // ── Las consultas base ────────────────────────────────────────────

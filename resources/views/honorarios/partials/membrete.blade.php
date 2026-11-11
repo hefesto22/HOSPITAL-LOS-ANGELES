@@ -10,7 +10,8 @@
     Recibe: $sede (?Sede), $logo y $telefono —calculados UNA vez por la
     vista: con el detalle de noventa médicos son noventa encabezados, y el
     logo en base64 noventa veces era megas de más—, $titulo, $etiqueta,
-    $impresoEl y $impresoPor.
+    $impresoEl y $impresoPor. Y `$tipo`, la palabra grande de la derecha:
+    «HONORARIOS» si no se dice otra (el Reporte del mes dice «REPORTE»).
 --}}
 <header class="encabezado">
     <div @class(['membrete', 'sin-logo' => ! $logo])>
@@ -31,7 +32,7 @@
     </div>
 
     <div class="documento">
-        <div class="tipo">HONORARIOS</div>
+        <div class="tipo">{{ $tipo ?? 'HONORARIOS' }}</div>
         <div class="subtipo">{{ $titulo }}</div>
         <table class="fechas">
             <tr>

@@ -19,6 +19,9 @@
 
     ⚠️ `contentWindow.print()` y no `window.print()`: el segundo manda a
     la impresora el panel entero con el reporte escondido adentro.
+
+    También lo usa el Reporte del mes (11-nov-2026), con «Con las
+    facturas» en vez de «Con la hoja de cada uno»: `$etiquetaConDetalle`.
 --}}
 <div
     x-data="{
@@ -106,7 +109,7 @@
         }
         .sihla-vista-honorarios .sihla-acciones-fin { margin-left: auto; }
 
-        /* «Solo el resumen» / «Con la hoja de cada uno»: un control segmentado. */
+        /* Las dos versiones de la hoja: un control segmentado. */
         .sihla-vista-honorarios .sihla-version {
             display: inline-flex; gap: .2rem; padding: .2rem;
             border-radius: .6rem; background: rgb(244 244 245);
@@ -170,7 +173,7 @@
                     Solo el resumen
                 </button>
                 <button type="button" x-on:click="verDetalle(true)" x-bind:aria-pressed="detalle ? 'true' : 'false'">
-                    Con la hoja de cada uno
+                    {{ $etiquetaConDetalle ?? 'Con la hoja de cada uno' }}
                 </button>
             </div>
         @endif
