@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\ValueObjects;
 
+use App\Domain\Enums\RegimenIsv;
+use App\Domain\Enums\TipoItem;
 use App\Models\Cargo;
 use App\Models\Presupuesto;
 use Illuminate\Support\Collection;
@@ -67,6 +69,12 @@ final readonly class RenglonDeCuenta
          * consulta—, y ahí la cantidad se lee sola.
          */
         public ?string $unidad = null,
+
+        /*
+         * Lo que valía antes de cualquier descuento: de ahí sale el
+         * porcentaje que se lee al lado del descuento en la lista.
+         */
+        public ?Decimal $bruto = null,
     ) {}
 
     /**
@@ -138,6 +146,7 @@ final readonly class RenglonDeCuenta
              * un renglón y nada al de al lado deja la columna despareja.
              */
             unidad: $porEnvase ? $comoSeCobro['presentacion']->unidad->codigo : null,
+            bruto: $bruto,
         );
     }
 
@@ -149,6 +158,84 @@ final readonly class RenglonDeCuenta
     public function importe(): Monto
     {
         return Monto::de($this->total);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL RENGLÓN EN DOS LÍNEAS (11-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * El honorario de un médico guarda en su texto el nombre del médico
+     * —«CONSULTA EXTERNA CIRUGIA GENERAL · DR. ROBERTO …»— y en una sola
+     * línea partía la descripción en tres renglones. Se lee mejor como
+     * qué se cobró arriba y de quién abajo.
+     *
+     * Solo se parte cuando el cargo tiene médico: es el único texto que
+     * `RegistradorDeCargo::nombreDelRenglon()` arma con « · ». Cualquier
+     * otro se queda entero, aunque su nombre traiga un punto medio.
+     */
+    public function titulo(): string
+    {
+        return $this->partes()[0];
+    }
+
+    /**
+     * El médico (y su especialidad, si la consulta no es la suya), o
+     * nulo si el renglón no es de un médico.
+     */
+    public function deQuien(): ?string
+    {
+        return $this->partes()[1];
+    }
+
+    public function tipo(): ?TipoItem
+    {
+        return $this->ultimaEntrega()?->item?->tipo;
+    }
+
+    /**
+     * Se dice solo cuando NO es exento: casi todo lo de un hospital lo es
+     * (Art. 15, Ley del ISV), y un «Exento» debajo de cada renglón no
+     * decía nada. Lo raro es lo que hay que ver: la cafetería gravada, el
+     * paciente exonerado. El pie sigue separando exento, gravado e ISV.
+     */
+    public function regimenQueSeDice(): ?string
+    {
+        $regimen = $this->ultimaEntrega()?->regimen_isv;
+
+        return $regimen instanceof RegimenIsv && $regimen !== RegimenIsv::Exento ? $regimen->etiqueta() : null;
+    }
+
+    public function esTardio(): bool
+    {
+        return $this->ultimaEntrega()?->es_tardio === true;
+    }
+
+    /**
+     * El descuento como parte de lo que valía: «30 %». Nulo sin descuento.
+     */
+    public function porcentajeDeDescuento(): ?string
+    {
+        if ($this->descuento->esCero() || $this->bruto === null || $this->bruto->esCero()) {
+            return null;
+        }
+
+        return $this->descuento->entre($this->bruto)->comoPorcentaje(1);
+    }
+
+    /**
+     * @return array{0: string, 1: string|null}
+     */
+    private function partes(): array
+    {
+        $tieneMedico = $this->ultimaEntrega()?->medico_id !== null;
+        $corte = mb_strpos($this->texto, ' · ');
+
+        if (! $tieneMedico || $corte === false) {
+            return [$this->texto, null];
+        }
+
+        return [mb_substr($this->texto, 0, $corte), mb_substr($this->texto, $corte + 3)];
     }
 
     public function cuantasEntregas(): int

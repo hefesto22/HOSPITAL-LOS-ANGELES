@@ -207,11 +207,13 @@ class Cuenta extends Model
             /*
              * `item:id,tipo` es para la ✕: cada área quita solo lo suyo
              * (`RenglonDeCuenta::esDeLosTipos()`), y preguntarlo renglón
-             * por renglón sería una consulta por línea. Solo esas dos
+             * por renglón sería una consulta por línea. Solo esas
              * columnas: lo que lea otra columna del ítem desde acá la
              * recibe nula sin error (§9.M6), así que se agrega a la lista.
+             * `cobra_el_honorario` es para el ícono y el rótulo del
+             * renglón: el turno de enfermería no se lee como de un médico.
              */
-            ->with(['createdBy:id,name', 'item:id,tipo'])
+            ->with(['createdBy:id,name', 'item:id,tipo,cobra_el_honorario'])
             ->whereNotIn('estado', [
                 EstadoCargo::Anulado->value,
                 EstadoCargo::Anulacion->value,

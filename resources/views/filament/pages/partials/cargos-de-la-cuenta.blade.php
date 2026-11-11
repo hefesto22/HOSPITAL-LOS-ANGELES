@@ -72,49 +72,99 @@
                 x-data
                 x-init="$el.scrollTop = $el.scrollHeight"
             >
+                {{--
+                    Anchos fijos (11-nov-2026): con el ancho automático cada
+                    renglón nuevo movía las columnas —«Cant.» saltaba de
+                    lugar al cargar un honorario con nombre largo— y la
+                    vista bailaba mientras se armaba la cuenta.
+                --}}
                 <table class="sihla-factura-tabla">
                     <thead>
                         <tr>
                             <th class="sihla-col-n">#</th>
                             <th>Descripción</th>
-                            <th class="sihla-num">Cant.</th>
-                            <th class="sihla-num">P. unit.</th>
-                            <th class="sihla-num">Desc.</th>
-                            <th class="sihla-num">Importe</th>
-                            <th class="sihla-col-acc"></th>
+                            <th class="sihla-num sihla-ancho-cant">Cant.</th>
+                            <th class="sihla-num sihla-opc sihla-ancho-precio">P. unit.</th>
+                            <th class="sihla-num sihla-opc sihla-ancho-desc">Desc.</th>
+                            <th class="sihla-num sihla-ancho-importe">Importe</th>
+                            <th class="sihla-col-acc"><span class="sihla-sr">Quitar</span></th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach ($renglones as $indice => $renglon)
                             @php($paquete = $renglon->presupuestoDelPaquete())
 
+                            @php($tipo = $renglon->tipo())
+                            @php($delPersonal = $renglon->ultimaEntrega()?->item?->esHonorarioDelPersonal() === true)
+                            @php($deQuien = $renglon->deQuien())
+                            @php($porcentaje = $renglon->porcentajeDeDescuento())
+                            @php($regimen = $renglon->regimenQueSeDice())
+
                             <tr class="{{ $paquete !== null ? 'sihla-fila-paquete' : '' }}">
                                 <td class="sihla-col-n">{{ $indice + 1 }}</td>
 
+                                {{--
+                                    Qué es, arriba; de quién o de qué tipo,
+                                    abajo. El ícono dice el tipo de un
+                                    vistazo —el honorario, el medicamento,
+                                    el examen— y el «Exento» que iba en cada
+                                    renglón ya no va: casi todo lo es, y lo
+                                    que no, se marca (ver
+                                    `RenglonDeCuenta::regimenQueSeDice()`).
+                                --}}
                                 <td>
-                                    <span class="sihla-linea-texto">
-                                        {{ $renglon->texto }}
-                                        @if ($paquete !== null)
-                                            <span class="sihla-etiqueta-paquete">Paquete</span>
-                                        @endif
-                                    </span>
-                                    <span class="sihla-linea-nota">
-                                        {{ $renglon->nota }}
-                                        {{--
-                                            El nombre aparece solo si hay
-                                            más de una persona cargando.
-                                            Con una sola se repetiría en
-                                            cada renglón sin decir nada, y
-                                            un rótulo que está siempre se
-                                            vuelve decorado.
-                                        --}}
-                                        @if ($varios && $renglon->quien)
-                                            · {{ $renglon->quien }}
-                                        @endif
-                                        @if ($renglon->cuantasEntregas() > 1)
-                                            · {{ $renglon->cuantasEntregas() }} entregas
-                                        @endif
-                                    </span>
+                                    <div class="sihla-linea">
+                                        <span
+                                            class="sihla-linea-icono"
+                                            data-tipo="{{ $delPersonal ? 'personal' : ($tipo->value ?? 'otro') }}"
+                                            title="{{ $delPersonal ? 'Honorario del personal' : ($tipo?->etiquetaCorta() ?? 'Otro') }}"
+                                            aria-hidden="true"
+                                        >
+                                            <x-filament::icon
+                                                :icon="$delPersonal ? 'heroicon-o-user-group' : ($tipo?->icono() ?? 'heroicon-o-ellipsis-horizontal-circle')"
+                                                class="sihla-linea-icono-svg"
+                                            />
+                                        </span>
+
+                                        <div class="sihla-linea-cuerpo">
+                                            <span class="sihla-linea-texto">
+                                                {{ $renglon->titulo() }}
+                                                @if ($paquete !== null)
+                                                    <span class="sihla-etiqueta-paquete">Paquete</span>
+                                                @endif
+                                            </span>
+
+                                            <span class="sihla-linea-nota">
+                                                @if ($deQuien !== null)
+                                                    <span class="sihla-linea-medico">{{ $deQuien }}</span>
+                                                @else
+                                                    <span>{{ $delPersonal ? 'Honorario del personal' : ($tipo?->etiquetaCorta() ?? 'Otro') }}</span>
+                                                @endif
+
+                                                {{--
+                                                    El nombre aparece solo si
+                                                    hay más de una persona
+                                                    cargando. Con una sola se
+                                                    repetiría en cada renglón
+                                                    sin decir nada.
+                                                --}}
+                                                @if ($varios && $renglon->quien)
+                                                    <span class="sihla-linea-sep" aria-hidden="true">·</span>
+                                                    <span>{{ $renglon->quien }}</span>
+                                                @endif
+                                                @if ($renglon->cuantasEntregas() > 1)
+                                                    <span class="sihla-linea-sep" aria-hidden="true">·</span>
+                                                    <span>{{ $renglon->cuantasEntregas() }} entregas</span>
+                                                @endif
+                                                @if ($renglon->esTardio())
+                                                    <span class="sihla-chip sihla-chip-tardio">Cargo tardío</span>
+                                                @endif
+                                                @if ($regimen !== null)
+                                                    <span class="sihla-chip sihla-chip-isv">{{ $regimen }}</span>
+                                                @endif
+                                            </span>
+                                        </div>
+                                    </div>
                                 </td>
 
                                 {{--
@@ -129,9 +179,16 @@
                                         <span class="sihla-linea-unidad">{{ $renglon->unidad }}</span>
                                     @endif
                                 </td>
-                                <td class="sihla-num">{{ number_format((float) $renglon->precioUnitario, 2) }}</td>
-                                <td class="sihla-num">
-                                    {{ $renglon->descuento->esCero() ? '—' : number_format((float) $renglon->descuento->redondeado(2), 2) }}
+                                <td class="sihla-num sihla-opc">{{ number_format((float) $renglon->precioUnitario, 2) }}</td>
+                                <td class="sihla-num sihla-opc">
+                                    @if ($renglon->descuento->esCero())
+                                        <span class="sihla-nada">—</span>
+                                    @else
+                                        <span class="sihla-desc">− {{ number_format((float) $renglon->descuento->redondeado(2), 2) }}</span>
+                                        @if ($porcentaje !== null)
+                                            <span class="sihla-desc-pct">{{ $porcentaje }}</span>
+                                        @endif
+                                    @endif
                                 </td>
                                 <td class="sihla-num sihla-fuerte">{{ $renglon->importe()->formateado() }}</td>
 
@@ -183,7 +240,9 @@
                                                 : ($renglon->cuantasEntregas() > 1
                                                     ? 'Quitar la última entrega ('.rtrim(rtrim((string) $ultima?->cantidad, '0'), '.').')'
                                                     : 'Quitar esta línea') }}"
-                                        >✕</button>
+                                        >
+                                            <x-filament::icon icon="heroicon-m-x-mark" class="sihla-anular-icono" />
+                                        </button>
                                     @endif
                                 </td>
                             </tr>
@@ -292,107 +351,109 @@
                 descuento o si el sistema no lo mostró.
             --}}
             <div class="sihla-factura-pie">
-                <div class="sihla-pie-linea">
-                    <span>Importe bruto</span>
-                    <span>{{ number_format((float) $cuenta->total_bruto, 2) }}</span>
-                </div>
-                <div class="sihla-pie-linea">
-                    <span>Descuentos</span>
-                    <span>{{ $descuentos === 0.0 ? '0.00' : '− '.number_format($descuentos, 2) }}</span>
-                </div>
-                <div class="sihla-pie-linea">
-                    <span>Importe exento</span>
-                    <span>{{ number_format((float) $cuenta->total_exento, 2) }}</span>
-                </div>
-                <div class="sihla-pie-linea">
-                    <span>Importe gravado</span>
-                    <span>{{ number_format((float) $cuenta->total_gravado, 2) }}</span>
-                </div>
-                <div class="sihla-pie-linea">
-                    <span>ISV</span>
-                    <span>{{ number_format((float) $cuenta->total_isv, 2) }}</span>
-                </div>
-
-                <div class="sihla-pie-linea sihla-pie-total">
-                    <span>TOTAL</span>
-                    <span>{{ $cuenta->saldo()->formateado() }}</span>
-                </div>
-
-                <div class="sihla-pie-linea sihla-pie-division">
-                    <span>Le toca al paciente</span>
-                    <span>{{ $cuenta->saldoDelPaciente()->formateado() }}</span>
-                </div>
-
-                {{--
-                    ─────────────────────────────────────────────────────
-                    LO QUE YA PAGARON
-                    ─────────────────────────────────────────────────────
-
-                    Solo aparece si hay abonos. Con la cuenta sin pagar,
-                    «Abonado 0.00» y un saldo igual al total serían dos
-                    renglones que no dicen nada, y el pie ya es largo.
-
-                    El saldo es DERIVADO: total menos los abonos vivos.
-                    Anular un recibo lo cambia en el acto.
-                --}}
-                @php($abonado = $cuenta->abonado())
-
-                @if (! $abonado->esCero())
-                    @php($saldo = $cuenta->saldoPendiente())
-
+                <div class="sihla-pie-totales">
                     <div class="sihla-pie-linea">
-                        <span>Abonado</span>
-                        <span>&minus; {{ number_format((float) $abonado->redondeado(2), 2) }}</span>
+                        <span>Importe bruto</span>
+                        <span>{{ number_format((float) $cuenta->total_bruto, 2) }}</span>
+                    </div>
+                    <div @class(['sihla-pie-linea', 'sihla-pie-descuento' => $descuentos !== 0.0])>
+                        <span>Descuentos</span>
+                        <span>{{ $descuentos === 0.0 ? '0.00' : '− '.number_format($descuentos, 2) }}</span>
+                    </div>
+                    <div class="sihla-pie-linea">
+                        <span>Importe exento</span>
+                        <span>{{ number_format((float) $cuenta->total_exento, 2) }}</span>
+                    </div>
+                    <div class="sihla-pie-linea">
+                        <span>Importe gravado</span>
+                        <span>{{ number_format((float) $cuenta->total_gravado, 2) }}</span>
+                    </div>
+                    <div class="sihla-pie-linea">
+                        <span>ISV</span>
+                        <span>{{ number_format((float) $cuenta->total_isv, 2) }}</span>
                     </div>
 
                     <div class="sihla-pie-linea sihla-pie-total">
-                        <span>{{ $saldo->esNegativo() ? 'SALDO A FAVOR' : 'SALDO' }}</span>
-                        <span>
-                            {{ number_format((float) ($saldo->esNegativo()
-                                ? $cuenta->saldoAFavor()->redondeado(2)
-                                : $saldo->redondeado(2)), 2) }}
-                        </span>
+                        <span>TOTAL</span>
+                        <span>{{ $cuenta->saldo()->formateado() }}</span>
                     </div>
-                @endif
 
-                {{--
-                    El descuento que está puesto arriba pero todavía no tocó
-                    ninguna línea.
-
-                    Sin este renglón la pantalla se ve inerte: se teclea 30,
-                    se escribe el motivo, y abajo no cambia nada — porque los
-                    cargos que ya están asentados no se tocan. Decirlo acá,
-                    junto a los números, es la diferencia entre «el sistema no
-                    hizo nada» y «está armado y espera la próxima línea».
-                --}}
-                @if (filled($armado) && (float) $armado > 0)
-                    <div class="sihla-pie-linea sihla-pie-armado">
-                        <span>Descuento en farmacia · {{ rtrim(rtrim(number_format((float) $armado, 2), '0'), '.') }} %</span>
-                        <span>aplicado a toda la cuenta</span>
+                    <div class="sihla-pie-linea sihla-pie-division">
+                        <span>Le toca al paciente</span>
+                        <span>{{ $cuenta->saldoDelPaciente()->formateado() }}</span>
                     </div>
-                @endif
 
-                {{-- Los de servicios y honorarios se leen de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
-                @foreach (['servicios', 'honorarios'] as $rubroDelPie)
-                    @if ($cuenta->{'descuento_'.$rubroDelPie.'_monto'} !== null)
-                        <div class="sihla-pie-linea sihla-pie-armado">
-                            <span>Descuento en {{ $rubroDelPie }} · L {{ number_format((float) $cuenta->{'descuento_'.$rubroDelPie.'_monto'}, 2) }}</span>
-                            <span>repartido entre lo cargado</span>
+                    {{--
+                        ─────────────────────────────────────────────────────
+                        LO QUE YA PAGARON
+                        ─────────────────────────────────────────────────────
+
+                        Solo aparece si hay abonos. Con la cuenta sin pagar,
+                        «Abonado 0.00» y un saldo igual al total serían dos
+                        renglones que no dicen nada, y el pie ya es largo.
+
+                        El saldo es DERIVADO: total menos los abonos vivos.
+                        Anular un recibo lo cambia en el acto.
+                    --}}
+                    @php($abonado = $cuenta->abonado())
+
+                    @if (! $abonado->esCero())
+                        @php($saldo = $cuenta->saldoPendiente())
+
+                        <div class="sihla-pie-linea">
+                            <span>Abonado</span>
+                            <span>&minus; {{ number_format((float) $abonado->redondeado(2), 2) }}</span>
                         </div>
-                    @elseif ($cuenta->{'descuento_'.$rubroDelPie} !== null)
-                        <div class="sihla-pie-linea sihla-pie-armado">
-                            <span>Descuento en {{ $rubroDelPie }} · {{ rtrim(rtrim(number_format((float) $cuenta->{'descuento_'.$rubroDelPie} * 100, 2), '0'), '.') }} %</span>
-                            <span>cada renglón hasta su tope</span>
+
+                        <div class="sihla-pie-linea sihla-pie-total">
+                            <span>{{ $saldo->esNegativo() ? 'SALDO A FAVOR' : 'SALDO' }}</span>
+                            <span>
+                                {{ number_format((float) ($saldo->esNegativo()
+                                    ? $cuenta->saldoAFavor()->redondeado(2)
+                                    : $saldo->redondeado(2)), 2) }}
+                            </span>
                         </div>
                     @endif
-                @endforeach
 
-                @if (! $cuenta->saldoDeLaAseguradora()->esCero())
-                    <div class="sihla-pie-linea sihla-pie-division">
-                        <span>Le toca a {{ $cuenta->convenio->nombre }}</span>
-                        <span>{{ $cuenta->saldoDeLaAseguradora()->formateado() }}</span>
-                    </div>
-                @endif
+                    {{--
+                        El descuento que está puesto arriba pero todavía no tocó
+                        ninguna línea.
+
+                        Sin este renglón la pantalla se ve inerte: se teclea 30,
+                        se escribe el motivo, y abajo no cambia nada — porque los
+                        cargos que ya están asentados no se tocan. Decirlo acá,
+                        junto a los números, es la diferencia entre «el sistema no
+                        hizo nada» y «está armado y espera la próxima línea».
+                    --}}
+                    @if (filled($armado) && (float) $armado > 0)
+                        <div class="sihla-pie-linea sihla-pie-armado">
+                            <span>Descuento en farmacia · {{ rtrim(rtrim(number_format((float) $armado, 2), '0'), '.') }} %</span>
+                            <span>aplicado a toda la cuenta</span>
+                        </div>
+                    @endif
+
+                    {{-- Los de servicios y honorarios se leen de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
+                    @foreach (['servicios', 'honorarios'] as $rubroDelPie)
+                        @if ($cuenta->{'descuento_'.$rubroDelPie.'_monto'} !== null)
+                            <div class="sihla-pie-linea sihla-pie-armado">
+                                <span>Descuento en {{ $rubroDelPie }} · L {{ number_format((float) $cuenta->{'descuento_'.$rubroDelPie.'_monto'}, 2) }}</span>
+                                <span>repartido entre lo cargado</span>
+                            </div>
+                        @elseif ($cuenta->{'descuento_'.$rubroDelPie} !== null)
+                            <div class="sihla-pie-linea sihla-pie-armado">
+                                <span>Descuento en {{ $rubroDelPie }} · {{ rtrim(rtrim(number_format((float) $cuenta->{'descuento_'.$rubroDelPie} * 100, 2), '0'), '.') }} %</span>
+                                <span>cada renglón hasta su tope</span>
+                            </div>
+                        @endif
+                    @endforeach
+
+                    @if (! $cuenta->saldoDeLaAseguradora()->esCero())
+                        <div class="sihla-pie-linea sihla-pie-division">
+                            <span>Le toca a {{ $cuenta->convenio->nombre }}</span>
+                            <span>{{ $cuenta->saldoDeLaAseguradora()->formateado() }}</span>
+                        </div>
+                    @endif
+                </div>
             </div>
         @endif
 
@@ -537,7 +598,7 @@
         }
 
         .sihla-factura-cabecera {
-            display: flex; align-items: baseline; justify-content: space-between;
+            display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: baseline; justify-content: space-between;
             padding: .55rem .85rem; background: rgb(250 250 250);
             border-bottom: 1px solid rgb(228 228 231);
         }
@@ -563,8 +624,20 @@
          * subía encima de la de la cuenta al hacer scroll.
          */
         .sihla-factura-tabla {
-            width: 100%; border-collapse: collapse;
+            width: 100%; border-collapse: collapse; table-layout: fixed;
             font-size: .82rem; font-variant-numeric: tabular-nums; color: rgb(63 63 70);
+        }
+        /* Con `table-layout: fixed` manda el ancho de la cabecera. */
+        .sihla-factura-tabla > thead > tr > th.sihla-col-n { width: 2.4rem; }
+        .sihla-factura-tabla > thead > tr > th.sihla-ancho-cant { width: 6.25rem; }
+        .sihla-factura-tabla > thead > tr > th.sihla-ancho-precio { width: 6.75rem; }
+        .sihla-factura-tabla > thead > tr > th.sihla-ancho-desc { width: 6.5rem; }
+        .sihla-factura-tabla > thead > tr > th.sihla-ancho-importe { width: 8.5rem; }
+        .sihla-factura-tabla > thead > tr > th.sihla-col-n { text-align: end; }
+        .sihla-factura-tabla > thead > tr > th.sihla-col-acc { width: 2.75rem; }
+        .sihla-sr {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
         }
         .sihla-factura-tabla > thead > tr > th {
             position: sticky; top: 0; z-index: 1;
@@ -576,8 +649,12 @@
         /* Los títulos de las cifras, alineados con las cifras: a la derecha. */
         .sihla-factura-tabla > thead > tr > th.sihla-num { text-align: end; }
         .sihla-factura-tabla > tbody > tr > td {
-            padding: .6rem .7rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
+            padding: .7rem .7rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
         }
+        /* Las cifras a la altura del nombre, no del ícono. */
+        .sihla-factura-tabla > tbody > tr > td.sihla-num,
+        .sihla-factura-tabla > tbody > tr > td.sihla-col-n { padding-top: .95rem; }
+        .sihla-factura-tabla > tbody > tr > td.sihla-col-acc { padding-top: .7rem; }
         .sihla-factura-tabla > tbody > tr:last-child > td { border-bottom: none; }
         .sihla-factura-tabla > tbody > tr:not(.sihla-desglose-fila):not(.sihla-motivo-fila):hover > td {
             background: rgb(250 250 250);
@@ -606,23 +683,73 @@
         .sihla-num { text-align: end; white-space: nowrap; }
         .sihla-fuerte { font-weight: 700; color: rgb(24 24 27); }
 
-        .sihla-linea-texto { display: block; color: rgb(24 24 27); font-weight: 500; }
-        .sihla-linea-nota { display: block; font-size: .68rem; color: rgb(161 161 170); }
+        /*
+         * ── El renglón: ícono del tipo, qué es y de quién ─────────────
+         * El color del ícono dice el tipo sin leer: violeta el honorario
+         * de un médico, rosa el del personal, verde lo de farmacia, azul
+         * el laboratorio, índigo la imagen, ámbar lo del hospital.
+         */
+        .sihla-linea { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; }
+        .sihla-linea-icono {
+            --tipo: 113 113 122;
+            flex: none; display: inline-flex; align-items: center; justify-content: center;
+            width: 2rem; height: 2rem; border-radius: .55rem;
+            color: rgb(var(--tipo)); background: rgb(var(--tipo) / .1);
+            box-shadow: inset 0 0 0 1px rgb(var(--tipo) / .18);
+        }
+        .sihla-linea-icono-svg { width: 1.05rem; height: 1.05rem; }
+        .sihla-linea-icono[data-tipo="honorario"] { --tipo: 124 58 237; }
+        .sihla-linea-icono[data-tipo="personal"] { --tipo: 219 39 119; }
+        .sihla-linea-icono[data-tipo="medicamento"] { --tipo: 5 150 105; }
+        .sihla-linea-icono[data-tipo="insumo"] { --tipo: 13 148 136; }
+        .sihla-linea-icono[data-tipo="estudio_laboratorio"] { --tipo: 2 132 199; }
+        .sihla-linea-icono[data-tipo="estudio_imagen"] { --tipo: 79 70 229; }
+        .sihla-linea-icono[data-tipo="servicio"],
+        .sihla-linea-icono[data-tipo="procedimiento"],
+        .sihla-linea-icono[data-tipo="estancia"] { --tipo: 217 119 6; }
+        .sihla-linea-icono[data-tipo="paquete"] { --tipo: 234 88 12; }
+
+        .sihla-linea-cuerpo { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+        .sihla-linea-texto {
+            display: block; color: rgb(24 24 27); font-weight: 600; line-height: 1.3;
+            overflow-wrap: break-word;
+        }
+        .sihla-linea-nota {
+            display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem;
+            font-size: .72rem; line-height: 1.35; color: rgb(113 113 122);
+        }
+        .sihla-linea-medico { font-weight: 500; color: rgb(82 82 91); }
+        .sihla-linea-sep { color: rgb(212 212 216); }
+
+        .sihla-chip {
+            display: inline-block; padding: .05rem .45rem; border-radius: 999px;
+            font-size: .6rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+        }
+        .sihla-chip-isv { color: #1d4ed8; background: rgb(219 234 254); }
+        .sihla-chip-tardio { color: #b45309; background: rgb(254 243 199); }
+
+        .sihla-desc { color: rgb(180 83 9); }
+        .sihla-desc-pct { display: block; margin-top: .1rem; font-size: .68rem; color: rgb(161 161 170); }
+        .sihla-nada { color: rgb(212 212 216); }
 
         /*
          * El envase pegado a la cantidad, más chico y en gris: es el
          * rótulo del número, no otro dato. En el mismo tamaño competiría
          * con la cifra, que es lo que hay que leer.
          */
-        .sihla-linea-unidad { font-size: .68rem; color: rgb(161 161 170); margin-left: .15rem; }
+        .sihla-linea-unidad { display: block; margin-top: .1rem; font-size: .66rem; color: rgb(161 161 170); white-space: normal; }
 
         .sihla-anulado { opacity: .45; }
         .sihla-anulado .sihla-linea-texto { text-decoration: line-through; }
 
         .sihla-anular {
-            font-size: .8rem; line-height: 1; color: rgb(161 161 170); cursor: pointer;
-            padding: .3rem .4rem; border-radius: .35rem; border: 0; background: transparent;
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.75rem; height: 1.75rem; line-height: 1; color: rgb(161 161 170); cursor: pointer;
+            border-radius: .45rem; border: 0; background: transparent;
+            transition: color .12s ease, background .12s ease;
         }
+        .sihla-anular-icono { width: 1rem; height: 1rem; }
+        .sihla-anular:disabled { opacity: .5; cursor: progress; }
         .sihla-anular:hover { color: rgb(190 18 60); background: rgb(254 242 242); }
 
         /* La ✕ que va a preguntar se ve distinta ANTES de tocarla. */
@@ -769,9 +896,12 @@
 
 
         .sihla-factura-pie {
-            padding: .6rem .85rem; background: rgb(250 250 250);
+            padding: .75rem 1rem .85rem; background: rgb(250 250 250);
             border-top: 1px solid rgb(228 228 231);
         }
+        /* Las cifras en un bloque a la derecha, como en la factura impresa. */
+        .sihla-pie-totales { max-width: 25rem; margin-left: auto; }
+        .sihla-pie-descuento > span:last-child { color: rgb(180 83 9); }
         .sihla-pie-linea {
             display: flex; justify-content: space-between; gap: 2rem;
             font-size: .78rem; color: rgb(82 82 91); padding: .12rem 0;
@@ -809,6 +939,36 @@
             background: rgb(24 24 27); color: rgb(244 244 245); border-color: rgb(146 64 14);
         }
         .dark .sihla-motivo-cancelar { background: rgb(63 63 70); color: rgb(212 212 216); }
+
+        .dark .sihla-linea-icono {
+            background: rgb(var(--tipo) / .16);
+            box-shadow: inset 0 0 0 1px rgb(var(--tipo) / .3);
+            color: color-mix(in oklab, rgb(var(--tipo)) 60%, white);
+        }
+        .dark .sihla-linea-nota { color: rgb(161 161 170); }
+        .dark .sihla-linea-medico { color: rgb(212 212 216); }
+        .dark .sihla-linea-sep { color: rgb(82 82 91); }
+        .dark .sihla-chip-isv { color: #93c5fd; background: rgb(59 130 246 / .16); }
+        .dark .sihla-chip-tardio { color: #fbbf24; background: rgb(251 191 36 / .14); }
+        .dark .sihla-desc,
+        .dark .sihla-pie-descuento > span:last-child { color: #fbbf24; }
+        .dark .sihla-desc-pct,
+        .dark .sihla-linea-unidad { color: rgb(113 113 122); }
+        .dark .sihla-nada { color: rgb(82 82 91); }
+
+        /*
+         * A 360 px no caben siete columnas: se van el número, el precio
+         * unitario, el descuento y el ícono, y queda lo que hay que leer
+         * —qué, cuánto y cuánto suma—. El descuento sigue en el pie.
+         */
+        @media (max-width: 40rem) {
+            .sihla-factura-tabla { table-layout: auto; }
+            .sihla-factura-tabla > thead > tr > th { width: auto !important; }
+            .sihla-factura-tabla .sihla-opc,
+            .sihla-factura-tabla .sihla-col-n,
+            .sihla-linea-icono { display: none; }
+            .sihla-pie-totales { max-width: none; }
+        }
     
         /*
          * ─────────────────────────────────────────────────────────────
