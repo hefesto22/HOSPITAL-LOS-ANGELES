@@ -181,3 +181,16 @@ it('agrupa por día y esconde lo que pasa del tope', function (): void {
         ->and(array_column($dias, 'oculto'))->toBe([false, false])
         ->and(array_column($dias[1]['movimientos'], 'oculto'))->toBe([false, true]);
 });
+
+it('«Ver» de la cuenta muestra el historial abierto, también cuando ya no se puede cargar', function (): void {
+    ['cuenta' => $cuenta, 'item' => $item] = unaCuentaParaElHistorial();
+    $cargo = asentarEnElHistorial($cuenta, $item);
+
+    $html = view('filament.infolists.historial-de-la-cuenta', [
+        'getRecord' => fn (): Cuenta => $cuenta->fresh() ?? $cuenta,
+    ])->render();
+
+    expect($html)->toContain('Historial de la cuenta')
+        ->and($html)->toContain(e($cargo->texto))
+        ->and($html)->toContain('abierto: true');
+})->note('Mauricio, 11-nov-2026: «las que ya fueron facturadas deben tener la bitácora de esa cuenta, en caso de que quieran revisar quién hizo qué». El modal de cargar era el único lugar donde se veía.');

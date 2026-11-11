@@ -25,13 +25,14 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
 
 /**
- * El reporte del mes (Mauricio, 6-nov-2026): cuánto se facturó, cuánto
- * entró a caja por forma de pago y cuánto quedó a crédito de cada seguro,
- * con el detalle factura por factura.
+ * El reporte del mes (Mauricio, 6-nov-2026; 11-nov-2026): de las facturas
+ * del período, cuánto se facturó, cómo lo pagaron los pacientes por forma
+ * de pago, qué queda después de medicamentos y honorarios de médicos, y
+ * cuánto quedó a crédito de cada seguro, con el detalle factura por factura.
  *
- * Los números los arma `ResumenDeFacturacion` —ahí está por qué lo
- * facturado y lo cobrado van por relojes distintos—. Esta página solo
- * elige el período y dibuja.
+ * Los números los arma `ResumenDeFacturacion` —ahí está por qué todo sale
+ * de las facturas y no de la caja del día—. Esta página solo elige el
+ * período y dibuja.
  *
  * Solo dirección y auditoría, con permiso propio como Honorarios por
  * médico: dice cuánto vende el hospital y cuánto le deben los seguros, y
@@ -72,7 +73,7 @@ class ReporteDelMes extends Page implements HasTable
 
     public function getSubheading(): string
     {
-        return 'Lo facturado, lo cobrado en caja y lo que quedó a crédito de cada seguro.';
+        return 'De las facturas del período: lo facturado, cómo se pagó, lo que queda después de medicamentos y honorarios, y lo que deben los seguros.';
     }
 
     public static function canAccess(): bool

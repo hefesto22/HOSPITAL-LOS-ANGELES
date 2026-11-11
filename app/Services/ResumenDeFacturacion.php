@@ -5,32 +5,47 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Domain\Enums\EstadoAbono;
+use App\Domain\Enums\EstadoCargo;
 use App\Domain\Enums\EstadoFactura;
 use App\Domain\Enums\FormaDePago;
+use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\Enums\TipoConvenio;
 use App\Domain\Enums\TipoDocumentoDeVenta;
+use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 
 /**
- * El resumen de un período: lo facturado, lo cobrado en caja y lo que
- * quedó a crédito de cada seguro (Mauricio, 6-nov-2026: «cuánto se
+ * El resumen de un período: lo facturado, cómo lo pagaron los pacientes,
+ * lo que quedó a crédito de cada seguro (Mauricio, 6-nov-2026: «cuánto se
  * facturó ese mes, cuánto se recibió en transferencias, tarjetas y
- * efectivo, y cuánto se dio a cada seguro»).
+ * efectivo, y cuánto se dio a cada seguro») y lo que queda después de
+ * medicamentos y honorarios de médicos (11-nov-2026).
  *
  * ─────────────────────────────────────────────────────────────────────
- * DOS RELOJES, Y NO SE MEZCLAN
+ * UN SOLO RELOJ: EL DE LA FACTURA (11-nov-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- *   · Lo FACTURADO va por la fecha de operación de la factura.
- *   · Lo COBRADO va por la fecha del recibo: es la plata que entró a caja
- *     en el período, sea de una factura de este mes, de una del pasado o
- *     un abono a una cuenta que todavía no se factura.
+ * Todo sale de las facturas EMITIDAS en el período, por su fecha de
+ * operación. Mauricio: «solo de lo facturado ese mes, no incluye cuentas
+ * abiertas».
  *
- * Por eso «facturado» y «cobrado» no tienen por qué coincidir, y no es un
- * descuadre: lo que los separa es lo que quedó a crédito de los seguros
- * y lo que se cobró antes o se cobrará después.
+ *   · Lo COBRADO son los recibos vivos de las cuentas de esas facturas,
+ *     se hayan recibido cuando se hayan recibido: el anticipo de octubre
+ *     de una cuenta que se facturó en noviembre es plata de noviembre.
+ *     Un abono a una cuenta que todavía no se factura no está.
+ *     Antes (6-nov) iba por la fecha del recibo y metía las cuentas
+ *     abiertas; la caja del día sigue en los cierres de turno.
+ *   · El RESULTADO —lo que queda después de medicamentos y honorarios—
+ *     sale de las mismas facturas (ver `resultado()`).
+ *
+ * ⚠️ Una cuenta con dos facturas en meses distintos (la complementaria
+ * de un cargo tardío) pone sus recibos y su costo en los dos meses. Es
+ * raro y queda dicho; amarrarlo a una sola obligaría a repartir cada
+ * recibo entre facturas que el recibo no nombra.
  *
  * Las facturas anuladas se cuentan aparte y no suman: una factura anulada
  * no vendió nada. Los recibos anulados no existen para este reporte —al
@@ -45,17 +60,29 @@ final class ResumenDeFacturacion
      * @return array{
      *     facturado: array{cuantas: int, total: string, exento: string, gravado: string, isv: string, descuentos: string, seguros: string, pacientes: string},
      *     anuladas: array{cuantas: int, total: string},
-     *     cobrado: array{total: string, recibos: int, formas: list<array{forma: string, etiqueta: string, monto: string, recibos: int, bancos: list<array{banco: string, monto: string}>}>},
-     *     seguros: list<array{convenio_id: int, nombre: string, facturas: int, facturado: string, a_credito: string, copago: string, plazo: string}>
+     *     cobrado: array{total: string, recibos: int, pendiente: string, formas: list<array{forma: string, etiqueta: string, monto: string, recibos: int, bancos: list<array{banco: string, monto: string}>}>},
+     *     seguros: list<array{convenio_id: int, nombre: string, facturas: int, facturado: string, a_credito: string, copago: string, plazo: string}>,
+     *     resultado: array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string}
      * }
      */
     public function delPeriodo(string $desde, string $hasta, ?int $sedeId = null): array
     {
+        $facturado = $this->facturado($desde, $hasta, $sedeId);
+        $cobrado = $this->cobrado($desde, $hasta, $sedeId);
+
+        /*
+         * Lo que de lo facturado a los pacientes todavía no entró. Con la
+         * regla de que una cuenta se factura pagada (11-oct), debería ser
+         * cero; si no lo es, el reporte lo dice en vez de esconderlo.
+         */
+        $cobrado['pendiente'] = Decimal::de($facturado['pacientes'])->restar($cobrado['total'])->redondeado(2);
+
         return [
-            'facturado' => $this->facturado($desde, $hasta, $sedeId),
+            'facturado' => $facturado,
             'anuladas'  => $this->anuladas($desde, $hasta, $sedeId),
-            'cobrado'   => $this->cobrado($desde, $hasta, $sedeId),
+            'cobrado'   => $cobrado,
             'seguros'   => $this->seguros($desde, $hasta, $sedeId),
+            'resultado' => $this->resultado($desde, $hasta, $sedeId, $facturado['total'], $facturado['isv']),
         ];
     }
 
@@ -109,12 +136,15 @@ final class ResumenDeFacturacion
         ];
     }
 
-    // ── Lo cobrado en caja ────────────────────────────────────────────
+    // ── Lo cobrado de esas facturas ───────────────────────────────────
 
     /**
      * Por forma de pago, en el orden del enum, las tres siempre —una en
      * cero también dice algo—. El banco solo existe en la transferencia
      * (CHECK de `abono_medios`).
+     *
+     * Son los recibos de las cuentas facturadas en el período, no la caja
+     * del período (ver la cabecera de la clase).
      *
      * @return array{total: string, recibos: int, formas: list<array{forma: string, etiqueta: string, monto: string, recibos: int, bancos: list<array{banco: string, monto: string}>}>}
      */
@@ -228,6 +258,146 @@ final class ResumenDeFacturacion
         return $seguros;
     }
 
+    // ── Lo que queda después de medicamentos y honorarios ─────────────
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL RESULTADO DEL MES (Mauricio, 11-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * «Ingresos, ingresos después de costos de medicamentos, y después de
+     * honorarios de médicos, todo bien detallado, solo de lo facturado.»
+     *
+     *   Ingresos             lo facturado SIN el ISV: el ISV se cobra a
+     *                        nombre del SAR y no es del hospital.
+     *   − Medicamentos       el COSTO de los medicamentos y materiales de
+     *                        las cuentas facturadas —lo que mueve
+     *                        inventario—, el que quedó congelado en cada
+     *                        cargo (§8.7-10). Entra también lo consumido
+     *                        dentro de un paquete, que no se cobra aparte
+     *                        pero sí costó.
+     *   − Honorarios         los de los MÉDICOS, completos: hoy todo el
+     *                        honorario va al médico. El porcentaje que se
+     *                        quede el hospital será configuración (pendiente).
+     *                        Los del personal por turno NO se restan
+     *                        todavía: no se sabe si son del hospital o del
+     *                        turno (Mauricio, 11-nov-2026).
+     *
+     * ⚠️ Desde el 11-oct bodega recibe sin costo, así que hay cargos sin
+     * costo congelado. No se inventan: se cuentan aparte —cuántos y cuánto
+     * se vendió de ellos— para que quien lea sepa que el resultado de
+     * verdad es MENOR que el que sale.
+     *
+     * Los honorarios usan la misma regla que «Honorarios por médico»
+     * (`ReporteDeHonorarios::soloDeMedicos()` + `soloSinMedico()`): un
+     * test cruza que los dos reportes digan lo mismo.
+     *
+     * @param string $facturado lo facturado del período, con ISV
+     * @param string $isv el ISV de esas facturas
+     *
+     * @return array{ingresos: string, isv: string, medicamentos: array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}, honorarios: array{renglones: int, total: string}, despues_de_medicamentos: string, despues_de_honorarios: string}
+     */
+    private function resultado(string $desde, string $hasta, ?int $sedeId, string $facturado, string $isv): array
+    {
+        $ingresos = Decimal::de($facturado)->restar($isv);
+        $medicamentos = $this->medicamentos($desde, $hasta, $sedeId);
+        $honorarios = $this->honorariosDeMedicos($desde, $hasta, $sedeId);
+
+        $despuesDeMedicamentos = $ingresos->restar($medicamentos['costo']);
+        $despuesDeHonorarios = $despuesDeMedicamentos->restar($honorarios['total']);
+
+        return [
+            'ingresos'                => $ingresos->redondeado(2),
+            'isv'                     => self::dinero($isv),
+            'medicamentos'            => $medicamentos,
+            'honorarios'              => $honorarios,
+            'despues_de_medicamentos' => $despuesDeMedicamentos->redondeado(2),
+            'despues_de_honorarios'   => $despuesDeHonorarios->redondeado(2),
+        ];
+    }
+
+    /**
+     * Los medicamentos y materiales de las cuentas facturadas: lo vendido
+     * (lo que entró en la factura) y lo que costó (todo lo que salió del
+     * estante para esa cuenta, cobrado aparte o dentro de un paquete).
+     *
+     * Vivos: facturados, o pendientes que nunca se cobran solos (incluido
+     * en la tarifa, gasto del servicio). Lo anulado y su reversa se
+     * cancelan y no entran; un pendiente COBRABLE es un cargo tardío que
+     * va en la factura que sigue, no en esta.
+     *
+     * @return array{renglones: int, vendido: string, costo: string, sin_costo: int, vendido_sin_costo: string}
+     */
+    private function medicamentos(string $desde, string $hasta, ?int $sedeId): array
+    {
+        $deFarmacia = array_values(array_map(
+            fn (TipoItem $tipo): string => $tipo->value,
+            array_filter(TipoItem::cases(), fn (TipoItem $tipo): bool => $tipo->mueveInventario()),
+        ));
+
+        $fila = (array) (DB::table('cargos')
+            ->join('items', 'items.id', '=', 'cargos.item_id')
+            ->whereIn('cargos.cuenta_id', $this->cuentasFacturadas($desde, $hasta, $sedeId))
+            ->whereIn('items.tipo', $deFarmacia)
+            ->where(function (Builder $vivos): void {
+                $vivos->where('cargos.estado', EstadoCargo::Facturado->value)
+                    ->orWhere(function (Builder $deUnPaquete): void {
+                        $deUnPaquete->where('cargos.estado', EstadoCargo::Pendiente->value)
+                            ->where('cargos.politica_cargo', '<>', PoliticaCargo::Cobrable->value);
+                    });
+            })
+            ->selectRaw('count(*) as renglones')
+            ->selectRaw("coalesce(sum(cargos.total) filter (where cargos.estado = 'facturado'), 0) as vendido")
+            ->selectRaw('coalesce(sum(cargos.costo_total), 0) as costo')
+            ->selectRaw('count(*) filter (where cargos.costo_total is null) as sin_costo')
+            ->selectRaw("coalesce(sum(cargos.total) filter (where cargos.costo_total is null and cargos.estado = 'facturado'), 0) as vendido_sin_costo")
+            ->first() ?? []);
+
+        return [
+            'renglones'         => (int) ($fila['renglones'] ?? 0),
+            'vendido'           => self::dinero($fila['vendido'] ?? 0),
+            'costo'             => self::dinero($fila['costo'] ?? 0),
+            'sin_costo'         => (int) ($fila['sin_costo'] ?? 0),
+            'vendido_sin_costo' => self::dinero($fila['vendido_sin_costo'] ?? 0),
+        ];
+    }
+
+    /**
+     * Los honorarios de médico facturados en el período, por las líneas de
+     * la factura —como «Honorarios por médico»—: los que tienen médico y
+     * los de médico que se cargaron sin médico. Los del personal no.
+     *
+     * @return array{renglones: int, total: string}
+     */
+    private function honorariosDeMedicos(string $desde, string $hasta, ?int $sedeId): array
+    {
+        $fila = (array) (DB::table('cargos')
+            ->join('factura_lineas', 'factura_lineas.cargo_id', '=', 'cargos.id')
+            ->join('facturas', function (JoinClause $union): void {
+                $union->on('facturas.id', '=', 'factura_lineas.factura_id')
+                    ->on('facturas.cuenta_id', '=', 'cargos.cuenta_id');
+            })
+            ->join('items', 'items.id', '=', 'cargos.item_id')
+            ->where('facturas.tipo', TipoDocumentoDeVenta::Factura->value)
+            ->where('facturas.estado', EstadoFactura::Emitida->value)
+            ->where('factura_lineas.encabezado', false)
+            ->whereBetween('facturas.fecha_operacion', [$desde, $hasta])
+            ->when($sedeId !== null, fn (Builder $consulta): Builder => $consulta->where('facturas.sede_id', $sedeId))
+            ->where('items.cobra_el_honorario', QuienCobraElHonorario::Medico->value)
+            ->where(function (Builder $deMedico): void {
+                $deMedico->whereNotNull('cargos.medico_id')
+                    ->orWhere('items.tipo', TipoItem::Honorario->value);
+            })
+            ->selectRaw('count(*) as renglones')
+            ->selectRaw('coalesce(sum(cargos.total), 0) as total')
+            ->first() ?? []);
+
+        return [
+            'renglones' => (int) ($fila['renglones'] ?? 0),
+            'total'     => self::dinero($fila['total'] ?? 0),
+        ];
+    }
+
     // ── Las consultas base ────────────────────────────────────────────
 
     /**
@@ -242,15 +412,26 @@ final class ResumenDeFacturacion
     }
 
     /**
-     * Las formas de pago de los recibos vigentes del período.
+     * Las cuentas de las facturas emitidas del período: de ellas salen lo
+     * cobrado y el costo.
+     */
+    private function cuentasFacturadas(string $desde, string $hasta, ?int $sedeId): Builder
+    {
+        return $this->facturas($desde, $hasta, $sedeId)
+            ->where('facturas.estado', EstadoFactura::Emitida->value)
+            ->select('facturas.cuenta_id');
+    }
+
+    /**
+     * Las formas de pago de los recibos vigentes de esas cuentas, sin
+     * importar el día en que se recibieron.
      */
     private function medios(string $desde, string $hasta, ?int $sedeId): Builder
     {
         return DB::table('abono_medios')
             ->join('abonos', 'abonos.id', '=', 'abono_medios.abono_id')
             ->where('abonos.estado', EstadoAbono::Aplicado->value)
-            ->whereBetween('abonos.fecha_operacion', [$desde, $hasta])
-            ->when($sedeId !== null, fn (Builder $consulta): Builder => $consulta->where('abonos.sede_id', $sedeId));
+            ->whereIn('abonos.cuenta_id', $this->cuentasFacturadas($desde, $hasta, $sedeId));
     }
 
     /**

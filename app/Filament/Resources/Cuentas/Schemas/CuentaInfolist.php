@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Cuentas\Schemas;
 use App\Domain\Enums\EstadoCuenta;
 use App\Models\Cuenta;
 use Filament\Infolists\Components\TextEntry;
+use Filament\Infolists\Components\ViewEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -164,6 +165,22 @@ final class CuentaInfolist
 
                             TextEntry::make('created_at')->label('Creada')->dateTime('d/m/Y H:i'),
                             TextEntry::make('updated_at')->label('Último cambio')->dateTime('d/m/Y H:i'),
+                        ]),
+
+                    /*
+                     * La bitácora de la cuenta (Mauricio, 11-nov-2026: «las
+                     * que ya fueron facturadas deben tener la bitácora, en
+                     * caso de que quieran revisar quién hizo qué y por qué
+                     * lo hizo mal»). Una cuenta facturada ya no se abre en
+                     * el modal de cargar, que era el único lugar donde se
+                     * veía. Es el mismo historial, abierto de entrada.
+                     */
+                    Tab::make('Historial')
+                        ->schema([
+                            ViewEntry::make('historial')
+                                ->hiddenLabel()
+                                ->view('filament.infolists.historial-de-la-cuenta')
+                                ->columnSpanFull(),
                         ]),
                 ]),
         ]);

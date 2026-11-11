@@ -1,15 +1,18 @@
 {{--
     Reporte del mes (Mauricio, 6-nov-2026).
 
-    Tres preguntas y el detalle, con el mismo lenguaje visual que
+    Cuatro preguntas y el detalle, todas sobre las facturas emitidas en el
+    período —sin cuentas abiertas—, con el mismo lenguaje visual que
     Honorarios por médico (estilos en `filament.partials.estilos-de-reporte`):
 
     1. ¿Cuánto se facturó? Y de eso, cuánto les tocó a los pacientes y
        cuánto quedó a crédito de los seguros. Las anuladas, aparte.
-    2. ¿Cuánto entró a caja? Por forma de pago y, en la transferencia, por
-       banco. Va por la fecha del recibo, no de la factura: no tiene por
-       qué coincidir con lo facturado (ver `ResumenDeFacturacion`).
-    3. ¿Cuánto se le dio a cada seguro? Ningún seguro tiene plazo fijo:
+    2. ¿Cómo pagaron los pacientes esas facturas? Por forma de pago y, en
+       la transferencia, por banco: los recibos de esas cuentas, del día
+       que sean (11-nov-2026, ver `ResumenDeFacturacion`).
+    3. ¿Qué queda? Ingresos sin ISV, menos el costo de los medicamentos,
+       menos los honorarios de los médicos (Mauricio, 11-nov-2026).
+    4. ¿Cuánto se le dio a cada seguro? Ningún seguro tiene plazo fijo:
        la cobranza se sigue desde la fecha de la factura.
 
     Los números llegan en `$resumen` desde `getViewData()`, no por un
@@ -87,14 +90,14 @@
                 </table>
             </div>
 
-            {{-- 2. Lo cobrado en caja --}}
+            {{-- 2. Cómo pagaron los pacientes esas facturas --}}
             <div class="sh-panel">
                 <div class="sh-cabeza">
-                    <span class="sh-etiqueta">Cobrado en caja · {{ $this->periodo() }}</span>
+                    <span class="sh-etiqueta">Pagado por los pacientes · {{ $this->periodo() }}</span>
                     <span class="sh-valor">{{ $lempiras($resumen['cobrado']['total']) }}</span>
                     <span class="sh-nota">
                         {{ $resumen['cobrado']['recibos'] }} {{ $resumen['cobrado']['recibos'] === 1 ? 'recibo' : 'recibos' }}
-                        · por la fecha del recibo
+                        de las cuentas facturadas, del día que se hayan recibido
                     </span>
                 </div>
 
@@ -123,12 +126,100 @@
                                 <td class="sh-num sh-total">{{ $lempiras($forma['monto']) }}</td>
                             </tr>
                         @endforeach
+                        @php
+                            $pendiente = \App\Domain\ValueObjects\Decimal::de($resumen['cobrado']['pendiente']);
+                        @endphp
+                        @if (! $pendiente->esCero())
+                            <tr>
+                                <td>
+                                    <span class="sh-tabla-nombre">{{ $pendiente->esNegativo() ? 'Cobrado de más' : 'Falta por cobrar' }}</span>
+                                    <span class="sh-tabla-detalle">A cargo de los pacientes menos lo pagado</span>
+                                </td>
+                                <td class="sh-num"></td>
+                                <td class="sh-num sh-total rm-ojo">{{ $lempiras($resumen['cobrado']['pendiente']) }}</td>
+                            </tr>
+                        @endif
                     </tbody>
                 </table>
             </div>
         </div>
 
-        {{-- 3. Lo que quedó a crédito de cada seguro --}}
+        {{-- 3. Lo que queda: ingresos, menos medicamentos, menos honorarios --}}
+        @php
+            $resultado = $resumen['resultado'];
+            $medicamentos = $resultado['medicamentos'];
+            $honorarios = $resultado['honorarios'];
+        @endphp
+        <div class="sh-panel">
+            <div class="sh-cabeza">
+                <span class="sh-etiqueta">Después de medicamentos y honorarios · {{ $this->periodo() }}</span>
+                <span class="sh-valor">{{ $lempiras($resultado['despues_de_honorarios']) }}</span>
+                <span class="sh-nota">
+                    De las facturas del período. Los honorarios del personal y los salarios no se restan todavía.
+                </span>
+            </div>
+
+            <table class="sh-tabla rm-cascada">
+                <tbody>
+                    <tr>
+                        <td><span class="sh-tabla-nombre">Facturado</span></td>
+                        <td class="sh-num">{{ $lempiras($resumen['facturado']['total']) }}</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="sh-tabla-nombre">ISV</span>
+                            <span class="sh-tabla-detalle">Se cobra para el SAR, no es del hospital</span>
+                        </td>
+                        <td class="sh-num rm-resta">{{ $lempiras($resultado['isv']) }}</td>
+                    </tr>
+                    <tr class="rm-subtotal">
+                        <td><span class="sh-tabla-nombre">Ingresos</span></td>
+                        <td class="sh-num sh-total">{{ $lempiras($resultado['ingresos']) }}</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="sh-tabla-nombre">Costo de medicamentos y materiales</span>
+                            <span class="sh-tabla-detalle">
+                                {{ $medicamentos['renglones'] }} {{ $medicamentos['renglones'] === 1 ? 'renglón' : 'renglones' }}
+                                · se vendieron en {{ $lempiras($medicamentos['vendido']) }}
+                            </span>
+                        </td>
+                        <td class="sh-num rm-resta">{{ $lempiras($medicamentos['costo']) }}</td>
+                    </tr>
+                    <tr class="rm-subtotal">
+                        <td><span class="sh-tabla-nombre">Después de medicamentos</span></td>
+                        <td class="sh-num sh-total">{{ $lempiras($resultado['despues_de_medicamentos']) }}</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="sh-tabla-nombre">Honorarios de médicos</span>
+                            <span class="sh-tabla-detalle">
+                                {{ $honorarios['renglones'] }} {{ $honorarios['renglones'] === 1 ? 'renglón' : 'renglones' }}
+                                · completos al médico
+                            </span>
+                        </td>
+                        <td class="sh-num rm-resta">{{ $lempiras($honorarios['total']) }}</td>
+                    </tr>
+                    <tr class="rm-subtotal rm-final">
+                        <td><span class="sh-tabla-nombre">Después de honorarios</span></td>
+                        <td class="sh-num sh-total">{{ $lempiras($resultado['despues_de_honorarios']) }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        @if ($medicamentos['sin_costo'] > 0)
+            <div class="sh-aviso">
+                <span class="sh-aviso-signo" aria-hidden="true">!</span>
+                <span class="sh-aviso-texto">
+                    <strong>{{ $medicamentos['sin_costo'] }} {{ $medicamentos['sin_costo'] === 1 ? 'renglón' : 'renglones' }} de medicamentos sin costo</strong>
+                    —se vendieron en {{ $lempiras($medicamentos['vendido_sin_costo']) }}—.
+                    Entraron sin costo a bodega y no restan nada: lo que queda de verdad es menos.
+                </span>
+            </div>
+        @endif
+
+        {{-- 4. Lo que quedó a crédito de cada seguro --}}
         <div class="sh-panel">
             <div class="sh-cabeza">
                 <span class="sh-etiqueta">A crédito de los seguros · {{ $this->periodo() }}</span>
@@ -173,7 +264,7 @@
             @endif
         </div>
 
-        {{-- 4. El detalle --}}
+        {{-- 5. El detalle --}}
         <div class="sh-detalle">
             <div class="sh-detalle-cabeza">
                 <h3 class="sh-detalle-titulo">Facturas del período</h3>
@@ -191,5 +282,10 @@
             .rm-dos { grid-template-columns: 1fr 1fr; align-items: start; }
         }
         .rm-tachado { text-decoration: line-through; opacity: .6; }
+        .rm-ojo { color: var(--sh-acento); }
+        .rm-resta { color: var(--sh-tenue); }
+        .rm-resta::before { content: '− '; }
+        .rm-cascada .rm-subtotal td { background: var(--sh-hover); }
+        .rm-cascada .rm-final td { font-size: 1rem; }
     </style>
 </x-filament-panels::page>
