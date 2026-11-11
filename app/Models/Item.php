@@ -7,6 +7,7 @@ namespace App\Models;
 use App\Domain\Enums\AmbitoCatalogo;
 use App\Domain\Enums\CategoriaLegalDeDescuento;
 use App\Domain\Enums\PoliticaCargo;
+use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Monto;
@@ -50,6 +51,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $costo_referencia
  * @property PoliticaCargo $politica_cargo
  * @property CategoriaLegalDeDescuento $categoria_legal_descuento
+ * @property QuienCobraElHonorario $cobra_el_honorario
  * @property int|null $unidad_dispensacion_id
  * @property bool $fraccionable
  * @property int|null $unidad_fraccion_id
@@ -113,6 +115,7 @@ class Item extends Model
         'costo_referencia',
         'politica_cargo',
         'categoria_legal_descuento',
+        'cobra_el_honorario',
         'unidad_dispensacion_id',
         'fraccionable',
         'unidad_fraccion_id',
@@ -269,6 +272,18 @@ class Item extends Model
                 $item->categoria_legal_descuento = CategoriaLegalDeDescuento::sugeridaPara($item->tipo);
             }
 
+            /*
+             * Solo un honorario puede ser «del personal» —un turno o un
+             * área, sin persona registrada— (Mauricio, 11-nov-2026). En
+             * todo lo demás vale «médico» y no se lee. Si nadie lo
+             * contestó —un seeder, un import, una prueba— es de médico,
+             * que es lo que valía antes de que la columna existiera. El
+             * CHECK `items_cobra_el_honorario_check` lo vuelve a exigir.
+             */
+            if (! array_key_exists('cobra_el_honorario', $item->getAttributes()) || $item->tipo !== TipoItem::Honorario) {
+                $item->cobra_el_honorario = QuienCobraElHonorario::Medico;
+            }
+
             if (! $item->mueveInventario()) {
                 $item->requiere_lote = false;
                 $item->es_controlado = false;
@@ -325,6 +340,20 @@ class Item extends Model
     }
 
     /**
+     * ¿Es un honorario del personal —un turno o un área de enfermería, el
+     * circulante, el instrumentista— y no de un médico?
+     *
+     * Al cargarlo no se elige a nadie, y en «Honorarios por médico» cuenta
+     * para el turno o el área que dice su nombre (ver
+     * `QuienCobraElHonorario`).
+     */
+    public function esHonorarioDelPersonal(): bool
+    {
+        return $this->tipo === TipoItem::Honorario
+            && $this->cobra_el_honorario === QuienCobraElHonorario::Personal;
+    }
+
+    /**
      * ¿Este servicio lo presta alguien de afuera?
      *
      * Se deriva del costo de referencia y no de una bandera aparte: si
@@ -365,6 +394,7 @@ class Item extends Model
             'regimen_isv'               => RegimenIsv::class,
             'politica_cargo'            => PoliticaCargo::class,
             'categoria_legal_descuento' => CategoriaLegalDeDescuento::class,
+            'cobra_el_honorario'        => QuienCobraElHonorario::class,
             'fraccionable'              => 'boolean',
             'requiere_lote'             => 'boolean',
             'requiere_receta'           => 'boolean',

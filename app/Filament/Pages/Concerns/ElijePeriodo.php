@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages\Concerns;
 
+use App\Support\Periodo;
 use Carbon\CarbonImmutable;
 
 /**
@@ -31,11 +32,6 @@ trait ElijePeriodo
     public ?string $desde = null;
 
     public ?string $hasta = null;
-
-    private const MESES_DEL_PERIODO = [
-        1 => 'enero', 2 => 'febrero', 3 => 'marzo', 4 => 'abril', 5 => 'mayo', 6 => 'junio',
-        7 => 'julio', 8 => 'agosto', 9 => 'septiembre', 10 => 'octubre', 11 => 'noviembre', 12 => 'diciembre',
-    ];
 
     /**
      * Qué atajos ofrece esta página, en orden: clave => etiqueta. Las
@@ -113,18 +109,7 @@ trait ElijePeriodo
      */
     public function periodo(): string
     {
-        $desde = CarbonImmutable::parse($this->desdeEfectivo());
-        $hasta = CarbonImmutable::parse($this->hastaEfectivo());
-
-        if ($desde->day === 1 && $hasta->isSameDay($desde->endOfMonth())) {
-            return ucfirst(self::MESES_DEL_PERIODO[$desde->month]).' '.$desde->year;
-        }
-
-        if ($desde->isSameDay($hasta)) {
-            return $desde->format('d/m/Y');
-        }
-
-        return $desde->format('d/m/Y').' — '.$hasta->format('d/m/Y');
+        return Periodo::etiqueta($this->desdeEfectivo(), $this->hastaEfectivo());
     }
 
     protected function desdeEfectivo(): string
@@ -185,12 +170,12 @@ trait ElijePeriodo
         return [$desde->toDateString(), $hasta->toDateString()];
     }
 
+    /**
+     * La regla vive en `Periodo`: los reportes impresos validan las
+     * fechas de la URL con la misma.
+     */
     protected static function fechaValida(mixed $valor): ?string
     {
-        if (! is_string($valor) || preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $valor, $partes) !== 1) {
-            return null;
-        }
-
-        return checkdate((int) $partes[2], (int) $partes[3], (int) $partes[1]) ? $valor : null;
+        return Periodo::fechaValida($valor);
     }
 }

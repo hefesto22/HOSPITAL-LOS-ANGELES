@@ -19,6 +19,7 @@ declare(strict_types=1);
 | /horizon, etc.) las gestiona Filament automáticamente.
 */
 
+use App\Http\Controllers\ReporteDeHonorariosController;
 use App\Models\Factura;
 use App\Models\Item;
 use App\Models\PrincipioActivo;
@@ -182,4 +183,29 @@ Route::middleware(['web', 'auth'])->group(function (): void {
                     .' a la '.$factura->rangoCai->numeroDe($factura->rangoCai->hasta),
         ]);
     })->name('facturas.imprimir');
+
+    /*
+    |------------------------------------------------------------------
+    | Los honorarios del período, para papel (11-nov-2026)
+    |------------------------------------------------------------------
+    |
+    | El de un médico —lo que se le entrega al liquidarle, con su firma
+    | de recibido—, el de un turno o área del personal, y el general, de
+    | la A a la Z. Mismo permiso que la pantalla «Honorarios por médico»,
+    | y cada impresión queda en la bitácora: el papel lleva nombres de
+    | pacientes.
+    |
+    | `{medico}` va como número y no con el modelo: el enlace también
+    | tiene que abrir al médico que se dio de baja después de cobrar.
+    */
+    Route::get('/honorarios/reporte', [ReporteDeHonorariosController::class, 'general'])
+        ->name('honorarios.reporte');
+
+    Route::get('/honorarios/reporte/{medico}', [ReporteDeHonorariosController::class, 'medico'])
+        ->whereNumber('medico')
+        ->name('honorarios.reporte.medico');
+
+    Route::get('/honorarios/reporte/turno/{item}', [ReporteDeHonorariosController::class, 'turno'])
+        ->whereNumber('item')
+        ->name('honorarios.reporte.turno');
 });

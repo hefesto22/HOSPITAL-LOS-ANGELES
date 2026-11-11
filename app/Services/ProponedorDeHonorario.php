@@ -143,13 +143,23 @@ final class ProponedorDeHonorario
 
         $lista = $this->listaReal($this->resolver($item, $cuenta, $pagador, $momento));
 
+        /*
+         * Un honorario del personal no es de ningún médico (Mauricio,
+         * 11-nov-2026): el texto no puede pedir lo que cobra «este médico».
+         */
+        $delPersonal = $item->esHonorarioDelPersonal();
+
         return $lista instanceof Monto
             ? HonorarioPropuesto::propuesto(
                 $lista,
                 delMedico: false,
-                explicacion: 'Propuesto del tarifario. Cambialo si este médico cobra otra cosa.',
+                explicacion: $delPersonal
+                    ? 'Propuesto del tarifario. Cambialo solo si este cargo lleva otro monto.'
+                    : 'Propuesto del tarifario. Cambialo si este médico cobra otra cosa.',
             )
-            : HonorarioPropuesto::sinPrecio('Escribí cuánto cobra el médico por este honorario.');
+            : HonorarioPropuesto::sinPrecio($delPersonal
+                ? 'Escribí cuánto se cobra por este honorario.'
+                : 'Escribí cuánto cobra el médico por este honorario.');
     }
 
     private function resolver(Item $item, Cuenta $cuenta, Convenio $pagador, CarbonInterface $momento): ?PrecioResuelto

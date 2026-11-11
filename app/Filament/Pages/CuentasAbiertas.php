@@ -1410,15 +1410,20 @@ class CuentasAbiertas extends Page
                             ->searchable()
                             ->live()
                             ->columnSpan(6)
-                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
-                            ->placeholder('Escribí el apellido')
                             /*
-                             * El «HONORARIO MÉDICO» sin médico no dice de
-                             * quién es: ni en la factura ni en la
-                             * liquidación. Los otros honorarios —turnos
-                             * de enfermería, circulante— pueden ir sin él.
+                             * 🔴 Solo en los honorarios de médico, y en
+                             * TODOS obligatorio (Mauricio, 11-nov-2026).
+                             * Un honorario de médico sin médico no dice de
+                             * quién es —ni en la factura ni en la
+                             * liquidación— y es plata que no se le puede
+                             * pagar a nadie. Los del personal —turnos de
+                             * enfermería, circulante, instrumentista— no
+                             * lo muestran: son del turno o del área que
+                             * dice su nombre, y nadie se registra.
                              */
-                            ->required(fn (Get $get): bool => $this->esElHonorarioDelMedico($this->itemDe($get('item_id'))))
+                            ->visible(fn (Get $get): bool => $this->esHonorarioDeMedico($this->itemDe($get('item_id'))))
+                            ->placeholder('Escribí el apellido')
+                            ->required(fn (Get $get): bool => $this->esHonorarioDeMedico($this->itemDe($get('item_id'))))
                             ->options(fn (): array => $this->medicosVigentes())
                             ->getSearchResultsUsing(fn (string $search): array => $this->medicosVigentes($search))
                             ->getOptionLabelUsing(fn (mixed $value): ?string => $this->medicoDe($value)?->etiqueta())
@@ -1501,7 +1506,15 @@ class CuentasAbiertas extends Page
                             ->minValue(0)
                             ->step('0.01')
                             ->prefix('L')
-                            ->columnSpan(4)
+                            /*
+                             * Sin médico que elegir —un honorario del
+                             * personal— el precio toma su lugar: el
+                             * renglón queda lleno y no con un hueco.
+                             */
+                            ->columnSpan(fn (Get $get): array => [
+                                'default' => 1,
+                                'lg'      => $this->esHonorarioDeMedico($this->itemDe($get('item_id'))) ? 4 : 10,
+                            ])
                             ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
                             /*
                              * 🔴 SEGURO CON PRECIO PACTADO: BLOQUEADO
@@ -2086,6 +2099,16 @@ class CuentasAbiertas extends Page
         }
 
         try {
+            /*
+             * 🔴 Todo honorario de médico dice de qué médico es (Mauricio,
+             * 11-nov-2026). El campo ya es obligatorio, pero un campo
+             * obligatorio se salta desde el navegador (§9.M30): sin médico,
+             * ese honorario no entra en la liquidación de nadie.
+             */
+            if ($this->esHonorarioDeMedico($item) && ! $this->medicoDe($data['medico_id'] ?? null) instanceof Medico) {
+                throw CargoException::honorarioSinMedico();
+            }
+
             $cargos = app(RegistradorDeCargo::class)->registrar(
                 cuenta: $cuenta,
                 linea: new LineaDeCargo(
@@ -2132,7 +2155,7 @@ class CuentasAbiertas extends Page
                      * al doctor Carlos» no se contesta sobre un renglón
                      * que dice «Dr. Carlos» escrito de tres formas.
                      */
-                    medicoId: $this->esHonorario($item)
+                    medicoId: $this->esHonorarioDeMedico($item)
                         ? $this->idDelMedico($data['medico_id'] ?? null)
                         : null,
 
@@ -3436,7 +3459,7 @@ class CuentasAbiertas extends Page
      */
     private function deQuienEsElHonorario(Item $item, array $data): ?string
     {
-        if (! $this->esHonorario($item)) {
+        if (! $this->esHonorarioDeMedico($item)) {
             return null;
         }
 
@@ -3598,6 +3621,19 @@ class CuentasAbiertas extends Page
     private function esHonorario(?Item $item): bool
     {
         return $item instanceof Item && $item->tipo === TipoItem::Honorario;
+    }
+
+    /**
+     * ¿Es un honorario de médico —y no del personal—?
+     *
+     * Los del personal (turnos de enfermería, circulante, instrumentista)
+     * se cargan sin elegir a nadie: cuentan para el turno o el área que
+     * dice su nombre (Mauricio, 11-nov-2026). Los de médico exigen al
+     * médico.
+     */
+    private function esHonorarioDeMedico(?Item $item): bool
+    {
+        return $this->esHonorario($item) && $item instanceof Item && ! $item->esHonorarioDelPersonal();
     }
 
     /**
@@ -9334,12 +9370,22 @@ class CuentasAbiertas extends Page
 
         $cifra = $propuesto->precio instanceof Monto ? e($propuesto->precio->formateado()) : '—';
 
+        /*
+         * Un honorario del personal no pide médico, y el recuadro dice a
+         * dónde va: quien cobra no tiene que preguntarse si se le olvidó
+         * elegir a alguien (Mauricio, 11-nov-2026).
+         */
+        $aDonde = $item->esHonorarioDelPersonal()
+            ? '<div style="opacity:.75">Del personal: cuenta para este turno o área, sin elegir a nadie.</div>'
+            : '';
+
         return new HtmlString(
             '<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;'
             .'background:rgba(148,163,184,.07);border:1px solid rgba(148,163,184,.25);border-radius:.625rem;'
             .'padding:.625rem .875rem;font-size:.8125rem;line-height:1.45">'
             .'<div style="min-width:0">'
             .'<div style="font-weight:600">'.e($item->nombre).'</div>'
+            .$aDonde
             .'<div style="opacity:.75">'.e($propuesto->explicacion).'</div>'
             .'</div>'
             .'<div style="text-align:right;white-space:nowrap;flex-shrink:0">'

@@ -274,6 +274,12 @@ class CatalogoPaligSeeder extends Seeder
             $sembrados++;
         }
 
+        /*
+         * Los turnos de enfermería, el circulante y el instrumentista son
+         * del personal y no de un médico (Mauricio, 11-nov-2026).
+         */
+        $this->call(HonorariosDelPersonalSeeder::class);
+
         $this->command?->info("✓ {$sembrados} servicios del catálogo sembrados con el precio de PALIG del tarifario firmado, tal cual.");
         $this->command?->comment('  El precio de lista quedó en el centinela de L 10: el tarifario no lo trae y no se inventa.');
         $this->command?->warn('  ⚠️ Mientras esté en L 10 no se le puede facturar a un paciente de contado. Faltan '.ListaPendiente::cuantosFaltan().' ítems por precio de lista.');

@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
-use App\Domain\Enums\EstadoFactura;
+use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\ValueObjects\Decimal;
-use App\Domain\ValueObjects\Monto;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Cargo;
 use App\Models\Convenio;
-use App\Models\Especialidad;
 use App\Models\Medico;
+use App\Services\ReporteDeHonorarios;
+use App\Support\NormalizadorDeTexto;
+use App\Support\Periodo;
 use BackedEnum;
-use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
 use Filament\Support\Enums\FontFamily;
@@ -25,49 +25,28 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Locked;
 
 /**
  * Cuánto facturó cada médico en el período, en qué y a quién.
  *
- * ─────────────────────────────────────────────────────────────────────
- * 🔴 CUENTA LO FACTURADO EN EL MES, Y NADA MÁS (13-oct-2026)
- * ─────────────────────────────────────────────────────────────────────
- *
- * Mauricio: «solo debería guardarse lo que sí se facturó en ese mes, no
- * mezclarse mes a mes. Si hizo 10 honorarios de 1000 se guardan esos 10;
- * si se anula una factura en la que estaba un honorario, se le restan
- * 1000».
- *
- * Antes la pantalla sumaba CARGOS por su fecha. Anular un cargo deja su
- * reversa en negativo con la fecha del día en que se anuló, así que un
- * honorario de septiembre quitado en octubre salía como −L 630 en
- * octubre: mezclaba un mes con otro, y no se entendía.
- *
- * Ahora la fuente son las FACTURAS EMITIDAS del período —por su fecha
- * de operación— y, de cada una, sus renglones de honorario con médico:
- *
- *   · Un honorario cargado pero sin facturar todavía no cuenta.
- *   · Cuenta en el mes en que se facturó, no en el que se cargó.
- *   · Si la factura se anula, sale entera del mes al que pertenecía —esos
- *     L 1,000 se restan de ese mes— y nunca aparece un negativo en otro.
- *   · Si se vuelve a facturar, cuenta en el mes de la factura nueva.
- *
- * Un cargo anulado o su reversa nunca entran a una factura (el emisor
- * solo toma lo pendiente y cobrable), así que acá no hay negativos.
+ * La consulta y su regla —🔴 solo lo FACTURADO en el período, por la
+ * fecha de la factura; una factura anulada sale entera de su mes— viven
+ * en `ReporteDeHonorarios`, que es también lo que imprimen los reportes.
+ * La pantalla y el papel no pueden decir dos números distintos.
  *
  * ─────────────────────────────────────────────────────────────────────
- * ES LO QUE SE FACTURÓ, NO LO QUE SE LE PAGA AL MÉDICO
+ * TARJETAS Y NO UNA LISTA (Mauricio, 11-nov-2026)
  * ─────────────────────────────────────────────────────────────────────
  *
- * Si algún día el hospital retiene una parte —una comisión por uso de
- * quirófano, un porcentaje—, ese reparto no está acá y hay que
- * agregarlo: sería una columna más, calculada sobre este total.
- *
- * Los honorarios cargados antes de que existiera el registro de médicos
- * tienen `medico_id` nulo y no salen: el dato no existe y no se inventa.
+ * «Cuando sean 400 honorarios se verá feo uno encima de otro … sería
+ * bueno que los médicos se vean en cards así como las cuentas, solo con
+ * cuántos honorarios llevan.» La vista general son tarjetas de la A a la
+ * Z —cuánto lleva, cuántos honorarios, qué parte del período—; el
+ * detalle aparece al tocar una, con su reparto por pagador y el botón
+ * para imprimirle su reporte. Los renglones de todos se ven solo si se
+ * piden: auditoría los usa para buscar un paciente.
  */
 class HonorariosPorMedico extends Page implements HasTable
 {
@@ -77,7 +56,8 @@ class HonorariosPorMedico extends Page implements HasTable
     /**
      * El permiso de esta pantalla (31-oct-2026). Se llama como lo
      * nombraría Shield para una página —`View:` y la clase— y lo crea
-     * `MatrizDePermisosSeeder`, que se lo da a dirección y auditoría.
+     * `MatrizDePermisosSeeder`, que se lo da a dirección y auditoría. Lo
+     * piden también las dos rutas de impresión.
      */
     public const PERMISO = 'View:HonorariosPorMedico';
 
@@ -90,20 +70,46 @@ class HonorariosPorMedico extends Page implements HasTable
     protected string $view = 'filament.pages.honorarios-por-medico';
 
     /**
-     * `#[Locked]`: solo lo cambian `verSoloEste()` y `verTodos()`.
+     * Lo que se está mirando: un médico, un turno o área del personal
+     * (el id del ítem), o los honorarios de médico que quedaron sin
+     * médico. A lo sumo uno a la vez.
+     *
+     * `#[Locked]`: solo los cambian `verSoloEste()`, `verTurno()`,
+     * `verSinMedico()` y `verTodos()`.
      */
     #[Locked]
     public ?int $medico = null;
 
-    /**
-     * Las cifras por médico, una sola consulta por pintada. Privadas:
-     * Livewire no las guarda entre pedidos y nunca quedan viejas.
-     *
-     * @var array<int, array{cuantos: int, importe: Decimal}>|null
-     */
-    private ?array $totales = null;
+    #[Locked]
+    public ?int $turno = null;
 
-    private ?string $totalesDe = null;
+    #[Locked]
+    public bool $sinMedico = false;
+
+    /**
+     * El orden de las tarjetas: de la A a la Z, o de la que más lleva a
+     * la que menos. Lo escribe un `<select>`, así que todo lo que no sea
+     * `total` se lee como `nombre` (ver `ordenElegido()`).
+     */
+    public string $orden = 'nombre';
+
+    /**
+     * Los renglones de TODOS los médicos, debajo de las tarjetas. Apagado:
+     * con 400 honorarios del mes era la lista que no se podía leer. Lo
+     * prende quien busca un paciente sin saber de qué médico es.
+     */
+    public bool $verRenglones = false;
+
+    /**
+     * Las cifras del período —por médico, por turno y sin médico—, tres
+     * consultas agrupadas por pintada. Privadas: Livewire no las guarda
+     * entre pedidos y nunca quedan viejas.
+     *
+     * @var array{medicos: array<int, array{cuantos: int, importe: Decimal}>, personal: array<int, array{cuantos: int, importe: Decimal}>, sinMedico: array{cuantos: int, importe: Decimal}}|null
+     */
+    private ?array $cifras = null;
+
+    private ?string $cifrasDe = null;
 
     public static function getNavigationLabel(): string
     {
@@ -122,8 +128,8 @@ class HonorariosPorMedico extends Page implements HasTable
 
     public function getSubheading(): string
     {
-        return 'Los honorarios de las facturas emitidas en el período. Si una factura se anula, '
-            .'sus honorarios salen del mes.';
+        return 'Los honorarios de las facturas emitidas en el período, de cada médico y de cada turno o área '
+            .'del personal. Si una factura se anula, sus honorarios salen del mes.';
     }
 
     /**
@@ -154,6 +160,9 @@ class HonorariosPorMedico extends Page implements HasTable
 
         $medico = request()->query('medico');
         $this->medico = is_string($medico) && ctype_digit($medico) ? (int) $medico : null;
+
+        $turno = request()->query('turno');
+        $this->turno = $this->medico === null && is_string($turno) && ctype_digit($turno) ? (int) $turno : null;
     }
 
     // ── El período ────────────────────────────────────────────────────
@@ -173,11 +182,31 @@ class HonorariosPorMedico extends Page implements HasTable
         ];
     }
 
-    // ── El médico ─────────────────────────────────────────────────────
+    // ── Qué se mira ───────────────────────────────────────────────────
 
     public function verSoloEste(int $medicoId): void
     {
         $this->medico = $this->medico === $medicoId ? null : $medicoId;
+        $this->turno = null;
+        $this->sinMedico = false;
+
+        $this->resetPage();
+    }
+
+    public function verTurno(int $itemId): void
+    {
+        $this->turno = $this->turno === $itemId ? null : $itemId;
+        $this->medico = null;
+        $this->sinMedico = false;
+
+        $this->resetPage();
+    }
+
+    public function verSinMedico(): void
+    {
+        $this->sinMedico = ! $this->sinMedico;
+        $this->medico = null;
+        $this->turno = null;
 
         $this->resetPage();
     }
@@ -185,31 +214,40 @@ class HonorariosPorMedico extends Page implements HasTable
     public function verTodos(): void
     {
         $this->medico = null;
+        $this->turno = null;
+        $this->sinMedico = false;
 
         $this->resetPage();
     }
 
-    // ── El total y los médicos ────────────────────────────────────────
+    public function alternarRenglones(): void
+    {
+        $this->verRenglones = ! $this->verRenglones;
+
+        $this->resetPage();
+    }
+
+    // ── El total, los médicos y el personal ───────────────────────────
 
     /**
-     * El total del período, de todos los médicos.
+     * El total del período: médicos, turnos del personal y lo que quedó
+     * sin médico. Entre los tres está todo lo facturado en honorarios.
      *
-     * @return array{total: string, renglones: int, medicos: int}
+     * @return array{total: string, renglones: int, medicos: int, personal: int, totalMedicos: string, totalPersonal: string}
      */
     public function resumen(): array
     {
-        $total = Decimal::cero();
-        $renglones = 0;
-
-        foreach ($this->totalesPorMedico() as $suyo) {
-            $total = $total->sumar($suyo['importe']);
-            $renglones += $suyo['cuantos'];
-        }
+        $medicos = self::suma($this->cifras()['medicos']);
+        $personal = self::suma($this->cifras()['personal']);
+        $sinMedico = $this->cifras()['sinMedico'];
 
         return [
-            'total'     => self::monto($total),
-            'renglones' => $renglones,
-            'medicos'   => count($this->totalesPorMedico()),
+            'total'         => ReporteDeHonorarios::formatear($this->totalDelTodo()),
+            'renglones'     => $medicos['cuantos'] + $personal['cuantos'] + $sinMedico['cuantos'],
+            'medicos'       => count($this->cifras()['medicos']),
+            'personal'      => count($this->cifras()['personal']),
+            'totalMedicos'  => ReporteDeHonorarios::formatear($medicos['importe']),
+            'totalPersonal' => ReporteDeHonorarios::formatear($personal['importe']),
         ];
     }
 
@@ -219,47 +257,202 @@ class HonorariosPorMedico extends Page implements HasTable
     }
 
     /**
-     * Una fila por médico con honorarios facturados en el período.
+     * Una tarjeta por médico con honorarios facturados en el período, en
+     * el orden elegido.
      *
-     * Cada fila es además un filtro: tocarla deja el detalle en ese
-     * médico, y volver a tocarla lo suelta.
+     * `clave` es el nombre sin tildes y en minúsculas, la misma forma en
+     * que el buscador de arriba normaliza lo que se escribe: «peña»
+     * encuentra a PENA y «jose» a JOSÉ, sin ir al servidor.
      *
-     * @return array<int, array{id: int, nombre: string, especialidad: string, renglones: int, total: string, activo: bool}>
+     * @return list<array{id: int, nombre: string, iniciales: string, especialidad: string, clave: string, renglones: int, total: string, parte: string, barra: int, activo: bool}>
      */
     public function medicos(): array
     {
-        $totales = $this->totalesPorMedico();
+        $fichas = app(ReporteDeHonorarios::class)->medicos($this->cifras()['medicos']);
 
-        if ($totales === []) {
-            return [];
+        if ($this->ordenElegido() === 'total') {
+            usort($fichas, fn (array $una, array $otra): int => $otra['importe']->comparar($una['importe'])
+                ?: strcmp($una['nombre'], $otra['nombre']));
         }
 
-        /*
-         * ⚠️ `array_values()` aunque la colección ya venga en orden:
-         * `Collection::all()` devuelve `array<int, …>`, que no es una
-         * `list` para el analizador.
-         */
-        return array_values(Medico::query()
-            ->with('especialidad')
-            ->whereIn('id', array_keys($totales))
-            ->orderBy('nombre')
-            ->get()
-            ->map(function (Medico $medico) use ($totales): array {
-                $id = (int) $medico->getKey();
-                $suyo = $totales[$id] ?? ['cuantos' => 0, 'importe' => Decimal::cero()];
+        $tarjetas = [];
 
-                return [
-                    'id'           => $id,
-                    'nombre'       => $medico->nombre,
-                    'especialidad' => $medico->especialidad instanceof Especialidad
-                        ? $medico->especialidad->nombre
-                        : '',
-                    'renglones' => $suyo['cuantos'],
-                    'total'     => self::monto($suyo['importe']),
-                    'activo'    => $this->medicoElegido() === $id,
-                ];
-            })
-            ->all());
+        foreach ($fichas as $ficha) {
+            $tarjetas[] = [
+                'id'           => $ficha['id'],
+                'nombre'       => $ficha['nombre'],
+                'iniciales'    => self::iniciales($ficha['nombre']),
+                'especialidad' => $ficha['especialidad'],
+                'clave'        => NormalizadorDeTexto::clave($ficha['nombre'].' '.$ficha['especialidad']),
+                'renglones'    => $ficha['cuantos'],
+                'total'        => ReporteDeHonorarios::formatear($ficha['importe']),
+                'parte'        => ReporteDeHonorarios::parte($ficha['importe'], $this->totalDelTodo()),
+                'barra'        => $this->barra($ficha['importe']),
+                'activo'       => $this->medicoElegido() === $ficha['id'],
+            ];
+        }
+
+        return $tarjetas;
+    }
+
+    /**
+     * Una tarjeta por turno o área del personal —por ítem— con honorarios
+     * facturados en el período (Mauricio, 11-nov-2026: «en el reporte
+     * pertenece a X turno, sin enfermeras»).
+     *
+     * @return list<array{id: int, nombre: string, item: string, clave: string, renglones: int, total: string, parte: string, barra: int, activo: bool}>
+     */
+    public function personal(): array
+    {
+        $grupos = app(ReporteDeHonorarios::class)->delPersonal($this->cifras()['personal']);
+
+        if ($this->ordenElegido() === 'total') {
+            usort($grupos, fn (array $uno, array $otro): int => $otro['importe']->comparar($uno['importe'])
+                ?: strcmp($uno['nombre'], $otro['nombre']));
+        }
+
+        $tarjetas = [];
+
+        foreach ($grupos as $grupo) {
+            $tarjetas[] = [
+                'id'        => $grupo['id'],
+                'nombre'    => $grupo['nombre'],
+                'item'      => $grupo['item'],
+                'clave'     => NormalizadorDeTexto::clave($grupo['item']),
+                'renglones' => $grupo['cuantos'],
+                'total'     => ReporteDeHonorarios::formatear($grupo['importe']),
+                'parte'     => ReporteDeHonorarios::parte($grupo['importe'], $this->totalDelTodo()),
+                'barra'     => $this->barra($grupo['importe']),
+                'activo'    => $this->turnoElegido() === $grupo['id'],
+            ];
+        }
+
+        return $tarjetas;
+    }
+
+    /**
+     * Los honorarios de médico que se cargaron sin elegir al médico, si
+     * hay en el período. No son de nadie y no se inventa a quién: se
+     * muestran aparte para que el total cuadre y alguien los revise.
+     *
+     * @return array{renglones: int, total: string}|null
+     */
+    public function sinMedicoDelPeriodo(): ?array
+    {
+        $cifras = $this->cifras()['sinMedico'];
+
+        return $cifras['cuantos'] > 0
+            ? ['renglones' => $cifras['cuantos'], 'total' => ReporteDeHonorarios::formatear($cifras['importe'])]
+            : null;
+    }
+
+    /**
+     * Lo que se está mirando, listo para la ficha de arriba: el médico, el
+     * turno o los «sin médico», con lo suyo y de qué pagadores salió.
+     * Nulo si no se eligió nada —o lo elegido no tiene honorarios en el
+     * período—.
+     *
+     * @return array{tipo: string, id: int|null, nombre: string, iniciales: string, subtitulo: string, renglones: int, total: string, parte: string, pagadores: list<array{nombre: string, cuantos: int, total: string, parte: string}>, enlace: string|null}|null
+     */
+    public function ficha(): ?array
+    {
+        $reporte = app(ReporteDeHonorarios::class);
+
+        $medico = $this->medicoElegido();
+
+        if ($medico !== null) {
+            $suyo = $this->cifras()['medicos'][$medico];
+            $tarjeta = collect($this->medicos())->firstWhere('id', $medico);
+
+            return [
+                'tipo'      => 'medico',
+                'id'        => $medico,
+                'nombre'    => is_array($tarjeta) ? $tarjeta['nombre'] : '',
+                'iniciales' => is_array($tarjeta) ? $tarjeta['iniciales'] : '·',
+                'subtitulo' => is_array($tarjeta) && $tarjeta['especialidad'] !== '' ? $tarjeta['especialidad'] : 'Médico',
+                'renglones' => $suyo['cuantos'],
+                'total'     => ReporteDeHonorarios::formatear($suyo['importe']),
+                'parte'     => ReporteDeHonorarios::parte($suyo['importe'], $this->totalDelTodo()),
+                'pagadores' => self::pagadoresConParte(
+                    $reporte->porPagador($this->desdeEfectivo(), $this->hastaEfectivo(), $medico)[$medico] ?? [],
+                    $suyo['importe'],
+                ),
+                'enlace' => $this->sePuedeImprimir() ? $this->enlaceDelReporte($medico) : null,
+            ];
+        }
+
+        $turno = $this->turnoElegido();
+
+        if ($turno !== null) {
+            $suyo = $this->cifras()['personal'][$turno];
+            $tarjeta = collect($this->personal())->firstWhere('id', $turno);
+
+            return [
+                'tipo'      => 'personal',
+                'id'        => $turno,
+                'nombre'    => is_array($tarjeta) ? $tarjeta['nombre'] : '',
+                'iniciales' => '',
+                'subtitulo' => 'Enfermería y personal',
+                'renglones' => $suyo['cuantos'],
+                'total'     => ReporteDeHonorarios::formatear($suyo['importe']),
+                'parte'     => ReporteDeHonorarios::parte($suyo['importe'], $this->totalDelTodo()),
+                'pagadores' => self::pagadoresConParte(
+                    $reporte->porPagadorDelPersonal($this->desdeEfectivo(), $this->hastaEfectivo(), $turno)[$turno] ?? [],
+                    $suyo['importe'],
+                ),
+                'enlace' => $this->sePuedeImprimir() ? $this->enlaceDelReporte(null, $turno) : null,
+            ];
+        }
+
+        if ($this->sinMedicoElegido()) {
+            $suyo = $this->cifras()['sinMedico'];
+
+            return [
+                'tipo'      => 'sin_medico',
+                'id'        => null,
+                'nombre'    => 'Honorarios de médico sin médico',
+                'iniciales' => '',
+                'subtitulo' => 'Se cobraron sin elegir al médico. No entran en la liquidación de nadie.',
+                'renglones' => $suyo['cuantos'],
+                'total'     => ReporteDeHonorarios::formatear($suyo['importe']),
+                'parte'     => ReporteDeHonorarios::parte($suyo['importe'], $this->totalDelTodo()),
+                'pagadores' => [],
+                'enlace'    => null,
+            ];
+        }
+
+        return null;
+    }
+
+    // ── Los reportes impresos ─────────────────────────────────────────
+
+    /**
+     * El enlace al reporte impreso del período que se está viendo: de un
+     * médico, de un turno o área, o el general de todos.
+     */
+    public function enlaceDelReporte(?int $medicoId = null, ?int $turnoId = null): string
+    {
+        $periodo = ['desde' => $this->desdeEfectivo(), 'hasta' => $this->hastaEfectivo()];
+
+        if ($medicoId !== null) {
+            return route('honorarios.reporte.medico', ['medico' => $medicoId] + $periodo);
+        }
+
+        if ($turnoId !== null) {
+            return route('honorarios.reporte.turno', ['item' => $turnoId] + $periodo);
+        }
+
+        return route('honorarios.reporte', $periodo);
+    }
+
+    /**
+     * El período que se ve, ¿se puede imprimir? Más de un año, no (ver
+     * `ReporteDeHonorarios::DIAS_MAXIMOS`): el botón lo dice antes de
+     * abrir una pestaña que va a contestar con un error.
+     */
+    public function sePuedeImprimir(): bool
+    {
+        return Periodo::dias($this->desdeEfectivo(), $this->hastaEfectivo()) <= ReporteDeHonorarios::DIAS_MAXIMOS;
     }
 
     // ── La tabla ──────────────────────────────────────────────────────
@@ -280,20 +473,22 @@ class HonorariosPorMedico extends Page implements HasTable
                  */
                 TextColumn::make('facturada_el')
                     ->label('Facturado')
-                    ->state(fn (Cargo $record): string => self::fechaCorta($record->getAttribute('facturada_el')))
+                    ->state(fn (Cargo $record): string => ReporteDeHonorarios::fechaCorta($record->getAttribute('facturada_el')))
                     ->description(fn (Cargo $record): string => (string) $record->getAttribute('factura_numero'))
                     ->sortable(query: fn (Builder $query, string $direction): Builder => $query
                         ->orderBy('facturas.fecha_operacion', $direction === 'desc' ? 'desc' : 'asc'))
                     ->grow(false),
 
                 /*
-                 * Solo cuando se ven todos: con un médico elegido, la
-                 * columna repetiría su nombre en cada renglón.
+                 * Solo cuando se ven todos: con un médico o un turno
+                 * elegido, la columna repetiría su nombre en cada
+                 * renglón.
                  */
-                TextColumn::make('medico.nombre')
-                    ->label('Médico')
+                TextColumn::make('a_quien')
+                    ->label('A quién va')
+                    ->state(fn (Cargo $record): string => self::aQuienVa($record))
                     ->wrap()
-                    ->visible(fn (): bool => $this->medicoElegido() === null),
+                    ->visible(fn (): bool => $this->nadaElegido()),
 
                 TextColumn::make('paciente')
                     ->label('Paciente')
@@ -342,7 +537,7 @@ class HonorariosPorMedico extends Page implements HasTable
                     ->summarize(
                         Sum::make()
                             ->label('Total')
-                            ->formatStateUsing(fn (mixed $state): string => self::monto($state))
+                            ->formatStateUsing(fn (mixed $state): string => ReporteDeHonorarios::formatear(ReporteDeHonorarios::comoDecimal($state)))
                     ),
             ])
             /*
@@ -384,41 +579,11 @@ class HonorariosPorMedico extends Page implements HasTable
     // ── Consultas ─────────────────────────────────────────────────────
 
     /**
-     * Los renglones de honorario con médico de las facturas EMITIDAS en
-     * el período. Es la única fuente de la pantalla: el total, los
-     * médicos y el detalle salen de acá.
-     *
-     * ⚠️ El cruce con la factura va también por `cuenta_id`: `cargos`
-     * está particionada y `factura_lineas.cargo_id` no tiene FK, así que
-     * un id repetido de otra partición podría colarse (la misma guarda
-     * que usa el emisor al anular).
-     *
-     * ⚠️ `encabezado = false`: el renglón que nombra una cirugía
-     * desglosada no cobra nada y apunta a un cargo sin médico, pero se
-     * excluye explícito.
-     *
-     * @return Builder<Cargo>
-     */
-    private function honorariosFacturados(): Builder
-    {
-        return Cargo::query()
-            ->join('factura_lineas', 'factura_lineas.cargo_id', '=', 'cargos.id')
-            ->join('facturas', function (JoinClause $union): void {
-                $union->on('facturas.id', '=', 'factura_lineas.factura_id')
-                    ->on('facturas.cuenta_id', '=', 'cargos.cuenta_id');
-            })
-            ->where('facturas.estado', EstadoFactura::Emitida->value)
-            ->where('factura_lineas.encabezado', false)
-            ->whereNotNull('cargos.medico_id')
-            ->whereBetween('facturas.fecha_operacion', [$this->desdeEfectivo(), $this->hastaEfectivo()]);
-    }
-
-    /**
      * Lo que lee la tabla: el cargo con la fecha y el número de su
-     * factura.
+     * factura, y el nombre del ítem para decir a qué turno va.
      *
      * ⚠️ El `select` es explícito: sin él el cruce trae `id`, `total` y
-     * `estado` repetidos de tres tablas, y el resumen del pie —que mete
+     * `estado` repetidos de cuatro tablas, y el resumen del pie —que mete
      * esta consulta en una subconsulta— reventaría por columnas
      * duplicadas.
      *
@@ -429,118 +594,188 @@ class HonorariosPorMedico extends Page implements HasTable
      */
     private function consultaDeLaTabla(): Builder
     {
-        $consulta = $this->honorariosFacturados()
+        $consulta = app(ReporteDeHonorarios::class)
+            ->facturados($this->desdeEfectivo(), $this->hastaEfectivo())
             ->select([
                 'cargos.*',
                 'facturas.numero as factura_numero',
                 'facturas.fecha_operacion as facturada_el',
+                'items.nombre as item_nombre',
+                'items.cobra_el_honorario as item_cobra',
             ])
-            ->with(['medico', 'convenio', 'cuenta.encuentro.persona']);
+            ->with([
+                'medico' => fn ($relacion) => $relacion->withTrashed(),
+                'convenio',
+                'cuenta.encuentro.persona',
+            ]);
 
-        $elegido = $this->medicoElegido();
+        $medico = $this->medicoElegido();
+        $turno = $this->turnoElegido();
 
-        if ($elegido !== null) {
-            $consulta->where('cargos.medico_id', $elegido);
+        if ($medico !== null) {
+            ReporteDeHonorarios::soloDeMedicos($consulta)->where('cargos.medico_id', $medico);
+        } elseif ($turno !== null) {
+            ReporteDeHonorarios::soloDelPersonal($consulta)->where('cargos.item_id', $turno);
+        } elseif ($this->sinMedicoElegido()) {
+            ReporteDeHonorarios::soloSinMedico($consulta);
         }
 
         return $consulta;
     }
 
     /**
-     * Por médico: cuántos honorarios facturados y cuánto suman.
+     * Las cifras del período, una vez por pintada.
      *
-     * @return array<int, array{cuantos: int, importe: Decimal}>
+     * @return array{medicos: array<int, array{cuantos: int, importe: Decimal}>, personal: array<int, array{cuantos: int, importe: Decimal}>, sinMedico: array{cuantos: int, importe: Decimal}}
      */
-    private function totalesPorMedico(): array
+    private function cifras(): array
     {
         $clave = $this->desdeEfectivo().'|'.$this->hastaEfectivo();
 
-        if ($this->totales !== null && $this->totalesDe === $clave) {
-            return $this->totales;
+        if ($this->cifras !== null && $this->cifrasDe === $clave) {
+            return $this->cifras;
         }
 
-        $filas = $this->honorariosFacturados()
-            ->selectRaw('cargos.medico_id, count(*) as cuantos, sum(cargos.total) as importe')
-            ->groupBy('cargos.medico_id')
-            ->toBase()
-            ->get();
+        $reporte = app(ReporteDeHonorarios::class);
+        $this->cifrasDe = $clave;
 
-        $totales = [];
+        return $this->cifras = [
+            'medicos'   => $reporte->totalesPorMedico($this->desdeEfectivo(), $this->hastaEfectivo()),
+            'personal'  => $reporte->totalesDelPersonal($this->desdeEfectivo(), $this->hastaEfectivo()),
+            'sinMedico' => $reporte->sinMedico($this->desdeEfectivo(), $this->hastaEfectivo()),
+        ];
+    }
 
-        foreach ($filas as $fila) {
-            $totales[(int) $fila->medico_id] = [
-                'cuantos' => (int) $fila->cuantos,
-                'importe' => self::comoDecimal($fila->importe),
-            ];
-        }
-
-        $this->totalesDe = $clave;
-
-        return $this->totales = $totales;
+    private function totalDelTodo(): Decimal
+    {
+        return self::suma($this->cifras()['medicos'])['importe']
+            ->sumar(self::suma($this->cifras()['personal'])['importe'])
+            ->sumar($this->cifras()['sinMedico']['importe']);
     }
 
     /**
      * El médico elegido, si tiene honorarios en el período. Si no tiene
      * —se eligió y después se cambió de mes—, se ven todos: si no, el
-     * detalle quedaría vacío sin nada arriba que explique por qué.
+     * detalle quedaría vacío sin nada arriba que explique por qué. Lo
+     * mismo con el turno y con los «sin médico».
      */
     private function medicoElegido(): ?int
     {
-        return $this->medico !== null && array_key_exists($this->medico, $this->totalesPorMedico())
+        return $this->medico !== null && array_key_exists($this->medico, $this->cifras()['medicos'])
             ? $this->medico
             : null;
     }
 
-    // ── Fechas ────────────────────────────────────────────────────────
-
-    private static function fechaCorta(mixed $fecha): string
+    private function turnoElegido(): ?int
     {
-        $limpia = is_string($fecha) ? self::fechaValida(mb_substr($fecha, 0, 10)) : null;
-
-        return $limpia === null ? '' : CarbonImmutable::parse($limpia)->format('d/m/Y');
+        return $this->turno !== null && array_key_exists($this->turno, $this->cifras()['personal'])
+            ? $this->turno
+            : null;
     }
 
-    // ── Montos ────────────────────────────────────────────────────────
+    private function sinMedicoElegido(): bool
+    {
+        return $this->sinMedico && $this->cifras()['sinMedico']['cuantos'] > 0;
+    }
+
+    private function nadaElegido(): bool
+    {
+        return $this->medicoElegido() === null && $this->turnoElegido() === null && ! $this->sinMedicoElegido();
+    }
 
     /**
-     * Una suma lista para mostrar.
+     * El ancho de la barrita de la tarjeta, de 0 a 100. Al menos 2 si
+     * facturó algo: una barra vacía en una tarjeta con plata se lee como
+     * un error.
+     */
+    private function barra(Decimal $importe): int
+    {
+        $total = $this->totalDelTodo();
+
+        return $total->mayorQue('0') && $importe->mayorQue('0')
+            ? max(2, (int) $importe->entre($total)->por('100')->redondeado(0))
+            : 0;
+    }
+
+    /**
+     * @param array<int, array{cuantos: int, importe: Decimal}> $cifras
      *
-     * Ya no puede dar negativa —ni un cargo anulado ni su reversa entran
-     * a una factura—, pero si algún día diera, sale con signo en vez de
-     * reventar: `Monto` no admite negativos.
+     * @return array{cuantos: int, importe: Decimal}
      */
-    private static function monto(mixed $suma): string
+    private static function suma(array $cifras): array
     {
-        $valor = self::comoDecimal($suma);
+        $importe = Decimal::cero();
+        $cuantos = 0;
 
-        if ($valor->esNegativo()) {
-            return '− '.Monto::de(Decimal::cero()->restar($valor)->redondeado(2))->formateado();
+        foreach ($cifras as $suyo) {
+            $importe = $importe->sumar($suyo['importe']);
+            $cuantos += $suyo['cuantos'];
         }
 
-        return Monto::de($valor->redondeado(2))->formateado();
+        return ['cuantos' => $cuantos, 'importe' => $importe];
     }
 
     /**
-     * `sum()` devuelve lo que le da el driver —int, float o string—.
+     * @param list<array{nombre: string, cuantos: int, importe: Decimal}> $pagadores
+     *
+     * @return list<array{nombre: string, cuantos: int, total: string, parte: string}>
      */
-    private static function comoDecimal(mixed $suma): Decimal
+    private static function pagadoresConParte(array $pagadores, Decimal $suyo): array
     {
-        if ($suma instanceof Decimal) {
-            return $suma;
+        $lista = [];
+
+        foreach ($pagadores as $pagador) {
+            $lista[] = [
+                'nombre'  => $pagador['nombre'],
+                'cuantos' => $pagador['cuantos'],
+                'total'   => ReporteDeHonorarios::formatear($pagador['importe']),
+                'parte'   => ReporteDeHonorarios::parte($pagador['importe'], $suyo),
+            ];
         }
 
-        if (is_string($suma) && is_numeric($suma)) {
-            return Decimal::de($suma);
+        return $lista;
+    }
+
+    /**
+     * A quién va el renglón, en la tabla de todos: el médico, el turno o
+     * área del personal, o «SIN MÉDICO».
+     */
+    private static function aQuienVa(Cargo $cargo): string
+    {
+        if ($cargo->getAttribute('item_cobra') === QuienCobraElHonorario::Personal->value) {
+            return ReporteDeHonorarios::nombreDelGrupo((string) $cargo->getAttribute('item_nombre'));
         }
 
-        if (is_int($suma)) {
-            return Decimal::de($suma);
+        $medico = $cargo->medico;
+
+        return $medico instanceof Medico ? $medico->nombre : 'SIN MÉDICO';
+    }
+
+    private function ordenElegido(): string
+    {
+        return $this->orden === 'total' ? 'total' : 'nombre';
+    }
+
+    /**
+     * Las dos letras del círculo de la tarjeta: la del nombre y la del
+     * primer apellido. Con un solo nombre, sus dos primeras letras.
+     */
+    private static function iniciales(string $nombre): string
+    {
+        $partes = preg_split('/\s+/u', trim($nombre), -1, PREG_SPLIT_NO_EMPTY);
+
+        if ($partes === false || $partes === []) {
+            return '·';
         }
 
-        if (is_float($suma)) {
-            return Decimal::deFloat($suma);
-        }
+        /*
+         * Con cuatro o más partes el primer apellido es el penúltimo
+         * («JUAN CARLOS PÉREZ LÓPEZ» es JP); con dos o tres, la segunda.
+         */
+        $iniciales = count($partes) === 1
+            ? mb_substr($partes[0], 0, 2)
+            : mb_substr($partes[0], 0, 1).mb_substr($partes[count($partes) >= 4 ? count($partes) - 2 : 1], 0, 1);
 
-        return Decimal::cero();
+        return mb_strtoupper($iniciales);
     }
 }

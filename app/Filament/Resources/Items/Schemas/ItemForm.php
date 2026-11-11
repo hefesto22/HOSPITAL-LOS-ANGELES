@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Items\Schemas;
 
 use App\Domain\Enums\AmbitoCatalogo;
 use App\Domain\Enums\MagnitudDeMedida;
+use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\Enums\RegimenIsv;
 use App\Domain\Enums\TipoItem;
 use App\Domain\ValueObjects\Decimal;
@@ -271,6 +272,8 @@ final class ItemForm
                 ->columnSpan(1),
 
             self::campoNombre(AmbitoCatalogo::Servicios),
+
+            self::campoQuienCobra(),
 
             self::campoPrecios(),
             self::campoPorQueCambianLosPrecios(),
@@ -714,6 +717,47 @@ final class ItemForm
             : $campo
                 ->placeholder('ALIMENTACION POR DIA')
                 ->hintIcon('heroicon-o-information-circle', 'Como debe salir impreso en la cuenta del paciente.');
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * A QUIÉN VA EL HONORARIO (Mauricio, 11-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Los turnos de enfermería, el circulante y el instrumentista no son
+     * de una persona registrada: son del turno o del área que dice el
+     * nombre. Marcados «Enfermería o personal», al cargarlos en la cuenta
+     * no se pide médico y en «Honorarios por médico» cuentan para su
+     * turno. El de un médico exige elegirlo al cargarlo.
+     *
+     * Solo aparece en los honorarios: en lo demás no significa nada, y si
+     * se cambia el tipo el modelo lo devuelve a «médico»
+     * (`Item::booted()`).
+     */
+    private static function campoQuienCobra(): ToggleButtons
+    {
+        return ToggleButtons::make('cobra_el_honorario')
+            ->label('¿Quién cobra este honorario?')
+            ->options(fn (): array => collect(QuienCobraElHonorario::cases())
+                ->mapWithKeys(fn (QuienCobraElHonorario $quien): array => [$quien->value => $quien->etiqueta()])
+                ->all())
+            ->icons(fn (): array => collect(QuienCobraElHonorario::cases())
+                ->mapWithKeys(fn (QuienCobraElHonorario $quien): array => [$quien->value => $quien->icono()])
+                ->all())
+            ->default(QuienCobraElHonorario::Medico->value)
+            ->inline()
+            ->required()
+            ->live()
+            ->visible(fn (Get $get): bool => self::tipoElegido($get) === TipoItem::Honorario)
+            ->helperText(function (Get $get): string {
+                $valor = $get('cobra_el_honorario');
+                $quien = $valor instanceof QuienCobraElHonorario
+                    ? $valor
+                    : QuienCobraElHonorario::tryFrom(is_string($valor) ? $valor : '') ?? QuienCobraElHonorario::Medico;
+
+                return $quien->descripcion();
+            })
+            ->columnSpanFull();
     }
 
     /**

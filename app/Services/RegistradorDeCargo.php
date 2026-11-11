@@ -386,7 +386,7 @@ final class RegistradorDeCargo
              * medicamento con médico puesto ensuciaría la liquidación
              * con renglones que no son honorarios suyos.
              */
-            'medico_id' => $linea->medicoId,
+            'medico_id' => self::medicoDeLaLinea($linea),
             /*
              * El almacén se guarda solo si de verdad salió algo de él. Un
              * ítem que no mueve inventario con `almacen_id` puesto
@@ -800,9 +800,11 @@ final class RegistradorDeCargo
             return $this->coberturas->para($cuenta, $delSeguro);
         }
 
-        $conElMedico = $linea->medicoId !== null
+        $medicoId = self::medicoDeLaLinea($linea);
+
+        $conElMedico = $medicoId !== null
             && $this->honorarios->soloDelPagador(
-                $linea->medicoId,
+                $medicoId,
                 (int) $linea->item->getKey(),
                 (int) $cuenta->convenio->getKey(),
                 $fechaServicio,
@@ -935,11 +937,13 @@ final class RegistradorDeCargo
      */
     private function nombreDelRenglon(Item $item, LineaDeCargo $linea): string
     {
-        if ($item->tipo !== TipoItem::Honorario || $linea->medicoId === null) {
+        $medicoId = self::medicoDeLaLinea($linea);
+
+        if ($item->tipo !== TipoItem::Honorario || $medicoId === null) {
             return $item->nombre;
         }
 
-        $medico = Medico::query()->with('especialidad')->find($linea->medicoId);
+        $medico = Medico::query()->with('especialidad')->find($medicoId);
 
         if (! $medico instanceof Medico) {
             return $item->nombre;
@@ -955,6 +959,19 @@ final class RegistradorDeCargo
         }
 
         return $item->nombre.' · '.$medico->etiqueta();
+    }
+
+    /**
+     * El médico del renglón, o nulo si el honorario es del personal.
+     *
+     * Un turno de enfermería no es de nadie registrado (Mauricio,
+     * 11-nov-2026): aunque llegue un médico —un formulario viejo, un
+     * import—, el cargo no lo guarda ni lo nombra. Si no, ese turno
+     * contaría en el reporte del médico y no en el del turno.
+     */
+    private static function medicoDeLaLinea(LineaDeCargo $linea): ?int
+    {
+        return $linea->item->esHonorarioDelPersonal() ? null : $linea->medicoId;
     }
 
     /**
