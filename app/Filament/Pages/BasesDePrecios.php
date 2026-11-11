@@ -802,13 +802,36 @@ class BasesDePrecios extends Page implements HasTable
                     ->searchable()
                     ->required()
                     ->options(fn (): array => $this->opcionesParaAgregar())
-                    ->helperText('Solo aparece lo que todavía no tiene precio en esta base.'),
+                    ->helperText('Solo aparece lo que todavía no tiene precio en esta base.')
+                    /*
+                     * Elegido el ítem, el cursor ya queda en el precio:
+                     * se elige, se escribe, Enter. Del lado del navegador,
+                     * sin ir al servidor.
+                     */
+                    ->afterStateUpdatedJs(<<<'JS'
+                        setTimeout(() => document.getElementById('precio-nuevo-de-la-base')?.focus(), 50)
+                        JS),
 
+                /*
+                 * ─────────────────────────────────────────────────────
+                 * 🔴 TEXTO, NO EL CAMPO NUMÉRICO DEL NAVEGADOR (8-nov-2026)
+                 * ─────────────────────────────────────────────────────
+                 *
+                 * Mauricio: «si se quiere agregar algo no deja colocarle
+                 * precio» — tecleaba y el campo quedaba vacío. El campo
+                 * numérico del navegador decide qué teclas acepta según
+                 * el idioma de Chrome y del teclado, y lo que rechaza no
+                 * lo muestra ni avisa. Como texto se escribe siempre, y lo
+                 * escrito lo interpreta `agregar()`: si no se entiende, lo
+                 * dice.
+                 */
                 TextInput::make('precio')
+                    ->id('precio-nuevo-de-la-base')
                     ->label('Precio para este pagador')
-                    ->numeric()
                     ->required()
-                    ->minValue(0)
+                    ->inputMode('decimal')
+                    ->autocomplete(false)
+                    ->placeholder('Ej. 1250.50')
                     ->prefix('L')
                     ->helperText('Cero se puede: es una cortesía declarada. Negativo no.'),
             ])
@@ -836,7 +859,7 @@ class BasesDePrecios extends Page implements HasTable
 
         abort_unless(Gate::allows('update', $item), 403);
 
-        $numero = NumeroDeFormulario::aDecimal($data['precio'] ?? null);
+        $numero = NumeroDeFormulario::aDecimal(self::sinSeparadorDeMiles($data['precio'] ?? null));
 
         if (! $numero instanceof Decimal || $numero->esNegativo()) {
             Notification::make()
@@ -873,6 +896,25 @@ class BasesDePrecios extends Page implements HasTable
             ->title($item->codigo.' agregado')
             ->body('Ya tiene precio propio en '.$convenio->nombre.'.')
             ->send();
+    }
+
+    /**
+     * «L 1,250.50» → «1250.50». El campo es de texto, y escrito así la
+     * coma es de miles: sin quitarla, `NumeroDeFormulario` —que acepta la
+     * coma decimal— leería «1,000» como L 1. Solo se quita cuando separa
+     * miles de verdad (grupos de tres); «1250,50» sigue siendo decimal.
+     */
+    private static function sinSeparadorDeMiles(mixed $escrito): mixed
+    {
+        if (! is_string($escrito)) {
+            return $escrito;
+        }
+
+        $limpio = trim(str_ireplace(['L.', 'L', ' '], '', $escrito));
+
+        return preg_match('/^\d{1,3}(,\d{3})+(\.\d+)?$/', $limpio) === 1
+            ? str_replace(',', '', $limpio)
+            : $limpio;
     }
 
     private function quitar(Item $item): void
