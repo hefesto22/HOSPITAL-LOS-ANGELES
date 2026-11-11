@@ -8,6 +8,7 @@ use App\Domain\Enums\TipoItem;
 use App\Domain\Exceptions\PrecioNoFijableException;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Models\CategoriaItem;
 use App\Models\Convenio;
 use App\Models\Item;
@@ -104,7 +105,7 @@ class BasesDePrecios extends Page implements HasTable
 
     protected static ?string $slug = 'bases-de-precios';
 
-    protected static ?int $navigationSort = 15;
+    protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.bases-de-precios';
 
@@ -159,7 +160,7 @@ class BasesDePrecios extends Page implements HasTable
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::PreciosYSeguros->value;
     }
 
     public function getTitle(): string

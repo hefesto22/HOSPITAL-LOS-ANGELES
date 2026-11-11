@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Abonos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Caja;
 use App\Filament\Resources\Abonos\Pages\ListAbonos;
 use App\Filament\Resources\Abonos\Tables\AbonosTable;
@@ -34,11 +35,11 @@ class AbonoResource extends Resource
 {
     protected static ?string $model = Abono::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedInboxArrowDown;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedWallet;
 
     protected static ?string $slug = 'abonos';
 
-    protected static ?int $navigationSort = 4;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -59,7 +60,7 @@ class AbonoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

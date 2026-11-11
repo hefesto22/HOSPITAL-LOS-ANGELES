@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\TurnosDeCaja;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Caja;
 use App\Filament\Resources\TurnosDeCaja\Pages\ListTurnosDeCaja;
 use App\Filament\Resources\TurnosDeCaja\Tables\TurnosDeCajaTable;
@@ -33,7 +34,7 @@ class TurnoDeCajaResource extends Resource
 
     protected static ?string $slug = 'turnos-de-caja';
 
-    protected static ?int $navigationSort = 5;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -59,7 +60,7 @@ class TurnoDeCajaResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

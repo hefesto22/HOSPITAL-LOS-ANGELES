@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\RangosCai;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\RangosCai\Pages\CreateRangoCai;
 use App\Filament\Resources\RangosCai\Pages\EditRangoCai;
 use App\Filament\Resources\RangosCai\Pages\ListRangosCai;
@@ -38,7 +39,7 @@ class RangoCaiResource extends Resource
 
     protected static ?string $slug = 'rangos-cai';
 
-    protected static ?int $navigationSort = 8;
+    protected static ?int $navigationSort = 6;
 
     protected static ?string $recordTitleAttribute = 'cai';
 
@@ -59,7 +60,7 @@ class RangoCaiResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     public static function form(Schema $schema): Schema

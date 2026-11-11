@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Facturas;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Facturas\Pages\ListFacturas;
 use App\Filament\Resources\Facturas\Tables\FacturasTable;
 use App\Models\Factura;
@@ -28,7 +29,7 @@ class FacturaResource extends Resource
 
     protected static ?string $slug = 'facturas';
 
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 5;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -49,7 +50,7 @@ class FacturaResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

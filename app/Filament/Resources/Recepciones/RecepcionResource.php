@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Recepciones;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Recepciones\Pages\CreateRecepcion;
 use App\Filament\Resources\Recepciones\Pages\ListRecepciones;
 use App\Filament\Resources\Recepciones\Pages\ViewRecepcion;
@@ -44,7 +45,7 @@ class RecepcionResource extends Resource
 
     protected static ?string $slug = 'recepciones';
 
-    protected static ?int $navigationSort = 1;
+    protected static ?int $navigationSort = 2;
 
     protected static ?string $recordTitleAttribute = 'referencia';
 
@@ -65,7 +66,7 @@ class RecepcionResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

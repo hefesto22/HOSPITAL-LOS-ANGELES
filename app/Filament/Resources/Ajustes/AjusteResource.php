@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Ajustes;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Ajustes\Pages\CreateAjuste;
 use App\Filament\Resources\Ajustes\Pages\ListAjustes;
 use App\Filament\Resources\Ajustes\Pages\VerAjuste;
@@ -46,7 +47,7 @@ class AjusteResource extends Resource
 
     protected static ?string $slug = 'ajustes';
 
-    protected static ?int $navigationSort = 4;
+    protected static ?int $navigationSort = 5;
 
     protected static ?string $recordTitleAttribute = 'motivo';
 
@@ -72,7 +73,7 @@ class AjusteResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

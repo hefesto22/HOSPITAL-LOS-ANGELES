@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Items;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Items\Pages\CreateItem;
 use App\Filament\Resources\Items\Pages\EditItem;
 use App\Filament\Resources\Items\Pages\ListItems;
@@ -43,11 +44,11 @@ class ItemResource extends Resource
 {
     protected static ?string $model = Item::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBookOpen;
 
     protected static ?string $slug = 'catalogo';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 2;
 
     /**
      * Buscar por nombre en la barra global de Filament. El código y el
@@ -85,7 +86,7 @@ class ItemResource extends Resource
      */
     public static function getNavigationGroup(): ?string
     {
-        return 'Farmacia y servicios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     /**

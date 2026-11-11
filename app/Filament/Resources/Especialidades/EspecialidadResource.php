@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Especialidades;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Especialidades\Pages\CreateEspecialidad;
 use App\Filament\Resources\Especialidades\Pages\EditEspecialidad;
 use App\Filament\Resources\Especialidades\Pages\ListEspecialidades;
@@ -32,7 +33,7 @@ class EspecialidadResource extends Resource
 
     protected static ?string $slug = 'especialidades';
 
-    protected static ?int $navigationSort = 30;
+    protected static ?int $navigationSort = 2;
 
     public static function getNavigationLabel(): string
     {
@@ -51,7 +52,7 @@ class EspecialidadResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     /**

@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\TipoAlmacen;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Ajuste;
 use App\Models\Almacen;
@@ -128,11 +129,11 @@ class Existencias extends Page implements HasTable
 
     private const FORMA_ENVASE = 'envase:';
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCube;
 
     protected static ?string $slug = 'existencias';
 
-    protected static ?int $navigationSort = 0;
+    protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.existencias';
 
@@ -212,7 +213,7 @@ class Existencias extends Page implements HasTable
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     public function getTitle(): string

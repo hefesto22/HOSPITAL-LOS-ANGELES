@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Medicos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Medicos\Pages\CreateMedico;
 use App\Filament\Resources\Medicos\Pages\EditMedico;
 use App\Filament\Resources\Medicos\Pages\ListMedicos;
@@ -33,7 +34,7 @@ class MedicoResource extends Resource
 
     protected static ?string $slug = 'medicos';
 
-    protected static ?int $navigationSort = 31;
+    protected static ?int $navigationSort = 1;
 
     public static function getNavigationLabel(): string
     {
@@ -52,7 +53,7 @@ class MedicoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     /**

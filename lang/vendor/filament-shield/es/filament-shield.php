@@ -12,13 +12,12 @@ declare(strict_types=1);
 | y con el nombre de un paquete de PHP, que no le dice nada a nadie en un
 | hospital.
 |
-| Roles va donde va: junto a usuarios y a la bitácora, en seguridad.
+| Desde el 11-nov-2026 el grupo, el orden y el ícono de Roles se le dicen
+| al plugin en `AdminPanelProvider`, con `GrupoDelMenu::Seguridad`: el
+| nombre del grupo sale de un solo lugar. Este archivo queda sin claves.
 |
-| ⚠️ Laravel MEZCLA este archivo sobre el del paquete, así que acá solo
-| van las claves que se cambian. Las demás siguen saliendo de
-| `vendor/bezhansalleh/filament-shield/resources/lang/es`.
+| ⚠️ Laravel MEZCLA este archivo sobre el del paquete: lo que se ponga acá
+| pisa `vendor/bezhansalleh/filament-shield/resources/lang/es`.
 */
 
-return [
-    'nav.group' => 'Seguridad y auditoría',
-];
+return [];

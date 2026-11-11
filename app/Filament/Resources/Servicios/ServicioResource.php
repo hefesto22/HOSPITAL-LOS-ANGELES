@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Servicios;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Servicios\Pages\CreateServicio;
 use App\Filament\Resources\Servicios\Pages\EditServicio;
 use App\Filament\Resources\Servicios\Pages\ListServicios;
@@ -28,11 +29,11 @@ class ServicioResource extends Resource
 {
     protected static ?string $model = Servicio::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleGroup;
 
     protected static ?string $slug = 'servicios';
 
-    protected static ?int $navigationSort = 20;
+    protected static ?int $navigationSort = 3;
 
     public static function getNavigationLabel(): string
     {
@@ -56,7 +57,7 @@ class ServicioResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     /**

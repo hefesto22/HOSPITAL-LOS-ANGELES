@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Productos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Items\RelationManagers\ExistenciasRelationManager;
 use App\Filament\Resources\Items\RelationManagers\PreciosRelationManager;
 use App\Filament\Resources\Items\Schemas\ItemForm;
@@ -49,7 +50,7 @@ class ProductoResource extends Resource
 
     protected static ?string $slug = 'farmacia/productos';
 
-    protected static ?int $navigationSort = 5;
+    protected static ?int $navigationSort = 1;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -75,7 +76,7 @@ class ProductoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Farmacia y servicios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     /**

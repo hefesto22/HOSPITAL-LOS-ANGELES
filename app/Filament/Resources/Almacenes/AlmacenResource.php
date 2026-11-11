@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Almacenes;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Almacenes\Pages\CreateAlmacen;
 use App\Filament\Resources\Almacenes\Pages\EditAlmacen;
 use App\Filament\Resources\Almacenes\Pages\ListAlmacenes;
@@ -36,7 +37,7 @@ class AlmacenResource extends Resource
      */
     protected static ?string $slug = 'almacenes';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 4;
 
     public static function getNavigationLabel(): string
     {
@@ -68,7 +69,7 @@ class AlmacenResource extends Resource
      */
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::Hospital->value;
     }
 
     /**

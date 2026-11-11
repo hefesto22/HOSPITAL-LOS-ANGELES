@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Filament\Navegacion\GrupoDelMenu;
+use App\Filament\Navegacion\MenuLateral;
 use App\Models\BrandingSetting;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
@@ -13,7 +15,9 @@ use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\Support\Icons\Heroicon;
 use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\View\View;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -54,26 +58,17 @@ class AdminPanelProvider extends PanelProvider
              *
              * Sin esta lista Filament ordena los grupos como se le da la
              * gana —por el primer recurso que descubre— y el menú salía
-             * con «Filament Shield» arriba de todo y «Seguridad y
-             * auditoría» metida entre «Atención» y «Farmacia».
+             * con «Filament Shield» arriba de todo.
              *
-             * El orden es el de la frecuencia con que se abre cada cosa:
-             * primero lo de todos los días en la ventanilla, al final lo
-             * que se toca una vez y se deja quieto.
-             *
-             * ⚠️ Un grupo que no esté en esta lista NO desaparece: cae al
-             * final. Pero conviene agregarlo acá, porque el final es
-             * donde nadie mira.
+             * Los grupos, su orden, su color y cuáles empiezan recogidos
+             * salen de `GrupoDelMenu`; el menú compacto y el buscador, de
+             * `MenuLateral` (11-nov-2026). Cada Resource dice su grupo con
+             * `GrupoDelMenu::X->value`, nunca con el texto escrito a mano.
              */
-            ->navigationGroups([
-                'Atención',
-                'Consultas',
-                'Farmacia y servicios',
-                'Inventario',
-                'Catálogos y precios',
-                'Configuración del hospital',
-                'Seguridad y auditoría',
-            ])
+            ->navigationGroups(GrupoDelMenu::grupos())
+            ->renderHook(PanelsRenderHook::HEAD_END, fn (): View => MenuLateral::estilos())
+            ->renderHook(PanelsRenderHook::SIDEBAR_NAV_START, fn (): View => MenuLateral::buscador())
+            ->sidebarWidth('16rem')
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             /*
              * El escritorio es `App\Filament\Pages\Escritorio` (21-oct-2026),
@@ -98,7 +93,15 @@ class AdminPanelProvider extends PanelProvider
                 Authenticate::class,
             ])
             ->plugins([
-                FilamentShieldPlugin::make(),
+                /*
+                 * Roles va donde va: junto a usuarios y a la bitácora, con
+                 * un candado propio (el escudo es de «Seguros y convenios»).
+                 */
+                FilamentShieldPlugin::make()
+                    ->navigationGroup(GrupoDelMenu::Seguridad->value)
+                    ->navigationSort(2)
+                    ->navigationIcon(Heroicon::OutlinedLockClosed)
+                    ->activeNavigationIcon(Heroicon::LockClosed),
             ])
             ->databaseNotifications()
             ->databaseNotificationsPolling('30s')

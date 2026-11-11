@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Cargos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Cargos\Pages\ListCargos;
 use App\Filament\Resources\Cargos\Tables\CargosTable;
 use App\Models\Cargo;
@@ -41,13 +42,13 @@ class CargoResource extends Resource
 
     protected static ?string $slug = 'cargos';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 8;
 
     protected static ?string $recordTitleAttribute = 'texto';
 
     public static function getNavigationLabel(): string
     {
-        return 'Cargos';
+        return 'Todos los cargos';
     }
 
     public static function getBreadcrumb(): string
@@ -67,7 +68,7 @@ class CargoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

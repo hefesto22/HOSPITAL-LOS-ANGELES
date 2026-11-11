@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Cuentas;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Cuentas\Pages\ListCuentas;
 use App\Filament\Resources\Cuentas\Pages\VerCuenta;
 use App\Filament\Resources\Cuentas\RelationManagers\CargosRelationManager;
@@ -38,17 +39,17 @@ class CuentaResource extends Resource
 {
     protected static ?string $model = Cuenta::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBanknotes;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
     protected static ?string $slug = 'cuentas-de-pacientes';
 
-    protected static ?int $navigationSort = 1;
+    protected static ?int $navigationSort = 7;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
     public static function getNavigationLabel(): string
     {
-        return 'Cuentas (consulta)';
+        return 'Todas las cuentas';
     }
 
     public static function getBreadcrumb(): string
@@ -68,7 +69,7 @@ class CuentaResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Compras;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Compras\Pages\CreateCompra;
 use App\Filament\Resources\Compras\Pages\EditCompra;
 use App\Filament\Resources\Compras\Pages\ListCompras;
@@ -31,11 +32,11 @@ class CompraResource extends Resource
 {
     protected static ?string $model = Compra::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedDocumentCurrencyDollar;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedShoppingCart;
 
     protected static ?string $slug = 'compras';
 
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 6;
 
     protected static ?string $recordTitleAttribute = 'numero_documento';
 
@@ -56,7 +57,7 @@ class CompraResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Convenios;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Convenios\Pages\CreateConvenio;
 use App\Filament\Resources\Convenios\Pages\EditConvenio;
 use App\Filament\Resources\Convenios\Pages\ListConvenios;
@@ -44,7 +45,7 @@ class ConvenioResource extends Resource
 
     protected static ?string $slug = 'convenios';
 
-    protected static ?int $navigationSort = 60;
+    protected static ?int $navigationSort = 2;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -65,7 +66,7 @@ class ConvenioResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::PreciosYSeguros->value;
     }
 
     /**

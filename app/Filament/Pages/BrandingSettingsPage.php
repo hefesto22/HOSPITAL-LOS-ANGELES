@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Models\BrandingSetting;
 use App\Support\ImageOptimizer;
+use BackedEnum;
 use BezhanSalleh\FilamentShield\Support\Utils;
 use Filament\Forms\Components\ColorPicker;
 use Filament\Forms\Components\FileUpload;
@@ -13,6 +15,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 /**
@@ -31,6 +34,8 @@ class BrandingSettingsPage extends Page
 {
     protected string $view = 'filament.pages.branding-settings';
 
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCog6Tooth;
+
     public function getTitle(): string
     {
         return 'Configuración del Sistema';
@@ -43,12 +48,12 @@ class BrandingSettingsPage extends Page
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     public static function getNavigationSort(): ?int
     {
-        return 99;
+        return 7;
     }
 
     /**

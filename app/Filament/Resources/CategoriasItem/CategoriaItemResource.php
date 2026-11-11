@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\CategoriasItem;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\CategoriasItem\Pages\CreateCategoriaItem;
 use App\Filament\Resources\CategoriasItem\Pages\EditCategoriaItem;
 use App\Filament\Resources\CategoriasItem\Pages\ListCategoriasItem;
@@ -29,11 +30,11 @@ class CategoriaItemResource extends Resource
 {
     protected static ?string $model = CategoriaItem::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTag;
 
     protected static ?string $slug = 'categorias-del-catalogo';
 
-    protected static ?int $navigationSort = 9;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -59,7 +60,7 @@ class CategoriaItemResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     /**

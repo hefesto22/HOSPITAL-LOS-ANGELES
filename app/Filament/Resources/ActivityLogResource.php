@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\ActivityLogResource\Pages\ListActivityLogs;
 use App\Filament\Resources\ActivityLogResource\Pages\ViewActivityLog;
 use BackedEnum;
@@ -27,17 +28,22 @@ class ActivityLogResource extends Resource
 {
     protected static ?string $model = Activity::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentList;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedQueueList;
 
     protected static ?string $modelLabel = 'Registro de Actividad';
 
     protected static ?string $pluralModelLabel = 'Registros de Actividad';
 
-    protected static ?int $navigationSort = 99;
+    protected static ?int $navigationSort = 3;
+
+    public static function getNavigationLabel(): string
+    {
+        return 'Registros de actividad';
+    }
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Seguridad y auditoría';
+        return GrupoDelMenu::Seguridad->value;
     }
 
     public static function canCreate(): bool

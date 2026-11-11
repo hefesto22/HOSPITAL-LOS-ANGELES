@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\MargenesObjetivo;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\MargenesObjetivo\Pages\ListMargenesObjetivo;
 use App\Filament\Resources\MargenesObjetivo\Tables\MargenesObjetivoTable;
 use App\Models\MargenObjetivo;
@@ -37,7 +38,7 @@ class MargenObjetivoResource extends Resource
 
     protected static ?string $slug = 'margenes-objetivo';
 
-    protected static ?int $navigationSort = 50;
+    protected static ?int $navigationSort = 5;
 
     protected static ?string $recordTitleAttribute = 'motivo';
 
@@ -63,7 +64,7 @@ class MargenObjetivoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::PreciosYSeguros->value;
     }
 
     public static function table(Table $table): Table

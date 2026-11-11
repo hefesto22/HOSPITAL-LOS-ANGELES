@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Pacientes;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Pacientes\Pages\CreatePaciente;
 use App\Filament\Resources\Pacientes\Pages\EditPaciente;
 use App\Filament\Resources\Pacientes\Pages\ListPacientes;
@@ -39,7 +40,7 @@ class PacienteResource extends Resource
 
     protected static ?string $slug = 'pacientes';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 1;
 
     /*
      * Sin esto Filament derivaría el título de la fila del `id`. El
@@ -70,7 +71,7 @@ class PacienteResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::Pacientes->value;
     }
 
     /**

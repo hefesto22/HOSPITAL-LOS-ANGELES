@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
  * NADA SE BORRA: LA CUENTA QUEDA «ANULADA», CON QUIÉN, CUÁNDO Y POR QUÉ
  * ─────────────────────────────────────────────────────────────────────
  *
- * Su número no se reusa y sigue en «Cuentas (consulta)» con el filtro de
+ * Su número no se reusa y sigue en «Todas las cuentas» con el filtro de
  * anuladas. El encuentro que se abrió con ella se anula también, salvo
  * que tenga otra cuenta que no esté anulada.
  *

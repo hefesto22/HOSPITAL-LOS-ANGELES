@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Descuentos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Descuentos\Pages\ListDescuentos;
 use App\Filament\Resources\Descuentos\Tables\DescuentosTable;
 use App\Models\Descuento;
@@ -38,7 +39,7 @@ class DescuentoResource extends Resource
 
     protected static ?string $slug = 'descuentos';
 
-    protected static ?int $navigationSort = 54;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -76,7 +77,7 @@ class DescuentoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::PreciosYSeguros->value;
     }
 
     public static function table(Table $table): Table

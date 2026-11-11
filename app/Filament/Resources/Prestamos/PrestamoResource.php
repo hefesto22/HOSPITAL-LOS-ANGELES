@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Prestamos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Prestamos\Pages\ListPrestamos;
 use App\Filament\Resources\Prestamos\Tables\PrestamosTable;
 use App\Models\Prestamo;
@@ -35,7 +36,7 @@ class PrestamoResource extends Resource
 
     protected static ?string $slug = 'prestamos';
 
-    protected static ?int $navigationSort = 45;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'presta_nombre';
 
@@ -61,7 +62,7 @@ class PrestamoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

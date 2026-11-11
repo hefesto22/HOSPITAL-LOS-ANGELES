@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\DescuentosLegales;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\DescuentosLegales\Pages\ListDescuentosLegales;
 use App\Filament\Resources\DescuentosLegales\Tables\DescuentosLegalesTable;
 use App\Models\DescuentoLegal;
@@ -46,11 +47,11 @@ class DescuentoLegalResource extends Resource
 {
     protected static ?string $model = DescuentoLegal::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedScale;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingLibrary;
 
     protected static ?string $slug = 'descuentos-de-ley';
 
-    protected static ?int $navigationSort = 55;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'fundamento';
 
@@ -71,7 +72,7 @@ class DescuentoLegalResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::PreciosYSeguros->value;
     }
 
     public static function table(Table $table): Table

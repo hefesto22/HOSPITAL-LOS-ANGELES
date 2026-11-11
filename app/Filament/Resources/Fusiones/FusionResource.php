@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Fusiones;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Fusiones\Pages\ListFusiones;
 use App\Filament\Resources\Fusiones\Tables\FusionesTable;
 use App\Models\FusionDePersona;
@@ -33,7 +34,7 @@ class FusionResource extends Resource
 
     protected static ?string $slug = 'fusiones';
 
-    protected static ?int $navigationSort = 4;
+    protected static ?int $navigationSort = 3;
 
     public static function getNavigationLabel(): string
     {
@@ -78,7 +79,7 @@ class FusionResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::Pacientes->value;
     }
 
     /**

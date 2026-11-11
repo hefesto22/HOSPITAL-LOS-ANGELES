@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Encuentros;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Encuentros\Pages\ListEncuentros;
 use App\Filament\Resources\Encuentros\Pages\VerEncuentro;
 use App\Filament\Resources\Encuentros\Schemas\EncuentroInfolist;
@@ -61,7 +62,7 @@ class EncuentroResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::Pacientes->value;
     }
 
     /**

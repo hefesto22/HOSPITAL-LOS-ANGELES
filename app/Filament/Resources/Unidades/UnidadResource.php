@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Unidades;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Unidades\Pages\ListUnidades;
 use App\Filament\Resources\Unidades\Schemas\UnidadForm;
 use App\Filament\Resources\Unidades\Tables\UnidadesTable;
@@ -32,7 +33,7 @@ class UnidadResource extends Resource
 
     protected static ?string $slug = 'unidades';
 
-    protected static ?int $navigationSort = 40;
+    protected static ?int $navigationSort = 5;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -58,7 +59,7 @@ class UnidadResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     public static function form(Schema $schema): Schema

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Presupuestos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Presupuestos\Pages\CreatePresupuesto;
 use App\Filament\Resources\Presupuestos\Pages\EditPresupuesto;
 use App\Filament\Resources\Presupuestos\Pages\ListPresupuestos;
@@ -52,7 +53,7 @@ class PresupuestoResource extends Resource
 
     protected static ?string $slug = 'presupuestos';
 
-    protected static ?int $navigationSort = 7;
+    protected static ?int $navigationSort = 6;
 
     protected static ?string $recordTitleAttribute = 'numero';
 
@@ -73,7 +74,7 @@ class PresupuestoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     /**

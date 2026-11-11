@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Conteos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Conteos\Pages\ContarConteo;
 use App\Filament\Resources\Conteos\Pages\CreateConteo;
 use App\Filament\Resources\Conteos\Pages\ListConteos;
@@ -55,7 +56,7 @@ class ConteoResource extends Resource
 
     protected static ?string $slug = 'conteos';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $recordTitleAttribute = 'descripcion';
 
@@ -81,7 +82,7 @@ class ConteoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

@@ -8,7 +8,7 @@
 
       · Al pie de la lista del modal de cargar, plegado: es para el cambio
         de turno, que necesita lo último y nada más.
-      · En «Ver» de Cuentas (consulta), abierto y suelto: es para revisar
+      · En «Ver» de Todas las cuentas, abierto y suelto: es para revisar
         una cuenta que ya se facturó y no se puede abrir en el modal.
 
     Parámetros: `$cuenta`; `$abierto` (empieza desplegado) y `$suelto`

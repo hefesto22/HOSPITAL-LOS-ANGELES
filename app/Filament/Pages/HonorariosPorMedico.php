@@ -6,6 +6,7 @@ namespace App\Filament\Pages;
 
 use App\Domain\Enums\QuienCobraElHonorario;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Cargo;
 use App\Models\Convenio;
@@ -64,11 +65,11 @@ class HonorariosPorMedico extends Page implements HasTable
      */
     public const PERMISO = 'View:HonorariosPorMedico';
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBanknotes;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBriefcase;
 
     protected static ?string $slug = 'honorarios-por-medico';
 
-    protected static ?int $navigationSort = 40;
+    protected static ?int $navigationSort = 2;
 
     protected string $view = 'filament.pages.honorarios-por-medico';
 
@@ -121,7 +122,7 @@ class HonorariosPorMedico extends Page implements HasTable
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::Reportes->value;
     }
 
     public function getTitle(): string

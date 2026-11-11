@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\PlantillasPresupuesto;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\PlantillasPresupuesto\Pages\CreatePlantillaPresupuesto;
 use App\Filament\Resources\PlantillasPresupuesto\Pages\EditPlantillaPresupuesto;
 use App\Filament\Resources\PlantillasPresupuesto\Pages\ListPlantillasPresupuesto;
@@ -40,7 +41,7 @@ class PlantillaPresupuestoResource extends Resource
 
     protected static ?string $slug = 'plantillas-presupuesto';
 
-    protected static ?int $navigationSort = 45;
+    protected static ?int $navigationSort = 6;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -61,7 +62,7 @@ class PlantillaPresupuestoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Catálogos y precios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     public static function form(Schema $schema): Schema

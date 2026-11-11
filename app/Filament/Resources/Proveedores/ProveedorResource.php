@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Proveedores;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Proveedores\Pages\CreateProveedor;
 use App\Filament\Resources\Proveedores\Pages\EditProveedor;
 use App\Filament\Resources\Proveedores\Pages\ListProveedores;
@@ -31,7 +32,7 @@ class ProveedorResource extends Resource
 
     protected static ?string $slug = 'proveedores';
 
-    protected static ?int $navigationSort = 5;
+    protected static ?int $navigationSort = 7;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -52,7 +53,7 @@ class ProveedorResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::FarmaciaEInventario->value;
     }
 
     /**

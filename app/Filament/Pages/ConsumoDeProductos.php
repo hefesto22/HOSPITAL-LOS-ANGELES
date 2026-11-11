@@ -6,6 +6,7 @@ namespace App\Filament\Pages;
 
 use App\Domain\Enums\EstadoCargo;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Almacen;
 use App\Models\Cargo;
@@ -81,11 +82,11 @@ class ConsumoDeProductos extends Page implements HasTable
      */
     public const PRODUCTOS_A_LA_VISTA = 8;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedChartBar;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedChartPie;
 
     protected static ?string $slug = 'consumo-de-productos';
 
-    protected static ?int $navigationSort = 1;
+    protected static ?int $navigationSort = 3;
 
     protected string $view = 'filament.pages.consumo-de-productos';
 
@@ -130,7 +131,7 @@ class ConsumoDeProductos extends Page implements HasTable
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Inventario';
+        return GrupoDelMenu::Reportes->value;
     }
 
     public function getTitle(): string

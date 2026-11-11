@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Sedes;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\Sedes\Pages\CreateSede;
 use App\Filament\Resources\Sedes\Pages\EditSede;
 use App\Filament\Resources\Sedes\Pages\ListSedes;
@@ -30,7 +31,7 @@ class SedeResource extends Resource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingOffice2;
 
-    protected static ?int $navigationSort = 10;
+    protected static ?int $navigationSort = 5;
 
     /*
      * Explícitos a propósito (§10.5). Str::headline convierte "sedes" en
@@ -60,7 +61,7 @@ class SedeResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Configuración del hospital';
+        return GrupoDelMenu::Hospital->value;
     }
 
     /**

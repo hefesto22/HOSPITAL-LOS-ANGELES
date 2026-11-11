@@ -8,6 +8,7 @@ use App\Domain\Enums\FormaDePago;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\Decimal;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Models\Abono;
 use App\Models\TurnoDeCaja;
 use App\Services\ReceptorDeAbono;
@@ -47,7 +48,7 @@ class Caja extends Page
 
     protected static ?string $slug = 'caja';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 2;
 
     protected string $view = 'filament.pages.caja';
 
@@ -72,7 +73,7 @@ class Caja extends Page
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     public function getTitle(): string

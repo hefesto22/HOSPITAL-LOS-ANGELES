@@ -115,7 +115,7 @@ it('🔴 una cuenta vacia se anula, con quien, cuando y por que, y su encuentro 
         ->and($cuenta->total_al_anular)->toBe('0.00')
         ->and($encuentro->estado)->toBe(EstadoEncuentro::Anulado)
         ->and($encuentro->anulado_por)->toBe($cajera->id);
-})->note('Nada se borra: la cuenta queda anulada con su número, que no se reusa, y aparece en «Cuentas (consulta)» con el filtro de anuladas.');
+})->note('Nada se borra: la cuenta queda anulada con su número, que no se reusa, y aparece en «Todas las cuentas» con el filtro de anuladas.');
 
 it('🔴 al paciente se le puede abrir la cuenta correcta enseguida', function (): void {
     $sede = Sede::factory()->create();

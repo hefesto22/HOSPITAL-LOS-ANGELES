@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\PrincipiosActivos;
 
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Resources\PrincipiosActivos\Pages\ListPrincipiosActivos;
 use App\Filament\Resources\PrincipiosActivos\Schemas\PrincipioActivoForm;
 use App\Filament\Resources\PrincipiosActivos\Tables\PrincipiosActivosTable;
@@ -36,7 +37,7 @@ class PrincipioActivoResource extends Resource
 
     protected static ?string $slug = 'farmacia/principios-activos';
 
-    protected static ?int $navigationSort = 7;
+    protected static ?int $navigationSort = 3;
 
     protected static ?string $recordTitleAttribute = 'nombre';
 
@@ -62,7 +63,7 @@ class PrincipioActivoResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Farmacia y servicios';
+        return GrupoDelMenu::Catalogo->value;
     }
 
     public static function form(Schema $schema): Schema

@@ -36,6 +36,7 @@ use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\MedioDePago;
 use App\Domain\ValueObjects\Monto;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Abono;
 use App\Models\Almacen;
@@ -163,7 +164,7 @@ class CuentasAbiertas extends Page
      */
     use OperaElTurnoDeCaja;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedFolderOpen;
 
     protected static ?string $slug = 'cuentas';
 
@@ -483,7 +484,7 @@ class CuentasAbiertas extends Page
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Atención';
+        return GrupoDelMenu::CuentasYCaja->value;
     }
 
     public function getTitle(): string

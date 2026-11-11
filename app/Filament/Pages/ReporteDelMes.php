@@ -7,6 +7,7 @@ namespace App\Filament\Pages;
 use App\Domain\Enums\EstadoFactura;
 use App\Domain\Enums\TipoDocumentoDeVenta;
 use App\Domain\ValueObjects\Decimal;
+use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Convenio;
 use App\Models\Factura;
@@ -55,7 +56,7 @@ class ReporteDelMes extends Page implements HasTable
 
     protected static ?string $slug = 'reporte-del-mes';
 
-    protected static ?int $navigationSort = 45;
+    protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.reporte-del-mes';
 
@@ -66,7 +67,7 @@ class ReporteDelMes extends Page implements HasTable
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Consultas';
+        return GrupoDelMenu::Reportes->value;
     }
 
     public function getTitle(): string
