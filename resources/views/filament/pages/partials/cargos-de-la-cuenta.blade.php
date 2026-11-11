@@ -343,117 +343,108 @@
                 total que no es el que dice el renglón TOTAL, y una factura
                 que no cuadra a simple vista no la firma nadie.
 
-                Con el bruto arriba, la resta se lee sola:
+                Con el bruto primero, la resta se lee sola:
                 bruto − descuentos = exento + gravado, más ISV, igual TOTAL.
 
                 Y va SIEMPRE, no solo cuando hay descuento: un renglón que
                 aparece y desaparece deja la duda de si esta vez no hubo
                 descuento o si el sistema no lo mostró.
             --}}
+            {{--
+                El pie en dos franjas (11-nov-2026, «más compacto»): las
+                cifras en una fila que se lee de izquierda a derecha en el
+                mismo orden de la cuenta —bruto, descuentos, exento, gravado,
+                ISV— y el TOTAL grande a la derecha; abajo, a quién le toca
+                cuánto. Antes eran nueve renglones apilados que empujaban el
+                historial fuera de la pantalla.
+            --}}
+            @php($abonado = $cuenta->abonado())
+
             <div class="sihla-factura-pie">
-                <div class="sihla-pie-totales">
-                    <div class="sihla-pie-linea">
-                        <span>Importe bruto</span>
-                        <span>{{ number_format((float) $cuenta->total_bruto, 2) }}</span>
-                    </div>
-                    <div @class(['sihla-pie-linea', 'sihla-pie-descuento' => $descuentos !== 0.0])>
-                        <span>Descuentos</span>
-                        <span>{{ $descuentos === 0.0 ? '0.00' : '− '.number_format($descuentos, 2) }}</span>
-                    </div>
-                    <div class="sihla-pie-linea">
-                        <span>Importe exento</span>
-                        <span>{{ number_format((float) $cuenta->total_exento, 2) }}</span>
-                    </div>
-                    <div class="sihla-pie-linea">
-                        <span>Importe gravado</span>
-                        <span>{{ number_format((float) $cuenta->total_gravado, 2) }}</span>
-                    </div>
-                    <div class="sihla-pie-linea">
-                        <span>ISV</span>
-                        <span>{{ number_format((float) $cuenta->total_isv, 2) }}</span>
-                    </div>
+                <div class="sihla-pie-fila">
+                    <dl class="sihla-pie-cifras">
+                        <div class="sihla-pie-cifra">
+                            <dt>Bruto</dt>
+                            <dd>{{ number_format((float) $cuenta->total_bruto, 2) }}</dd>
+                        </div>
+                        <div @class(['sihla-pie-cifra', 'sihla-pie-descuento' => $descuentos !== 0.0])>
+                            <dt>Descuentos</dt>
+                            <dd>{{ $descuentos === 0.0 ? '0.00' : '− '.number_format($descuentos, 2) }}</dd>
+                        </div>
+                        <div class="sihla-pie-cifra">
+                            <dt>Exento</dt>
+                            <dd>{{ number_format((float) $cuenta->total_exento, 2) }}</dd>
+                        </div>
+                        <div class="sihla-pie-cifra">
+                            <dt>Gravado</dt>
+                            <dd>{{ number_format((float) $cuenta->total_gravado, 2) }}</dd>
+                        </div>
+                        <div class="sihla-pie-cifra">
+                            <dt>ISV</dt>
+                            <dd>{{ number_format((float) $cuenta->total_isv, 2) }}</dd>
+                        </div>
+                    </dl>
 
-                    <div class="sihla-pie-linea sihla-pie-total">
-                        <span>TOTAL</span>
-                        <span>{{ $cuenta->saldo()->formateado() }}</span>
+                    <div class="sihla-pie-total">
+                        <span>Total</span>
+                        <strong>{{ $cuenta->saldo()->formateado() }}</strong>
                     </div>
+                </div>
 
-                    <div class="sihla-pie-linea sihla-pie-division">
-                        <span>Le toca al paciente</span>
-                        <span>{{ $cuenta->saldoDelPaciente()->formateado() }}</span>
-                    </div>
+                <div class="sihla-pie-reparto">
+                    <span class="sihla-reparto">Le toca al paciente <strong>{{ $cuenta->saldoDelPaciente()->formateado() }}</strong></span>
+
+                    @if (! $cuenta->saldoDeLaAseguradora()->esCero())
+                        <span class="sihla-reparto">Le toca a {{ $cuenta->convenio->nombre }} <strong>{{ $cuenta->saldoDeLaAseguradora()->formateado() }}</strong></span>
+                    @endif
 
                     {{--
-                        ─────────────────────────────────────────────────────
-                        LO QUE YA PAGARON
-                        ─────────────────────────────────────────────────────
-
-                        Solo aparece si hay abonos. Con la cuenta sin pagar,
-                        «Abonado 0.00» y un saldo igual al total serían dos
-                        renglones que no dicen nada, y el pie ya es largo.
-
-                        El saldo es DERIVADO: total menos los abonos vivos.
-                        Anular un recibo lo cambia en el acto.
+                        Lo que ya pagaron: solo si hay abonos. Con la cuenta
+                        sin pagar, «Abonado 0.00» y un saldo igual al total
+                        no dicen nada. El saldo es DERIVADO: total menos los
+                        abonos vivos; anular un recibo lo cambia en el acto.
                     --}}
-                    @php($abonado = $cuenta->abonado())
-
                     @if (! $abonado->esCero())
                         @php($saldo = $cuenta->saldoPendiente())
 
-                        <div class="sihla-pie-linea">
-                            <span>Abonado</span>
-                            <span>&minus; {{ number_format((float) $abonado->redondeado(2), 2) }}</span>
-                        </div>
-
-                        <div class="sihla-pie-linea sihla-pie-total">
-                            <span>{{ $saldo->esNegativo() ? 'SALDO A FAVOR' : 'SALDO' }}</span>
-                            <span>
+                        <span class="sihla-reparto">Abonado <strong>&minus; {{ number_format((float) $abonado->redondeado(2), 2) }}</strong></span>
+                        <span class="sihla-reparto sihla-reparto-saldo">
+                            {{ $saldo->esNegativo() ? 'Saldo a favor' : 'Saldo' }}
+                            <strong>
                                 {{ number_format((float) ($saldo->esNegativo()
                                     ? $cuenta->saldoAFavor()->redondeado(2)
                                     : $saldo->redondeado(2)), 2) }}
-                            </span>
-                        </div>
-                    @endif
-
-                    {{--
-                        El descuento que está puesto arriba pero todavía no tocó
-                        ninguna línea.
-
-                        Sin este renglón la pantalla se ve inerte: se teclea 30,
-                        se escribe el motivo, y abajo no cambia nada — porque los
-                        cargos que ya están asentados no se tocan. Decirlo acá,
-                        junto a los números, es la diferencia entre «el sistema no
-                        hizo nada» y «está armado y espera la próxima línea».
-                    --}}
-                    @if (filled($armado) && (float) $armado > 0)
-                        <div class="sihla-pie-linea sihla-pie-armado">
-                            <span>Descuento en farmacia · {{ rtrim(rtrim(number_format((float) $armado, 2), '0'), '.') }} %</span>
-                            <span>aplicado a toda la cuenta</span>
-                        </div>
-                    @endif
-
-                    {{-- Los de servicios y honorarios se leen de la cuenta: es lo que quedó guardado, no lo que se está tecleando. --}}
-                    @foreach (['servicios', 'honorarios'] as $rubroDelPie)
-                        @if ($cuenta->{'descuento_'.$rubroDelPie.'_monto'} !== null)
-                            <div class="sihla-pie-linea sihla-pie-armado">
-                                <span>Descuento en {{ $rubroDelPie }} · L {{ number_format((float) $cuenta->{'descuento_'.$rubroDelPie.'_monto'}, 2) }}</span>
-                                <span>repartido entre lo cargado</span>
-                            </div>
-                        @elseif ($cuenta->{'descuento_'.$rubroDelPie} !== null)
-                            <div class="sihla-pie-linea sihla-pie-armado">
-                                <span>Descuento en {{ $rubroDelPie }} · {{ rtrim(rtrim(number_format((float) $cuenta->{'descuento_'.$rubroDelPie} * 100, 2), '0'), '.') }} %</span>
-                                <span>cada renglón hasta su tope</span>
-                            </div>
-                        @endif
-                    @endforeach
-
-                    @if (! $cuenta->saldoDeLaAseguradora()->esCero())
-                        <div class="sihla-pie-linea sihla-pie-division">
-                            <span>Le toca a {{ $cuenta->convenio->nombre }}</span>
-                            <span>{{ $cuenta->saldoDeLaAseguradora()->formateado() }}</span>
-                        </div>
+                            </strong>
+                        </span>
                     @endif
                 </div>
+
+                {{--
+                    El descuento que está puesto pero todavía no tocó ninguna
+                    línea. Sin esto la pantalla se ve inerte: se teclea 30,
+                    se escribe el motivo, y abajo no cambia nada — porque los
+                    cargos ya asentados no se tocan. Decirlo junto a los
+                    números es la diferencia entre «el sistema no hizo nada»
+                    y «está armado y espera la próxima línea».
+
+                    Los de servicios y honorarios se leen de la cuenta: es lo
+                    que quedó guardado, no lo que se está tecleando.
+                --}}
+                @php($notas = [])
+                @if (filled($armado) && (float) $armado > 0)
+                    @php($notas[] = 'Descuento en farmacia · '.rtrim(rtrim(number_format((float) $armado, 2), '0'), '.').' % aplicado a toda la cuenta')
+                @endif
+                @foreach (['servicios', 'honorarios'] as $rubroDelPie)
+                    @if ($cuenta->{'descuento_'.$rubroDelPie.'_monto'} !== null)
+                        @php($notas[] = 'Descuento en '.$rubroDelPie.' · L '.number_format((float) $cuenta->{'descuento_'.$rubroDelPie.'_monto'}, 2).' repartido entre lo cargado')
+                    @elseif ($cuenta->{'descuento_'.$rubroDelPie} !== null)
+                        @php($notas[] = 'Descuento en '.$rubroDelPie.' · '.rtrim(rtrim(number_format((float) $cuenta->{'descuento_'.$rubroDelPie} * 100, 2), '0'), '.').' %, cada renglón hasta su tope')
+                    @endif
+                @endforeach
+
+                @if ($notas !== [])
+                    <p class="sihla-pie-notas">{{ implode(' · ', $notas) }}</p>
+                @endif
             </div>
         @endif
 
@@ -588,10 +579,6 @@
     </div>
 
     <style>
-        .sihla-pie-armado {
-            font-size: .72rem; color: rgb(180 120 20); font-style: italic;
-            padding-top: .35rem;
-        }
         .sihla-factura {
             margin-top: 1rem; border: 1px solid rgb(228 228 231); border-radius: .6rem;
             overflow: hidden; background: rgb(255 255 255);
@@ -614,7 +601,7 @@
             padding: 1.5rem .85rem; font-size: .85rem; color: rgb(113 113 122); text-align: center;
         }
 
-        .sihla-factura-cuerpo { max-height: 17rem; overflow-y: auto; }
+        .sihla-factura-cuerpo { max-height: min(48vh, 26rem); overflow-y: auto; }
         .sihla-factura-cuerpo-libre { max-height: none; }
 
         /*
@@ -649,12 +636,12 @@
         /* Los títulos de las cifras, alineados con las cifras: a la derecha. */
         .sihla-factura-tabla > thead > tr > th.sihla-num { text-align: end; }
         .sihla-factura-tabla > tbody > tr > td {
-            padding: .7rem .7rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
+            padding: .55rem .7rem; border-bottom: 1px solid rgb(244 244 245); vertical-align: top;
         }
         /* Las cifras a la altura del nombre, no del ícono. */
         .sihla-factura-tabla > tbody > tr > td.sihla-num,
-        .sihla-factura-tabla > tbody > tr > td.sihla-col-n { padding-top: .95rem; }
-        .sihla-factura-tabla > tbody > tr > td.sihla-col-acc { padding-top: .7rem; }
+        .sihla-factura-tabla > tbody > tr > td.sihla-col-n { padding-top: .72rem; }
+        .sihla-factura-tabla > tbody > tr > td.sihla-col-acc { padding-top: .5rem; }
         .sihla-factura-tabla > tbody > tr:last-child > td { border-bottom: none; }
         .sihla-factura-tabla > tbody > tr:not(.sihla-desglose-fila):not(.sihla-motivo-fila):hover > td {
             background: rgb(250 250 250);
@@ -689,15 +676,15 @@
          * de un médico, rosa el del personal, verde lo de farmacia, azul
          * el laboratorio, índigo la imagen, ámbar lo del hospital.
          */
-        .sihla-linea { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; }
+        .sihla-linea { display: flex; align-items: flex-start; gap: .6rem; min-width: 0; }
         .sihla-linea-icono {
             --tipo: 113 113 122;
             flex: none; display: inline-flex; align-items: center; justify-content: center;
-            width: 2rem; height: 2rem; border-radius: .55rem;
+            width: 1.75rem; height: 1.75rem; border-radius: .5rem;
             color: rgb(var(--tipo)); background: rgb(var(--tipo) / .1);
             box-shadow: inset 0 0 0 1px rgb(var(--tipo) / .18);
         }
-        .sihla-linea-icono-svg { width: 1.05rem; height: 1.05rem; }
+        .sihla-linea-icono-svg { width: .95rem; height: .95rem; }
         .sihla-linea-icono[data-tipo="honorario"] { --tipo: 124 58 237; }
         .sihla-linea-icono[data-tipo="personal"] { --tipo: 219 39 119; }
         .sihla-linea-icono[data-tipo="medicamento"] { --tipo: 5 150 105; }
@@ -709,7 +696,7 @@
         .sihla-linea-icono[data-tipo="estancia"] { --tipo: 217 119 6; }
         .sihla-linea-icono[data-tipo="paquete"] { --tipo: 234 88 12; }
 
-        .sihla-linea-cuerpo { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+        .sihla-linea-cuerpo { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
         .sihla-linea-texto {
             display: block; color: rgb(24 24 27); font-weight: 600; line-height: 1.3;
             overflow-wrap: break-word;
@@ -895,24 +882,41 @@
         }
 
 
+        /*
+         * ── El pie en dos franjas ──────────────────────────────────────
+         * Arriba las cifras en fila y el TOTAL grande a la derecha; abajo,
+         * a quién le toca cuánto.
+         */
         .sihla-factura-pie {
-            padding: .75rem 1rem .85rem; background: rgb(250 250 250);
+            display: flex; flex-direction: column; gap: .5rem;
+            padding: .7rem 1rem .75rem; background: rgb(250 250 250);
             border-top: 1px solid rgb(228 228 231);
         }
-        /* Las cifras en un bloque a la derecha, como en la factura impresa. */
-        .sihla-pie-totales { max-width: 25rem; margin-left: auto; }
-        .sihla-pie-descuento > span:last-child { color: rgb(180 83 9); }
-        .sihla-pie-linea {
-            display: flex; justify-content: space-between; gap: 2rem;
-            font-size: .78rem; color: rgb(82 82 91); padding: .12rem 0;
+        .sihla-pie-fila { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .6rem 2rem; }
+        .sihla-pie-cifras { display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; margin: 0; }
+        .sihla-pie-cifra { display: flex; flex-direction: column; gap: .1rem; }
+        .sihla-pie-cifra dt,
+        .sihla-pie-total span {
+            font-size: .6rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: rgb(161 161 170);
+        }
+        .sihla-pie-cifra dd {
+            margin: 0; font-size: .85rem; font-weight: 500; color: rgb(63 63 70); font-variant-numeric: tabular-nums;
+        }
+        .sihla-pie-descuento dd { color: rgb(180 83 9); }
+        .sihla-pie-total { display: flex; flex-direction: column; align-items: flex-end; gap: .05rem; margin-left: auto; }
+        .sihla-pie-total strong {
+            font-size: 1.4rem; font-weight: 700; line-height: 1.15; color: rgb(24 24 27); font-variant-numeric: tabular-nums;
+        }
+        .sihla-pie-reparto { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+        .sihla-reparto {
+            padding: .18rem .6rem; border-radius: 999px; white-space: nowrap;
+            font-size: .74rem; color: rgb(82 82 91); background: rgb(244 244 245);
             font-variant-numeric: tabular-nums;
         }
-        .sihla-pie-linea > span:last-child { min-width: 7rem; text-align: end; }
-        .sihla-pie-total {
-            margin-top: .35rem; padding-top: .35rem; border-top: 1px solid rgb(212 212 216);
-            font-size: 1rem; font-weight: 700; color: rgb(24 24 27);
-        }
-        .sihla-pie-division { color: rgb(113 113 122); }
+        .sihla-reparto strong { margin-left: .25rem; font-weight: 700; color: rgb(24 24 27); }
+        .sihla-reparto-saldo { color: rgb(146 64 14); background: rgb(254 243 199); }
+        .sihla-reparto-saldo strong { color: rgb(120 53 15); }
+        .sihla-pie-notas { margin: 0; text-align: right; font-size: .7rem; font-style: italic; color: rgb(180 120 20); }
 
         .dark .sihla-factura { background: rgb(24 24 27); border-color: rgb(63 63 70); }
         .dark .sihla-factura-cabecera,
@@ -927,10 +931,16 @@
         .dark .sihla-factura-cuantos { color: rgb(113 113 122); }
         .dark .sihla-linea-texto,
         .dark .sihla-fuerte,
-        .dark .sihla-pie-total { color: rgb(244 244 245); }
+        .dark .sihla-pie-total strong,
+        .dark .sihla-reparto strong { color: rgb(244 244 245); }
+        .dark .sihla-pie-cifra dd { color: rgb(212 212 216); }
+        .dark .sihla-pie-cifra dt,
+        .dark .sihla-pie-total span { color: rgb(113 113 122); }
+        .dark .sihla-reparto { color: rgb(161 161 170); background: rgb(255 255 255 / .06); }
+        .dark .sihla-reparto-saldo { color: rgb(252 211 77); background: rgb(245 158 11 / .14); }
+        .dark .sihla-reparto-saldo strong { color: rgb(253 230 138); }
+        .dark .sihla-pie-notas { color: rgb(251 191 36); }
         .dark .sihla-factura-numero { color: rgb(212 212 216); }
-        .dark .sihla-pie-linea { color: rgb(212 212 216); }
-        .dark .sihla-pie-total { border-top-color: rgb(82 82 91); }
         .dark .sihla-anular:hover { background: rgb(69 26 26); }
         .dark .sihla-anular-pregunta:hover { background: rgb(69 51 16); color: rgb(252 211 77); }
         .dark .sihla-motivo-fila > td { background: rgb(45 39 25); }
@@ -951,7 +961,7 @@
         .dark .sihla-chip-isv { color: #93c5fd; background: rgb(59 130 246 / .16); }
         .dark .sihla-chip-tardio { color: #fbbf24; background: rgb(251 191 36 / .14); }
         .dark .sihla-desc,
-        .dark .sihla-pie-descuento > span:last-child { color: #fbbf24; }
+        .dark .sihla-pie-descuento dd { color: #fbbf24; }
         .dark .sihla-desc-pct,
         .dark .sihla-linea-unidad { color: rgb(113 113 122); }
         .dark .sihla-nada { color: rgb(82 82 91); }
@@ -967,7 +977,8 @@
             .sihla-factura-tabla .sihla-opc,
             .sihla-factura-tabla .sihla-col-n,
             .sihla-linea-icono { display: none; }
-            .sihla-pie-totales { max-width: none; }
+            .sihla-pie-total { margin-left: 0; align-items: flex-start; }
+            .sihla-pie-reparto, .sihla-pie-notas { justify-content: flex-start; text-align: left; }
         }
     
         /*

@@ -66,15 +66,63 @@
         $enFarmacia = $cuenta->descuento_hospital === null
             ? null
             : rtrim(rtrim(number_format((float) $cuenta->descuento_hospital * 100, 2), '0'), '.').' %';
+
+        /*
+         * Lo que la barra plegada dice que ya está puesto.
+         */
+        $aplicados = array_filter([
+            'Farmacia'   => $enFarmacia,
+            'Servicios'  => $servicios['aplicado'],
+            'Honorarios' => $honorarios['aplicado'],
+        ]);
+
+        /*
+         * Abierta sola SOLO si hay un número escrito que todavía no tomó
+         * —le falta el motivo, o está por salir del campo—: plegada, esa
+         * mitad del trámite quedaría escondida.
+         */
+        $aMedias = (filled($descuento) && (float) $descuento > 0 && $enFarmacia === null)
+            || (filled($servicios['valor']) && (float) $servicios['valor'] > 0 && $servicios['aplicado'] === null)
+            || (filled($honorarios['valor']) && (float) $honorarios['valor'] > 0 && $honorarios['aplicado'] === null);
     @endphp
 
-    <section class="dsc" aria-labelledby="dsc-titulo">
-        <header class="dsc-cabeza">
-            <h3 id="dsc-titulo" class="dsc-titulo">Descuentos de la cuenta</h3>
-            <p class="dsc-bajada">Alcanzan a lo que ya está cargado y a lo que se cargue después. Cada uno pide su motivo.</p>
-        </header>
+    {{--
+        ─────────────────────────────────────────────────────────────────
+        PLEGADA POR OMISIÓN (11-nov-2026)
+        ─────────────────────────────────────────────────────────────────
 
-        <div class="dsc-columnas">
+        Mauricio: «más compacto, se ve algo feo y poco práctico». La
+        sección ocupaba un tercio del modal para algo que se usa cinco
+        veces al día contra cien escaneos. Plegada es UNA línea que dice
+        lo que ya está puesto; se abre con un clic.
+
+        El abierto vive en Alpine y no en un `<details>`: el morph de
+        Livewire le borra el `open` a un `<details>` en cada re-render.
+    --}}
+    <section class="dsc" aria-labelledby="dsc-titulo" x-data="{ abierto: @js($aMedias) }" x-bind:class="abierto && 'dsc-abierta'">
+        <button
+            type="button"
+            class="dsc-barra"
+            x-on:click="abierto = ! abierto"
+            x-bind:aria-expanded="abierto ? 'true' : 'false'"
+            title="Alcanzan a lo que ya está cargado y a lo que se cargue después. Cada uno pide su motivo."
+        >
+            <span class="dsc-barra-signo" aria-hidden="true">%</span>
+            <span id="dsc-titulo" class="dsc-titulo">Descuentos</span>
+
+            <span class="dsc-resumen">
+                @forelse ($aplicados as $rubroAplicado => $cuanto)
+                    <span class="dsc-chip">{{ $rubroAplicado }} <strong>{{ $cuanto }}</strong></span>
+                @empty
+                    <span class="dsc-ninguno">Ninguno</span>
+                @endforelse
+            </span>
+
+            <span class="dsc-barra-accion" x-text="abierto ? 'Cerrar' : @js($aplicados === [] ? 'Poner un descuento' : 'Cambiar')"></span>
+            <svg class="dsc-flecha" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
+        </button>
+
+        <div class="dsc-columnas" x-show="abierto" x-cloak>
             {{-- ── Farmacia ─────────────────────────────────────────── --}}
             <div class="dsc-col" x-data="{ desc: @js($descuento), motivo: @js($motivo ?? '') }">
                 <div class="dsc-col-cabeza">
@@ -217,16 +265,40 @@
         [x-cloak] { display: none !important; }
 
         .dsc {
-            margin-bottom: 1.25rem; padding: 1.25rem 1.5rem 1.35rem;
+            margin-bottom: .75rem; overflow: hidden;
             border: 1px solid rgb(228 228 231); border-radius: .75rem; background: rgb(255 255 255);
         }
-        .dsc-titulo { font-size: .95rem; font-weight: 600; color: rgb(24 24 27); }
-        .dsc-bajada { font-size: .8rem; color: rgb(113 113 122); margin-top: .15rem; }
+        .dsc-titulo { font-size: .875rem; font-weight: 600; color: rgb(24 24 27); }
+
+        /* ── La barra plegada: una línea con lo que ya está puesto ── */
+        .dsc-barra {
+            display: flex; align-items: center; gap: .65rem; width: 100%;
+            padding: .55rem .85rem; border: 0; background: transparent; cursor: pointer; text-align: left;
+        }
+        .dsc-barra:hover { background: rgb(250 250 250); }
+        .dsc-barra:focus-visible { outline: 2px solid rgb(217 119 6); outline-offset: -2px; }
+        .dsc-barra-signo {
+            flex: none; display: inline-flex; align-items: center; justify-content: center;
+            width: 1.6rem; height: 1.6rem; border-radius: .45rem;
+            font-size: .78rem; font-weight: 700; color: rgb(217 119 6); background: rgb(254 243 199);
+        }
+        .dsc-resumen { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+        .dsc-chip {
+            padding: .1rem .5rem; border-radius: 999px; white-space: nowrap;
+            font-size: .72rem; color: rgb(180 83 9); background: rgb(255 247 237);
+            box-shadow: inset 0 0 0 1px rgb(253 186 116 / .7); font-variant-numeric: tabular-nums;
+        }
+        .dsc-chip strong { font-weight: 700; }
+        .dsc-ninguno { font-size: .78rem; color: rgb(161 161 170); }
+        .dsc-barra-accion { flex: none; font-size: .78rem; font-weight: 600; color: rgb(217 119 6); }
+        .dsc-flecha { flex: none; width: 1.05rem; height: 1.05rem; color: rgb(161 161 170); transition: transform .15s ease; }
+        .dsc-abierta .dsc-flecha { transform: rotate(180deg); }
+        @media (prefers-reduced-motion: reduce) { .dsc-flecha { transition: none; } }
 
         /* Tres columnas del mismo ancho, separadas por una línea: una por descuento. */
         .dsc-columnas {
             display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-            margin-top: 1.1rem;
+            padding: .85rem 1rem 1rem; border-top: 1px solid rgb(244 244 245);
         }
         .dsc-col { display: flex; flex-direction: column; min-width: 0; padding: 0 1.25rem; }
         .dsc-col:first-child { padding-left: 0; }
@@ -235,7 +307,7 @@
 
         .dsc-col-cabeza { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.5rem; }
         .dsc-nombre { font-size: .9rem; font-weight: 600; color: rgb(24 24 27); }
-        .dsc-toca { font-size: .78rem; color: rgb(113 113 122); margin-top: .1rem; }
+        .dsc-toca { font-size: .74rem; color: rgb(113 113 122); margin-top: .05rem; }
 
         .dsc-estado {
             flex: 0 0 auto; padding: .15rem .55rem; border-radius: 999px; white-space: nowrap;
@@ -245,7 +317,7 @@
 
         /* El campo con su unidad ADENTRO: el número a la derecha, la unidad pegada. */
         .dsc-campo {
-            display: flex; align-items: center; gap: .35rem; height: 2.5rem; margin-top: .65rem;
+            display: flex; align-items: center; gap: .35rem; height: 2.25rem; margin-top: .45rem;
             padding: 0 .3rem 0 .75rem; border-radius: .5rem;
             background: rgb(255 255 255); box-shadow: inset 0 0 0 1px rgb(212 212 216);
         }
@@ -277,15 +349,15 @@
         .dsc-modo button.activo { background: rgb(217 119 6); color: rgb(255 255 255); }
 
         .dsc-tope {
-            display: flex; align-items: center; gap: .35rem; margin-top: .45rem;
-            font-size: .78rem; line-height: 1.4; color: rgb(82 82 91);
+            display: flex; align-items: center; gap: .35rem; margin-top: .3rem;
+            font-size: .74rem; line-height: 1.4; color: rgb(82 82 91);
         }
         .dsc-info { display: inline-flex; flex: 0 0 auto; color: rgb(161 161 170); cursor: help; border-radius: 999px; }
         .dsc-info svg { width: 1rem; height: 1rem; }
         .dsc-info:hover,
         .dsc-info:focus-visible { color: rgb(217 119 6); outline: none; }
 
-        .dsc-porque { margin-top: .6rem; }
+        .dsc-porque { margin-top: .45rem; }
         .dsc-motivo {
             width: 100%; height: 2.25rem; padding: 0 .7rem; border: 0; border-radius: .5rem; outline: none;
             font-size: .82rem; background: rgb(255 255 255); color: rgb(24 24 27);
@@ -306,6 +378,12 @@
         }
 
         .dark .dsc { background: transparent; border-color: rgb(255 255 255 / .1); }
+        .dark .dsc-barra:hover { background: rgb(255 255 255 / .03); }
+        .dark .dsc-barra-signo { color: rgb(252 211 77); background: rgb(245 158 11 / .14); }
+        .dark .dsc-chip { color: rgb(252 211 77); background: rgb(245 158 11 / .12); box-shadow: inset 0 0 0 1px rgb(245 158 11 / .35); }
+        .dark .dsc-ninguno { color: rgb(113 113 122); }
+        .dark .dsc-barra-accion { color: rgb(251 191 36); }
+        .dark .dsc-columnas { border-top-color: rgb(255 255 255 / .08); }
         .dark .dsc-titulo,
         .dark .dsc-nombre { color: rgb(250 250 250); }
         .dark .dsc-bajada,

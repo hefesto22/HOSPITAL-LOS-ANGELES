@@ -1198,6 +1198,12 @@ class CuentasAbiertas extends Page
             ->schema([
                 Section::make()
                     /*
+                     * Compacta (11-nov-2026, Mauricio: «más compacto, se ve
+                     * algo feo y poco práctico»): menos relleno alrededor
+                     * del buscador, que es lo que se usa cien veces.
+                     */
+                    ->compact()
+                    /*
                      * Doce columnas: la cantidad y el estante se reparten
                      * 4-8 en una sola fila —o la cantidad, el precio y el
                      * médico 4-4-4 en un honorario—, y lo demás va a lo
