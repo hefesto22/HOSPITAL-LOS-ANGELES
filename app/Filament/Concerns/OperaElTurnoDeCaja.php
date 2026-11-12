@@ -212,7 +212,14 @@ trait OperaElTurnoDeCaja
                 return 'Cerrar turno'.($nombre === null || trim($nombre) === '' ? '' : ' · '.$nombre);
             })
             ->icon(Heroicon::OutlinedLockClosed)
-            ->color('warning')
+            /*
+             * Gris y no ámbar (11-nov-2026): es el estado de quien cobra,
+             * no la acción del día. Dos botones ámbar arriba —este y
+             * «Abrir cuenta»— peleaban por el ojo. El candado sigue en
+             * ámbar (`sihla-boton-turno`, en `AdminPanelProvider`).
+             */
+            ->color('gray')
+            ->extraAttributes(['class' => 'sihla-boton-turno'])
             ->modalIcon(Heroicon::OutlinedBanknotes)
             ->modalIconColor('warning')
             ->modalHeading(fn (): string => 'Cerrar el '.($this->turno()?->etiquetaCorta() ?? 'turno'))

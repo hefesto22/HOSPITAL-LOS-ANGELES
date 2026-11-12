@@ -481,8 +481,8 @@
          */
         .sihla-tarjeta {
             position: relative; display: flex; flex-direction: column; height: 100%;
-            padding: .875rem .95rem .75rem; border-radius: .75rem; border: 1px solid rgb(228 228 231);
-            background: rgb(255 255 255);
+            padding: .875rem .95rem .75rem; border-radius: .75rem; border: 1px solid rgb(0 0 0 / .08);
+            background: rgb(255 255 255); box-shadow: 0 1px 2px rgb(0 0 0 / .04);
             transition: box-shadow .15s ease, border-color .15s ease;
         }
         .sihla-tarjeta:hover {
@@ -513,7 +513,34 @@
         .sihla-insignias {
             display: flex; flex-wrap: wrap; align-items: center; gap: .3rem;
         }
-        .sihla-rango { font-weight: 700; letter-spacing: .02em; cursor: help; }
+        .sihla-rango {
+            font-weight: 700; letter-spacing: .02em; cursor: help;
+            box-shadow: none; background: rgb(0 0 0 / .05);
+        }
+
+        /*
+         * ─────────────────────────────────────────────────────────────
+         * SUAVE (Mauricio, 11-nov-2026: «se ve un gran contraste»)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * El tipo de encuentro y el que paga eran etiquetas de color
+         * llenas: tres o cuatro cajitas encendidas por tarjeta, siete
+         * tarjetas. Ahora son un punto del mismo color y el texto en
+         * gris: el color sigue diciendo seguro, militar o particular de
+         * un vistazo, y la tarjeta deja de gritar. `--color-500` lo pone
+         * Filament en cada badge según su color.
+         */
+        .sihla-insignias .fi-badge:not(.sihla-rango),
+        .sihla-pie-pagador .fi-badge {
+            gap: .375rem; padding-inline: 0; background: transparent; box-shadow: none;
+            font-weight: 500; color: rgb(82 82 91);
+        }
+        .sihla-insignias .fi-badge:not(.sihla-rango)::before,
+        .sihla-pie-pagador .fi-badge::before {
+            content: ''; flex: none; width: .5rem; height: .5rem; border-radius: 9999px;
+            background: var(--color-500, rgb(161 161 170));
+        }
+        .sihla-pie-pagador .fi-badge { font-size: .75rem; letter-spacing: .01em; }
         .sihla-hace {
             display: inline-flex; align-items: center; gap: .25rem; margin-inline-start: .2rem;
             font-size: .75rem; color: rgb(113 113 122); white-space: nowrap;
@@ -573,7 +600,7 @@
         .sihla-accion {
             display: flex; align-items: center; justify-content: center; gap: .3rem;
             flex: 1 1 0; min-width: 0; height: 2rem; padding: 0 .5rem; border-radius: .5rem;
-            border: 1px solid rgb(228 228 231); background: rgb(250 250 250);
+            border: 1px solid rgb(0 0 0 / .1); background: transparent;
             font-size: .78rem; font-weight: 500; color: rgb(63 63 70); cursor: pointer;
             transition: border-color .15s ease, background .15s ease;
         }
@@ -626,7 +653,7 @@
             flex: none; margin-inline-start: auto;
             display: flex; align-items: center; justify-content: center;
             width: 2rem; height: 2rem; border-radius: .5rem;
-            border: 1px solid rgb(228 228 231); background: rgb(250 250 250);
+            border: 1px solid rgb(0 0 0 / .1); background: transparent;
             color: rgb(82 82 91); cursor: pointer;
             transition: border-color .15s ease, background .15s ease;
         }
@@ -659,23 +686,31 @@
         .sihla-vacio-titulo { font-size: 1rem; font-weight: 600; color: rgb(63 63 70); }
         .sihla-vacio-texto { max-width: 34rem; font-size: .875rem; color: rgb(113 113 122); }
 
-        .dark .sihla-buscador-campo,
-        .dark .sihla-tarjeta { background: rgb(39 39 42); border-color: rgb(63 63 70); }
-        .dark .sihla-tarjeta:hover { border-color: rgb(113 113 122); }
-        .dark .sihla-tarjeta-lectura:hover { border-color: rgb(63 63 70); }
+        /*
+         * La tarjeta oscura tiene el fondo de las tablas y secciones del
+         * panel (`--gray-900`), no uno propio más claro: era lo que la
+         * hacía saltar contra el resto de la pantalla (11-nov-2026).
+         */
+        .dark .sihla-buscador-campo { background: rgb(255 255 255 / .04); border-color: rgb(255 255 255 / .1); }
+        .dark .sihla-tarjeta { background: var(--gray-900); border-color: rgb(255 255 255 / .08); box-shadow: none; }
+        .dark .sihla-tarjeta:hover { border-color: rgb(255 255 255 / .2); }
+        .dark .sihla-tarjeta-lectura:hover { border-color: rgb(255 255 255 / .08); }
+        .dark .sihla-insignias .fi-badge:not(.sihla-rango),
+        .dark .sihla-pie-pagador .fi-badge { color: rgb(212 212 216); }
+        .dark .sihla-rango { background: rgb(255 255 255 / .07); }
         .dark .sihla-nombre,
         .dark .sihla-total-monto { color: rgb(244 244 245); }
         .dark .sihla-hace,
         .dark .sihla-numeros { color: rgb(161 161 170); }
         .dark .sihla-pie,
-        .dark .sihla-tarjeta-acciones { border-top-color: rgb(63 63 70); }
+        .dark .sihla-tarjeta-acciones { border-top-color: rgb(255 255 255 / .06); }
         .dark .sihla-accion,
         .dark .sihla-mas-boton {
-            border-color: rgb(63 63 70); background: rgb(52 52 56); color: rgb(212 212 216);
+            border-color: rgb(255 255 255 / .08); background: rgb(255 255 255 / .03); color: rgb(212 212 216);
         }
         .dark .sihla-accion:hover:not(:disabled),
         .dark .sihla-mas-boton:hover {
-            border-color: rgb(113 113 122); background: rgb(63 63 70);
+            border-color: rgb(255 255 255 / .16); background: rgb(255 255 255 / .08);
         }
         .dark .sihla-vacio { border-color: rgb(63 63 70); }
         .dark .sihla-vacio-titulo { color: rgb(212 212 216); }

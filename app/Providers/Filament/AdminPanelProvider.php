@@ -136,11 +136,16 @@ class AdminPanelProvider extends PanelProvider
      * es el contenedor del buscador del desplegable (v5.7). Si una
      * actualización la renombra, esto deja de aplicar —se ve minúscula
      * otra vez— y no rompe nada más.
+     *
+     * Viaja también el candado ámbar de «Cerrar turno» (11-nov-2026): el
+     * botón es gris para no pelear con «Abrir cuenta», y el candado es lo
+     * que avisa, en Cuentas abiertas y en Caja, que hay un turno abierto.
      */
     private static function hojaDeEstilos(): HtmlString
     {
         return new HtmlString(
-            '<style>.fi-select-input-search-ctn input{text-transform:uppercase}</style>'
+            '<style>.fi-select-input-search-ctn input{text-transform:uppercase}'
+            .'.sihla-boton-turno .fi-icon{color:var(--warning-500)}</style>'
         );
     }
 
