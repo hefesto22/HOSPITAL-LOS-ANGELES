@@ -20,12 +20,14 @@ use Filament\Navigation\NavigationGroup;
  * desde acá, en este orden: el de la frecuencia con que se abre cada
  * cosa —la ventanilla primero, la configuración al final—.
  *
- * Cada grupo tiene su color: el cuadrito junto al título y los íconos
- * de sus opciones. Con el color se encuentra la zona del menú antes de
- * leer; el nombre sigue estando, así que nadie depende solo del color.
- * Los ocho son la paleta categórica de referencia, oscurecidos lo justo
- * para que el ícono se lea (≥ 3:1) sobre el fondo del menú, y validados
- * en orden para daltonismo en los dos modos.
+ * Cada grupo tiene su color: cada ícono va en un cuadrito tenue de ese
+ * color, y la pantalla en que se está lo lleva lleno, con el ícono en
+ * blanco («fichas suaves», la que eligió Mauricio entre tres). Con el
+ * color se encuentra la zona del menú antes de leer; el nombre sigue
+ * estando, así que nadie depende solo del color. Los ocho son la paleta
+ * categórica de referencia, oscurecidos lo justo para que el ícono se lea
+ * (≥ 3:1) sobre el fondo del menú, y validados en orden para daltonismo
+ * en los dos modos.
  *
  * ⚠️ El texto (`value`) es lo que ve la gente y es también la llave con
  * la que Filament junta las opciones: cambiarlo mueve todo el grupo a la
@@ -43,7 +45,9 @@ enum GrupoDelMenu: string
     case Seguridad = 'Seguridad';
 
     /**
-     * El color sobre el fondo claro del menú.
+     * El color sobre el fondo claro del menú. Es también el del cuadrito
+     * lleno de la pantalla en que se está, en los dos modos: es el que
+     * deja leer el ícono blanco.
      */
     public function colorClaro(): string
     {

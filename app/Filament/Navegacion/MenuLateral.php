@@ -17,12 +17,13 @@ use Illuminate\Contracts\View\View;
  * rápido». Con cuarenta opciones, buscarlas leyendo una por una es lo
  * lento. Tres cosas lo arreglan, y ninguna toca permisos:
  *
- *   · Compacto: renglones de 28 px en la computadora en vez de 36,
+ *   · Compacto: renglones de 32 px en la computadora en vez de 36,
  *     títulos de grupo chicos y lo de configuración recogido. El menú de
- *     dirección pasó de 2,254 px de alto a unos 1,270. En el celular los
+ *     dirección pasó de 2,254 px de alto a unos 1,360. En el celular los
  *     renglones siguen altos, para el dedo.
- *   · Color por grupo (`GrupoDelMenu`): el cuadrito del título y los
- *     íconos. Cada opción tiene su propio ícono; no se repite ninguno.
+ *   · Color por grupo (`GrupoDelMenu`): cada ícono en un cuadrito tenue
+ *     del color de su grupo, y lleno en la pantalla en que se está. Cada
+ *     opción tiene su propio ícono; no se repite ninguno.
  *   · Buscador arriba del menú: se teclea «prec» y queda Bases de
  *     precios. Busca en el nombre y en las palabras de `PALABRAS`
  *     —«seguro», «stock», «abonos»—, sin tildes ni mayúsculas, y en el

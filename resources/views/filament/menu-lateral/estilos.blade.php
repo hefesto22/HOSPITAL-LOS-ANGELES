@@ -1,42 +1,41 @@
 {{--
-    El menú lateral compacto. Lo explica App\Filament\Navegacion\MenuLateral.
+    El menú lateral: compacto, y cada ícono en un cuadrito del color de su
+    grupo (Mauricio eligió «fichas suaves» el 11-nov-2026). Lo explica
+    App\Filament\Navegacion\MenuLateral.
 
     Va sin capa (layer) a propósito: el CSS de Filament está todo en
     capas, y una regla sin capa le gana sin pelear por especificidad.
-    Por eso el estado activo se vuelve a declarar acá: si no, el color
-    del grupo le ganaría al del renglón en que se está.
+    Por eso el estado activo se vuelve a declarar acá entero.
 --}}
 <style>
 .fi-main-sidebar .fi-sidebar-nav{padding:.75rem .75rem 1rem;row-gap:.5rem}
 .fi-main-sidebar .fi-sidebar-nav-groups{margin-inline:0;row-gap:.625rem}
-.fi-main-sidebar .fi-sidebar-group{row-gap:.125rem}
-.fi-main-sidebar .fi-sidebar-group-items{row-gap:1px}
-.fi-main-sidebar .fi-sidebar-group[data-grupo]{--grupo:var(--grupo-claro)}
+.fi-main-sidebar .fi-sidebar-group{row-gap:.125rem;--grupo:var(--primary-500);--grupo-lleno:var(--primary-600)}
+.fi-main-sidebar .fi-sidebar-group[data-grupo]{--grupo:var(--grupo-claro);--grupo-lleno:var(--grupo-claro)}
 .dark .fi-main-sidebar .fi-sidebar-group[data-grupo]{--grupo:var(--grupo-oscuro)}
+.fi-main-sidebar .fi-sidebar-group-items{row-gap:1px}
 
-.fi-main-sidebar .fi-sidebar-group-btn{padding:.25rem .25rem .25rem .5rem;column-gap:.5rem;border-radius:.375rem}
+.fi-main-sidebar .fi-sidebar-group-btn{padding:.5rem .25rem .25rem .5rem;column-gap:.5rem;border-radius:.375rem}
 .fi-main-sidebar .fi-sidebar-group.fi-collapsible>.fi-sidebar-group-btn:hover{background:var(--gray-100)}
 .dark .fi-main-sidebar .fi-sidebar-group.fi-collapsible>.fi-sidebar-group-btn:hover{background:rgb(255 255 255 / .05)}
-.fi-main-sidebar .fi-sidebar-group-label{display:flex;align-items:center;gap:.5rem;font-size:.6875rem;line-height:1rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)}
+.fi-main-sidebar .fi-sidebar-group-label{font-size:.75rem;line-height:1rem;font-weight:600;color:var(--gray-500)}
 .dark .fi-main-sidebar .fi-sidebar-group-label{color:var(--gray-400)}
-.fi-main-sidebar .fi-sidebar-group[data-grupo] .fi-sidebar-group-label::before{content:"";flex:none;width:.5rem;height:.5rem;border-radius:2px;background:var(--grupo)}
 .fi-main-sidebar .fi-sidebar-group-collapse-btn{width:1.5rem;height:1.5rem;margin:0}
 .fi-main-sidebar .fi-sidebar-group-collapse-btn .fi-icon{width:1rem;height:1rem}
 
-.fi-main-sidebar .fi-sidebar-item-btn>.fi-icon{width:1.25rem;height:1.25rem}
-.fi-main-sidebar .fi-sidebar-group[data-grupo] .fi-sidebar-item-btn>.fi-icon{color:var(--grupo)}
+.fi-main-sidebar .fi-sidebar-item-btn>.fi-icon{box-sizing:content-box;width:1rem;height:1rem;padding:.3125rem;border-radius:.5rem;color:var(--grupo);background:color-mix(in oklab,var(--grupo) 14%,transparent)}
+.dark .fi-main-sidebar .fi-sidebar-item-btn>.fi-icon{background:color-mix(in oklab,var(--grupo) 22%,transparent)}
 .fi-main-sidebar .fi-sidebar-item-label{font-size:.875rem;line-height:1.25rem}
 .fi-main-sidebar .fi-sidebar-item-badge-ctn .fi-badge{min-height:1.125rem;padding-block:0;font-size:.6875rem}
 @media (min-width:1024px){
-    .fi-main-sidebar .fi-sidebar-item-btn{padding:.25rem .5rem;column-gap:.625rem}
+    .fi-main-sidebar .fi-sidebar-item-btn{padding:.1875rem .375rem;column-gap:.625rem}
 }
 
-.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn{background:color-mix(in oklab,var(--primary-500) 13%,transparent)}
-.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn::before{content:"";position:absolute;inset-block:.375rem;inset-inline-start:0;width:3px;border-radius:0 3px 3px 0;background:var(--primary-500)}
-.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-icon{color:var(--primary-600)}
-.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-sidebar-item-label{color:var(--primary-700);font-weight:600}
-.dark .fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-icon{color:var(--primary-400)}
-.dark .fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-sidebar-item-label{color:var(--primary-300)}
+.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn{background:var(--gray-100)}
+.dark .fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn{background:rgb(255 255 255 / .07)}
+.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-icon{color:var(--color-white);background:var(--grupo-lleno)}
+.fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-sidebar-item-label{color:var(--gray-950);font-weight:600}
+.dark .fi-main-sidebar .fi-sidebar-item.fi-active>.fi-sidebar-item-btn>.fi-sidebar-item-label{color:var(--color-white)}
 
 .sihla-menu-buscar{position:sticky;top:-.75rem;z-index:2;margin:-.75rem -.75rem 0;padding:.75rem .75rem .5rem;background:var(--color-white)}
 .dark .sihla-menu-buscar{background:var(--gray-900)}
