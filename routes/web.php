@@ -19,6 +19,7 @@ declare(strict_types=1);
 | /horizon, etc.) las gestiona Filament automáticamente.
 */
 
+use App\Http\Controllers\ConsumoDeProductosController;
 use App\Http\Controllers\ReporteDeHonorariosController;
 use App\Http\Controllers\ReporteDelMesController;
 use App\Models\Factura;
@@ -220,4 +221,16 @@ Route::middleware(['web', 'auth'])->group(function (): void {
     */
     Route::get('/reportes/mes', ReporteDelMesController::class)
         ->name('reportes.mes');
+
+    /*
+    |------------------------------------------------------------------
+    | El consumo de productos, para papel (11-nov-2026)
+    |------------------------------------------------------------------
+    |
+    | Mismo permiso que la pantalla «Consumo de productos», y cada
+    | impresión queda en la bitácora: con cada uso lleva nombres de
+    | pacientes.
+    */
+    Route::get('/reportes/consumo', ConsumoDeProductosController::class)
+        ->name('reportes.consumo');
 });

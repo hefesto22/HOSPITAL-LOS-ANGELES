@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
-use App\Domain\Enums\EstadoCargo;
-use App\Domain\ValueObjects\Decimal;
 use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Pages\Concerns\ElijePeriodo;
 use App\Models\Almacen;
 use App\Models\Cargo;
-use App\Models\Item;
-use App\Models\Lote;
-use App\Models\Unidad;
+use App\Services\ConsumoDelPeriodo;
+use App\Support\Periodo;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
@@ -22,8 +19,10 @@ use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Locked;
 
 /**
@@ -64,6 +63,10 @@ use Livewire\Attributes\Locked;
  *     a otra cuenta cuenta una vez, en la cuenta nueva.
  *   · Las cantidades van en la unidad de dispensación —«35 TAB»—, la
  *     misma en la que se cobra y en la que cuenta el kardex.
+ *
+ * Las consultas viven en `ConsumoDelPeriodo` desde el 11-nov-2026, cuando
+ * el consumo pasó a imprimirse: la pantalla y el papel leen de ahí, y
+ * esta página solo guarda lo elegido y dibuja.
  */
 class ConsumoDeProductos extends Page implements HasTable
 {
@@ -75,7 +78,7 @@ class ConsumoDeProductos extends Page implements HasTable
      * los de antes del 13-oct, cuando el estante de un producto sin
      * existencia no se guardaba.
      */
-    public const SIN_ALMACEN = 0;
+    public const SIN_ALMACEN = ConsumoDelPeriodo::SIN_ALMACEN;
 
     /**
      * Cuántos productos se ven en el resumen antes de «Ver todos».
@@ -186,6 +189,66 @@ class ConsumoDeProductos extends Page implements HasTable
         ];
     }
 
+    // ── El papel ──────────────────────────────────────────────────────
+
+    /**
+     * «Imprimir», arriba a la derecha (Mauricio, 11-nov-2026: «que se pueda
+     * imprimir»). Como el Reporte del mes: la hoja en un modal y la ventana
+     * de imprimir sale sola, con «Solo el resumen» o «Con cada uso». Sale
+     * lo que se está mirando: el período, el estante, el producto y el
+     * filtro «Origen».
+     *
+     * @return array<int, Action>
+     */
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('imprimir')
+                ->label('Imprimir')
+                ->icon(Heroicon::OutlinedPrinter)
+                ->modalHeading(fn (): string => 'Consumo de productos · '.$this->periodo())
+                ->modalDescription('La ventana de imprimir se abre sola. Si la cerrás, «Imprimir» la vuelve a abrir.')
+                ->modalWidth('7xl')
+                ->modalContent(fn (): View|HtmlString => $this->sePuedeImprimir()
+                    ? view('honorarios.modal', [
+                        'enlace'             => $this->enlaceDelReporte(incrustada: true),
+                        'enlaceConDetalle'   => $this->enlaceDelReporte(incrustada: true, conDetalle: true),
+                        'etiquetaConDetalle' => 'Con cada uso',
+                        'titulo'             => 'Consumo de productos · '.$this->periodo(),
+                    ])
+                    : new HtmlString('<p>El consumo impreso cubre como máximo un año: elegí un período más corto.</p>'))
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Cerrar'),
+        ];
+    }
+
+    /**
+     * La hoja de lo que se está mirando. Público para probarlo; solo arma
+     * una URL que igual pide el permiso al abrirse.
+     *
+     * El estante «Sin estante» es el 0, y viaja: el filtro quita solo lo
+     * nulo.
+     */
+    public function enlaceDelReporte(bool $incrustada = false, bool $conDetalle = false): string
+    {
+        $origen = $this->getTableFilterState('origen')['value'] ?? null;
+
+        return route('reportes.consumo', array_filter([
+            'desde'      => $this->desdeEfectivo(),
+            'hasta'      => $this->hastaEfectivo(),
+            'almacen'    => $this->almacenElegido(),
+            'producto'   => $this->productoElegido(),
+            'origen'     => is_string($origen) && $origen !== '' ? $origen : null,
+            'detalle'    => $conDetalle ? 1 : null,
+            'incrustada' => $incrustada ? 1 : null,
+        ], fn (mixed $valor): bool => $valor !== null));
+    }
+
+    public function sePuedeImprimir(): bool
+    {
+        return Periodo::dias($this->desdeEfectivo(), $this->hastaEfectivo()) <= ConsumoDelPeriodo::DIAS_MAXIMOS;
+    }
+
     // ── De dónde ──────────────────────────────────────────────────────
 
     public function verAlmacen(int $almacenId): void
@@ -220,31 +283,11 @@ class ConsumoDeProductos extends Page implements HasTable
 
         $elegido = $this->almacenElegido();
 
-        /*
-         * `deTodasLasSedes()`: el cargo ya viene de la sede de quien mira,
-         * y su almacén es de esa misma sede. Quitar el filtro solo evita
-         * que un estante sin nombre deje la fila en blanco.
-         */
-        $lista = array_values(Almacen::query()
-            ->deTodasLasSedes()
-            ->whereIn('id', array_keys($veces))
-            ->orderBy('nombre')
-            ->get()
-            ->map(fn (Almacen $almacen): array => [
-                'id'     => (int) $almacen->id,
-                'nombre' => $almacen->nombre,
-                'veces'  => $veces[(int) $almacen->id] ?? 0,
-                'activo' => $elegido === (int) $almacen->id,
-            ])
-            ->all());
+        $lista = [];
 
-        if (isset($veces[self::SIN_ALMACEN])) {
-            $lista[] = [
-                'id'     => self::SIN_ALMACEN,
-                'nombre' => 'Sin estante',
-                'veces'  => $veces[self::SIN_ALMACEN],
-                'activo' => $elegido === self::SIN_ALMACEN,
-            ];
+        foreach (app(ConsumoDelPeriodo::class)->almacenes($veces) as $almacen) {
+            $almacen['activo'] = $elegido === $almacen['id'];
+            $lista[] = $almacen;
         }
 
         return $lista;
@@ -348,7 +391,7 @@ class ConsumoDeProductos extends Page implements HasTable
                     ->label('Cantidad')
                     ->alignEnd()
                     ->weight('semibold')
-                    ->formatStateUsing(fn (Cargo $record): string => self::conUnidad(
+                    ->formatStateUsing(fn (Cargo $record): string => ConsumoDelPeriodo::conUnidad(
                         $record->cantidad,
                         $record->item->unidadDispensacion,
                     ))
@@ -364,7 +407,7 @@ class ConsumoDeProductos extends Page implements HasTable
                     ->badge()
                     ->color('gray')
                     ->placeholder('Sin estante')
-                    ->description(fn (Cargo $record): string => self::origenDe($record))
+                    ->description(fn (Cargo $record): string => ConsumoDelPeriodo::origenDe($record))
                     ->grow(false),
 
                 TextColumn::make('paciente')
@@ -391,13 +434,7 @@ class ConsumoDeProductos extends Page implements HasTable
                         'inventario'     => 'Del inventario (descontó)',
                     ])
                     ->query(function (Builder $query, array $data): void {
-                        $valor = $data['value'] ?? null;
-
-                        if ($valor === 'sin_inventario') {
-                            $query->whereNull('cargos.movimiento_id');
-                        } elseif ($valor === 'inventario') {
-                            $query->whereNotNull('cargos.movimiento_id');
-                        }
+                        ConsumoDelPeriodo::filtrarPorOrigen($query, $data['value'] ?? null);
                     }),
             ])
             ->deferFilters(false)
@@ -415,40 +452,17 @@ class ConsumoDeProductos extends Page implements HasTable
     // ── Consultas ─────────────────────────────────────────────────────
 
     /**
-     * Los cargos de productos que se almacenan, vivos, del período. Es la
-     * única fuente de la pantalla.
-     *
-     * ⚠️ Pendiente o facturado, y nada más: `anulado` y `anulacion` son
-     * el error y su corrección —se cancelan— y `trasladado` ya cuenta en
-     * la cuenta a la que se fue.
-     *
-     * @return Builder<Cargo>
-     */
-    private function usos(): Builder
-    {
-        return Cargo::query()
-            ->whereIn('cargos.estado', [EstadoCargo::Pendiente->value, EstadoCargo::Facturado->value])
-            ->whereBetween('cargos.fecha_operacion', [$this->desdeEfectivo(), $this->hastaEfectivo()])
-            ->whereHas('item', fn (Builder $item): Builder => $item->where('se_almacena', true));
-    }
-
-    /**
-     * Los usos del almacén elegido, si hay uno.
+     * Los usos del almacén elegido, si hay uno (ver `ConsumoDelPeriodo`).
      *
      * @return Builder<Cargo>
      */
     private function usosDelAlmacen(): Builder
     {
-        $consulta = $this->usos();
-        $almacen = $this->almacenElegido();
-
-        if ($almacen === self::SIN_ALMACEN) {
-            $consulta->whereNull('cargos.almacen_id');
-        } elseif ($almacen !== null) {
-            $consulta->where('cargos.almacen_id', $almacen);
-        }
-
-        return $consulta;
+        return app(ConsumoDelPeriodo::class)->usosDelAlmacen(
+            $this->desdeEfectivo(),
+            $this->hastaEfectivo(),
+            $this->almacenElegido(),
+        );
     }
 
     /**
@@ -483,92 +497,13 @@ class ConsumoDeProductos extends Page implements HasTable
             return $this->resumen;
         }
 
-        $totales = $this->usosDelAlmacen()
-            ->selectRaw('cargos.item_id, count(*) as veces, sum(cargos.cantidad) as cantidad')
-            ->groupBy('cargos.item_id')
-            ->toBase()
-            ->get();
-
-        if ($totales->isEmpty()) {
-            $this->resumenDe = $clave;
-
-            return $this->resumen = [];
-        }
-
-        /*
-         * El reparto por almacén, para la línea «FARMACIA 30 · EMERGENCIA
-         * 5». Sin el almacén elegido arriba sería redundante, pero igual
-         * sale de la misma consulta y dice lo mismo.
-         */
-        $reparto = $this->usosDelAlmacen()
-            ->selectRaw('cargos.item_id, cargos.almacen_id, sum(cargos.cantidad) as cantidad')
-            ->groupBy('cargos.item_id', 'cargos.almacen_id')
-            ->toBase()
-            ->get();
-
-        $idsDeAlmacen = $reparto->pluck('almacen_id')->filter()->map(fn (mixed $id): int => (int) $id)->unique()->values()->all();
-
-        $nombres = $idsDeAlmacen === []
-            ? []
-            : Almacen::query()
-                ->deTodasLasSedes()
-                ->whereIn('id', $idsDeAlmacen)
-                ->pluck('nombre', 'id')
-                ->all();
-
-        $items = Item::query()
-            ->with('unidadDispensacion')
-            ->whereIn('id', $totales->pluck('item_id')->map(fn (mixed $id): int => (int) $id)->all())
-            ->get()
-            ->keyBy('id');
-
-        /** @var array<int, list<array{nombre: string, cantidad: numeric-string}>> $porItem */
-        $porItem = [];
-
-        foreach ($reparto as $fila) {
-            $porItem[(int) $fila->item_id][] = [
-                'nombre'   => $fila->almacen_id === null ? 'SIN ESTANTE' : (string) ($nombres[(int) $fila->almacen_id] ?? '—'),
-                'cantidad' => self::numero($fila->cantidad),
-            ];
-        }
-
-        $filas = [];
-
-        foreach ($totales as $total) {
-            $item = $items->get((int) $total->item_id);
-
-            if (! $item instanceof Item) {
-                continue;
-            }
-
-            $donde = $porItem[(int) $item->id] ?? [];
-
-            usort($donde, fn (array $a, array $b): int => bccomp($b['cantidad'], $a['cantidad'], 4));
-
-            $filas[] = [
-                'id'       => (int) $item->id,
-                'nombre'   => $item->nombre,
-                'codigo'   => (string) $item->codigo,
-                'infinito' => $item->tieneStockInfinito(),
-                'veces'    => (int) $total->veces,
-                'cantidad' => self::conUnidad(self::numero($total->cantidad), $item->unidadDispensacion),
-                'deDonde'  => implode(' · ', array_map(
-                    fn (array $lugar): string => $lugar['nombre'].' '.self::sinCeros($lugar['cantidad']),
-                    $donde,
-                )),
-            ];
-        }
-
-        /*
-         * Del más usado al menos usado, y a igual uso por nombre. Por
-         * VECES y no por cantidad: 500 ML de suero y 2 ampollas no se
-         * comparan, pero cuántas veces se recurrió a cada uno sí.
-         */
-        usort($filas, fn (array $a, array $b): int => [$b['veces'], $a['nombre']] <=> [$a['veces'], $b['nombre']]);
-
         $this->resumenDe = $clave;
 
-        return $this->resumen = $filas;
+        return $this->resumen = app(ConsumoDelPeriodo::class)->porProducto(
+            $this->desdeEfectivo(),
+            $this->hastaEfectivo(),
+            $this->almacenElegido(),
+        );
     }
 
     /**
@@ -582,21 +517,12 @@ class ConsumoDeProductos extends Page implements HasTable
             return $this->veces;
         }
 
-        $filas = $this->usos()
-            ->selectRaw('cargos.almacen_id, count(*) as veces')
-            ->groupBy('cargos.almacen_id')
-            ->toBase()
-            ->get();
-
-        $veces = [];
-
-        foreach ($filas as $fila) {
-            $veces[$fila->almacen_id === null ? self::SIN_ALMACEN : (int) $fila->almacen_id] = (int) $fila->veces;
-        }
-
         $this->vecesDe = $clave;
 
-        return $this->veces = $veces;
+        return $this->veces = app(ConsumoDelPeriodo::class)->vecesPorAlmacen(
+            $this->desdeEfectivo(),
+            $this->hastaEfectivo(),
+        );
     }
 
     /**
@@ -628,63 +554,6 @@ class ConsumoDeProductos extends Page implements HasTable
         }
 
         return null;
-    }
-
-    // ── Cómo se lee ───────────────────────────────────────────────────
-
-    /**
-     * «stock infinito» o «lote L-123»: si ese uso descontó inventario.
-     */
-    private static function origenDe(Cargo $cargo): string
-    {
-        if ($cargo->movimiento_id === null) {
-            return 'Stock infinito';
-        }
-
-        return $cargo->lote instanceof Lote ? 'Lote '.$cargo->lote->numero : 'Del inventario';
-    }
-
-    /**
-     * «35 TAB». Sin la unidad, el número no dice nada.
-     */
-    private static function conUnidad(string $cantidad, ?Unidad $unidad): string
-    {
-        $numero = self::sinCeros($cantidad);
-
-        return $unidad instanceof Unidad ? $numero.' '.$unidad->codigo : $numero;
-    }
-
-    /**
-     * Lo que devuelve `sum()` —int, float o string—, como cadena exacta.
-     *
-     * @return numeric-string
-     */
-    private static function numero(mixed $valor): string
-    {
-        if (is_string($valor) && is_numeric($valor)) {
-            return Decimal::de($valor)->redondeado(4);
-        }
-
-        if (is_int($valor)) {
-            return Decimal::de($valor)->redondeado(4);
-        }
-
-        if (is_float($valor)) {
-            return Decimal::deFloat($valor)->redondeado(4);
-        }
-
-        return '0.0000';
-    }
-
-    private static function sinCeros(string $numero): string
-    {
-        if (! str_contains($numero, '.')) {
-            return $numero;
-        }
-
-        $limpio = rtrim(rtrim($numero, '0'), '.');
-
-        return $limpio === '' ? '0' : $limpio;
     }
 
     private static function enteroDeLaUrl(string $clave): ?int
