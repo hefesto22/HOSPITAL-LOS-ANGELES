@@ -190,7 +190,7 @@ it('«Ver» de la cuenta muestra el historial abierto, también cuando ya no se 
         'getRecord' => fn (): Cuenta => $cuenta->fresh() ?? $cuenta,
     ])->render();
 
-    expect($html)->toContain('Historial de la cuenta')
+    expect($html)->toContain('Bitácora de la cuenta')
         ->and($html)->toContain(e($cargo->texto))
         ->and($html)->toContain('abierto: true');
 })->note('Mauricio, 11-nov-2026: «las que ya fueron facturadas deben tener la bitácora de esa cuenta, en caso de que quieran revisar quién hizo qué». El modal de cargar era el único lugar donde se veía.');

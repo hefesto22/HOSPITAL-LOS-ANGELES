@@ -4,185 +4,42 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Cuentas\Schemas;
 
-use App\Domain\Enums\EstadoCuenta;
-use App\Models\Cuenta;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Infolists\Components\ViewEntry;
-use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Tabs;
-use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 
 /**
- * La ficha de la cuenta, con el patrón de pestañas ya validado (§10).
+ * La ficha de la cuenta, en una sola hoja (11-nov-2026).
  *
- * La pestaña del dinero separa EXENTO de GRAVADO y ISV porque es
- * exactamente lo que el formato fiscal hondureño exige totalizar por
- * separado (§8.6.1-3), y porque es lo primero que alguien va a querer
- * cruzar cuando la factura no cuadre.
+ * Antes eran cinco pestañas —Identificación, Pagador, Dinero, Estado e
+ * Historial— y lo que se viene a buscar quedaba repartido: el total en
+ * una, quién paga en otra, la bitácora en la última. Mauricio: «que tenga
+ * un acceso a ver bitácora y mejorar el diseño».
+ *
+ * Ahora, de arriba abajo y sin un clic:
+ *
+ *   1. La ficha (`FichaDeLaCuenta`): de quién es, en qué etapa va, quién
+ *      paga, las cinco cifras —total, seguro, paciente, abonado, falta—
+ *      con el exento, el gravado y el ISV separados (§8.6.1-3), y las
+ *      facturas con su enlace para imprimir.
+ *   2. La bitácora, abierta: quién agregó, quitó, cambió, cobró, facturó
+ *      o anuló, cuándo y con qué motivo.
+ *   3. Los cargos renglón por renglón, debajo (el RelationManager, que
+ *      pagina y filtra: una hospitalización larga tiene cientos).
  */
 final class CuentaInfolist
 {
     public static function configure(Schema $schema): Schema
     {
         return $schema->components([
-            Tabs::make('Cuenta')
-                ->persistTabInQueryString()
-                ->columnSpanFull()
-                ->tabs([
-                    Tab::make('Identificación')
-                        ->columns(3)
-                        ->schema([
-                            TextEntry::make('numero')->label('Número de cuenta')->copyable(),
+            ViewEntry::make('ficha')
+                ->hiddenLabel()
+                ->view('filament.infolists.ficha-de-la-cuenta')
+                ->columnSpanFull(),
 
-                            TextEntry::make('encuentro.numero')->label('Encuentro'),
-
-                            TextEntry::make('paciente')
-                                ->label('Paciente')
-                                ->state(fn (Cuenta $record): string => $record->encuentro->persona->nombreCompleto()),
-
-                            TextEntry::make('encuentro.tipo')
-                                ->label('Tipo de atención')
-                                ->formatStateUsing(fn (Cuenta $record): string => $record->encuentro->tipo->etiqueta())
-                                ->badge()
-                                ->color(fn (Cuenta $record): string => $record->encuentro->tipo->color()),
-
-                            TextEntry::make('encuentro.abierto_en')
-                                ->label('Ingreso')
-                                ->dateTime('d/m/Y H:i'),
-
-                            TextEntry::make('encuentro.servicio.nombre')
-                                ->label('Servicio')
-                                ->placeholder('—'),
-                        ]),
-
-                    Tab::make('Pagador')
-                        ->columns(3)
-                        ->schema([
-                            TextEntry::make('convenio.nombre')->label('Pagador')->badge(),
-                            TextEntry::make('numero_poliza')->label('Póliza')->placeholder('—'),
-                            TextEntry::make('numero_autorizacion')
-                                ->label('Autorización')
-                                ->placeholder('Sin autorización previa')
-                                ->helperText(
-                                    'Un cargo sin autorización nace con riesgo de rechazo. '
-                                    .'Descubrirlo en la conciliación a 60 días es descubrir que el dinero ya se perdió.'
-                                ),
-
-                            /*
-                             * Vacía en el convenio = se decide al facturar
-                             * (13-oct-2026). `state()` y no el campo: con
-                             * nulo, `formatStateUsing` ni se llama y quedaba
-                             * la casilla en blanco.
-                             */
-                            TextEntry::make('cobertura_pactada')
-                                ->label('Cobertura pactada')
-                                ->state(fn (Cuenta $record): string => $record->convenio->coberturaGeneral()?->comoPorcentaje()
-                                    ?? 'Se decide al facturar'),
-
-                            TextEntry::make('convenio.tope_por_evento')
-                                ->label('Tope por evento')
-                                ->placeholder('Sin tope')
-                                ->formatStateUsing(fn (mixed $state): string => $state === null
-                                    ? 'Sin tope'
-                                    : 'L '.number_format((float) $state, 2)),
-
-                            TextEntry::make('responsable.primer_apellido')
-                                ->label('Responsable económico')
-                                ->placeholder('El propio paciente'),
-                        ]),
-
-                    Tab::make('Dinero')
-                        ->columns(3)
-                        ->schema([
-                            Section::make('Totales de la cuenta')
-                                ->columns(3)
-                                ->columnSpanFull()
-                                ->description(
-                                    'La cuenta acumula; la factura es una proyección de la cuenta a un '
-                                    .'instante y se emite una sola vez (§8.6.3).'
-                                )
-                                ->schema([
-                                    TextEntry::make('total_bruto')
-                                        ->label('Bruto')
-                                        ->formatStateUsing(fn (mixed $state): string => 'L '.number_format((float) $state, 2)),
-
-                                    TextEntry::make('total_descuento')
-                                        ->label('Descuentos')
-                                        ->formatStateUsing(fn (mixed $state): string => 'L '.number_format((float) $state, 2)),
-
-                                    TextEntry::make('lineas')->label('Ítems'),
-
-                                    TextEntry::make('total_exento')
-                                        ->label('Importe exento')
-                                        ->formatStateUsing(fn (mixed $state): string => 'L '.number_format((float) $state, 2))
-                                        ->helperText('Servicios médicos y medicamentos: Art. 15 b y d de la Ley del ISV.'),
-
-                                    TextEntry::make('total_gravado')
-                                        ->label('Importe gravado')
-                                        ->formatStateUsing(fn (mixed $state): string => 'L '.number_format((float) $state, 2)),
-
-                                    TextEntry::make('total_isv')
-                                        ->label('ISV')
-                                        ->formatStateUsing(fn (mixed $state): string => 'L '.number_format((float) $state, 2)),
-
-                                    TextEntry::make('total')
-                                        ->label('Total de la cuenta')
-                                        ->weight('bold')
-                                        ->size('lg')
-                                        ->formatStateUsing(fn (Cuenta $record): string => $record->saldo()->formateado()),
-
-                                    TextEntry::make('total_paciente')
-                                        ->label('Le toca al paciente')
-                                        ->weight('bold')
-                                        ->formatStateUsing(fn (Cuenta $record): string => $record->saldoDelPaciente()->formateado()),
-
-                                    TextEntry::make('total_aseguradora')
-                                        ->label('Le toca a la aseguradora')
-                                        ->formatStateUsing(fn (Cuenta $record): string => $record->saldoDeLaAseguradora()->formateado()),
-                                ]),
-                        ]),
-
-                    Tab::make('Estado')
-                        ->columns(3)
-                        ->schema([
-                            TextEntry::make('estado')
-                                ->label('Estado')
-                                ->badge()
-                                ->formatStateUsing(fn (EstadoCuenta $state): string => $state->etiqueta())
-                                ->color(fn (EstadoCuenta $state): string => $state->color()),
-
-                            TextEntry::make('abierta_en')->label('Abierta')->dateTime('d/m/Y H:i'),
-                            TextEntry::make('congelada_en')->label('Congelada')->dateTime('d/m/Y H:i')->placeholder('—'),
-                            TextEntry::make('cerrada_en')->label('Cerrada')->dateTime('d/m/Y H:i')->placeholder('—'),
-                            TextEntry::make('motivo_apertura')->label('Motivo de apertura')->placeholder('—')->columnSpanFull(),
-                            TextEntry::make('motivo_anulacion')->label('Motivo de anulación')->placeholder('—')->columnSpanFull(),
-
-                            TextEntry::make('cuentaAnterior.numero')
-                                ->label('Viene de la cuenta')
-                                ->placeholder('—')
-                                ->helperText('Cuando cambia el pagador, los cargos pendientes se trasladan y queda el rastro.'),
-
-                            TextEntry::make('created_at')->label('Creada')->dateTime('d/m/Y H:i'),
-                            TextEntry::make('updated_at')->label('Último cambio')->dateTime('d/m/Y H:i'),
-                        ]),
-
-                    /*
-                     * La bitácora de la cuenta (Mauricio, 11-nov-2026: «las
-                     * que ya fueron facturadas deben tener la bitácora, en
-                     * caso de que quieran revisar quién hizo qué y por qué
-                     * lo hizo mal»). Una cuenta facturada ya no se abre en
-                     * el modal de cargar, que era el único lugar donde se
-                     * veía. Es el mismo historial, abierto de entrada.
-                     */
-                    Tab::make('Historial')
-                        ->schema([
-                            ViewEntry::make('historial')
-                                ->hiddenLabel()
-                                ->view('filament.infolists.historial-de-la-cuenta')
-                                ->columnSpanFull(),
-                        ]),
-                ]),
+            ViewEntry::make('historial')
+                ->hiddenLabel()
+                ->view('filament.infolists.historial-de-la-cuenta')
+                ->columnSpanFull(),
         ]);
     }
 }

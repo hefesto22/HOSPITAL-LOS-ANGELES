@@ -4,21 +4,27 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Cuentas\Tables;
 
+use App\Domain\Enums\AccionDeLectura;
 use App\Domain\Enums\EstadoAbono;
 use App\Domain\Enums\EstadoCuenta;
 use App\Domain\Enums\TipoEncuentro;
 use App\Domain\ValueObjects\Decimal;
 use App\Domain\ValueObjects\Monto;
+use App\Filament\Resources\Cuentas\CuentaResource;
 use App\Filament\Resources\Cuentas\Pages\ListCuentas;
 use App\Models\Cuenta;
 use App\Models\Persona;
+use App\Support\BitacoraDeLectura;
+use App\Support\FichaDeLaCuenta;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Support\Enums\FontFamily;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
@@ -136,8 +142,8 @@ final class CuentasTable
                 TextColumn::make('estado')
                     ->label('Estado')
                     ->badge()
-                    ->formatStateUsing(fn (EstadoCuenta $state): string => self::estadoEnPalabras($state))
-                    ->icon(fn (EstadoCuenta $state): string => self::iconoDelEstado($state))
+                    ->formatStateUsing(fn (EstadoCuenta $state): string => FichaDeLaCuenta::estadoEnPalabras($state))
+                    ->icon(fn (EstadoCuenta $state): string => FichaDeLaCuenta::iconoDelEstado($state))
                     ->color(fn (EstadoCuenta $state): string => $state->color())
                     /*
                      * La anulada dice POR QUÉ (21-oct-2026): «se anuló» solo
@@ -146,7 +152,7 @@ final class CuentasTable
                     ->tooltip(fn (Cuenta $record): string => $record->estado === EstadoCuenta::Anulada
                         && filled($record->motivo_anulacion)
                             ? 'Se anuló: '.$record->motivo_anulacion
-                            : self::queQuiereDecir($record->estado))
+                            : FichaDeLaCuenta::queQuiereDecir($record->estado))
                     ->grow(false)
                     ->visibleFrom('sm'),
 
@@ -239,7 +245,30 @@ final class CuentasTable
             ->emptyStateIcon('heroicon-o-banknotes')
             ->emptyStateHeading(fn (HasTable $livewire): string => self::vacioDe($livewire))
             ->emptyStateDescription('Si buscaste algo, probá con el apellido o con el número de cuenta.')
+            /*
+             * «Bitácora» abre al costado lo que pasó en la cuenta, sin
+             * salir de la lista (Mauricio, 11-nov-2026: «que tenga un
+             * acceso a ver bitácora»). «Ver» lleva a la ficha entera.
+             */
             ->recordActions([
+                Action::make('bitacora')
+                    ->label('Bitácora')
+                    ->icon(Heroicon::OutlinedClock)
+                    ->color('gray')
+                    ->slideOver()
+                    ->modalWidth('2xl')
+                    ->modalHeading(fn (Cuenta $record): string => 'Bitácora · '.$record->numero)
+                    ->modalDescription(fn (Cuenta $record): string => $record->encuentro->persona->nombreCompleto())
+                    ->visible(fn (Cuenta $record): bool => CuentaResource::canView($record))
+                    ->mountUsing(function (Cuenta $record): void {
+                        self::registrarQueSeAbrioLaBitacora($record);
+                    })
+                    ->modalContent(fn (Cuenta $record): View => view('filament.resources.cuentas.bitacora-al-costado', [
+                        'cuenta' => $record,
+                    ]))
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('Cerrar'),
+
                 ViewAction::make()->label('Ver'),
             ])
             /*
@@ -333,41 +362,6 @@ final class CuentasTable
 
     // ── Cómo se dice cada cosa ────────────────────────────────────────
 
-    /**
-     * El estado como lo dice el mostrador. `Cerrada` solo la pone el
-     * emisor al facturar, y anular la factura devuelve la cuenta a
-     * `Abierta`: «Facturada» es exacto.
-     */
-    private static function estadoEnPalabras(EstadoCuenta $estado): string
-    {
-        return match ($estado) {
-            EstadoCuenta::Abierta   => 'Abierta',
-            EstadoCuenta::Congelada => 'En egreso',
-            EstadoCuenta::Cerrada   => 'Facturada',
-            EstadoCuenta::Anulada   => 'Anulada',
-        };
-    }
-
-    private static function iconoDelEstado(EstadoCuenta $estado): string
-    {
-        return match ($estado) {
-            EstadoCuenta::Abierta   => 'heroicon-m-lock-open',
-            EstadoCuenta::Congelada => 'heroicon-m-pause-circle',
-            EstadoCuenta::Cerrada   => 'heroicon-m-check-circle',
-            EstadoCuenta::Anulada   => 'heroicon-m-x-circle',
-        };
-    }
-
-    private static function queQuiereDecir(EstadoCuenta $estado): string
-    {
-        return match ($estado) {
-            EstadoCuenta::Abierta   => 'Sigue recibiendo cargos.',
-            EstadoCuenta::Congelada => 'Ya tiene alta: solo entran los cargos que faltaban, antes de facturar.',
-            EstadoCuenta::Cerrada   => 'Ya se facturó. No admite cargos nuevos.',
-            EstadoCuenta::Anulada   => 'Se anuló. No se cobra.',
-        };
-    }
-
     private static function loDelSeguro(Cuenta $cuenta): ?string
     {
         $seguro = $cuenta->saldoDeLaAseguradora();
@@ -398,55 +392,17 @@ final class CuentasTable
     }
 
     /**
-     * Lo que falta, en una frase: el número, «Saldada», «Sin cargos» o la
-     * plata que hay que devolver. La anulada no debe nada: raya.
-     *
-     * «Sin cargos» y no «Saldada» para la cuenta recién abierta: decir
-     * que está pagada una cuenta a la que todavía no se le cargó nada
-     * confunde a quien la lee.
+     * Lo que falta, en una frase. La regla vive en `FichaDeLaCuenta`: la
+     * lista y la ficha de la cuenta dicen lo mismo con las mismas palabras.
      */
     private static function comoQuedaLaCuenta(Cuenta $cuenta): ?string
     {
-        if ($cuenta->estado === EstadoCuenta::Anulada) {
-            return null;
-        }
-
-        $total = Decimal::de($cuenta->total);
-        $abonado = self::abonadoDe($cuenta);
-
-        if ($total->esCero() && $abonado->esCero()) {
-            return 'Sin cargos';
-        }
-
-        $falta = $total->restar($abonado);
-
-        if ($falta->esCero()) {
-            return 'Saldada';
-        }
-
-        if ($falta->esNegativo()) {
-            return 'A favor '.Monto::de(Decimal::cero()->restar($falta))->formateado();
-        }
-
-        return Monto::de($falta)->formateado();
+        return FichaDeLaCuenta::loQueFalta($cuenta->estado, Decimal::de($cuenta->total), self::abonadoDe($cuenta));
     }
 
     private static function colorDeLoQueFalta(Cuenta $cuenta): string
     {
-        $total = Decimal::de($cuenta->total);
-        $abonado = self::abonadoDe($cuenta);
-
-        if ($cuenta->estado === EstadoCuenta::Anulada || ($total->esCero() && $abonado->esCero())) {
-            return 'gray';
-        }
-
-        $falta = $total->restar($abonado);
-
-        if ($falta->esCero()) {
-            return 'success';
-        }
-
-        return $falta->esNegativo() ? 'info' : 'warning';
+        return FichaDeLaCuenta::colorDeLoQueFalta($cuenta->estado, Decimal::de($cuenta->total), self::abonadoDe($cuenta));
     }
 
     private static function vacioDe(HasTable $livewire): string
@@ -460,5 +416,25 @@ final class CuentasTable
             'anuladas'   => 'No hay cuentas anuladas',
             default      => 'No hay cuentas',
         };
+    }
+
+    // ── La bitácora al costado ────────────────────────────────────────
+
+    /**
+     * Abrir la bitácora queda en la bitácora de LECTURA (§9.L6): dice qué
+     * se le hizo a un paciente y quién pagó, igual que la ficha.
+     *
+     * Se llama al montar la acción —una vez por apertura— y no al pintar
+     * el contenido, que Livewire puede pintar más de una vez.
+     */
+    public static function registrarQueSeAbrioLaBitacora(Cuenta $cuenta): void
+    {
+        BitacoraDeLectura::registrar(
+            recursoTipo: Cuenta::class,
+            recursoId: $cuenta->getKey(),
+            pacienteId: $cuenta->encuentro->persona_id,
+            accion: AccionDeLectura::Ver,
+            motivoTexto: 'BITÁCORA DE LA CUENTA',
+        );
     }
 }

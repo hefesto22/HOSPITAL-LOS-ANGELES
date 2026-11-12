@@ -7,7 +7,6 @@ use App\Filament\Pages\CuentasAbiertas;
 use App\Filament\Pages\HonorariosPorMedico;
 use App\Filament\Pages\ReporteDelMes;
 use App\Filament\Resources\ActivityLogResource;
-use App\Filament\Resources\Cargos\CargoResource;
 use App\Filament\Resources\CategoriasItem\CategoriaItemResource;
 use App\Filament\Resources\Convenios\ConvenioResource;
 use App\Filament\Resources\Cuentas\CuentaResource;
@@ -172,10 +171,12 @@ it('🔴 laboratorio y consulta externa ya no ven el catalogo, los precios, los 
 
     foreach ([
         ItemResource::class, ProductoResource::class, PrincipioActivoResource::class,
-        CategoriaItemResource::class, EncuentroResource::class, CargoResource::class,
+        CategoriaItemResource::class, EncuentroResource::class,
     ] as $resource) {
         expect($resource::canAccess())->toBeFalse("{$rol} no debería ver {$resource}");
     }
+
+    expect(Gate::allows('viewAny', Cargo::class))->toBeFalse("{$rol} no debería ver los cargos");
 
     expect(BasesDePrecios::canAccess())->toBeFalse("{$rol} no debería ver las bases de precios");
 })->with(['laboratorio', 'consulta_externa'])
@@ -204,10 +205,12 @@ it('caja sigue con productos, servicios, categorias, bases de precios, encuentro
 
     foreach ([
         ProductoResource::class, ItemResource::class, CategoriaItemResource::class,
-        EncuentroResource::class, CargoResource::class, PacienteResource::class, CuentaResource::class,
+        EncuentroResource::class, PacienteResource::class, CuentaResource::class,
     ] as $resource) {
         expect($resource::canAccess())->toBeTrue("caja debería ver {$resource}");
     }
+
+    expect(Gate::allows('viewAny', Cargo::class))->toBeTrue('caja debería seguir viendo los cargos (Consumo de productos)');
 
     expect(BasesDePrecios::canAccess())->toBeTrue();
 })->note('Mauricio: «encuentros y cargos es entendible en cajeras». Y crea y edita productos y servicios desde el 13-oct-2026.');

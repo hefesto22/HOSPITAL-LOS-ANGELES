@@ -33,7 +33,7 @@ return [
             'pages'              => true,
             'widgets'            => true,
             'resources'          => true,
-            'custom_permissions' => false,
+            'custom_permissions' => true,
         ],
     ],
 
@@ -277,7 +277,26 @@ return [
     |
     */
 
-    'custom_permissions' => [],
+    /*
+     * ⚠️ LOS DE CARGOS VAN ACÁ Y NO SE QUITAN (11-nov-2026).
+     *
+     * «Todos los cargos» se quitó: los cargos se ven en cada cuenta. Pero
+     * sus permisos siguen decidiendo cosas —`Create:Cargo` es poder
+     * cargarle a una cuenta (`CuentaPolicy::cargar`) y `ViewAny:Cargo`
+     * abre «Consumo de productos»— y Shield arma la pantalla de roles con
+     * los Resources que existen. Sin Resource, esos permisos dejan de
+     * verse ahí, y GUARDAR un rol desde esa pantalla los borra en silencio
+     * (§9.L4): el rol se queda sin poder cargar.
+     *
+     * Acá vuelven a verse (pestaña de permisos personalizados), y
+     * `MatrizDePermisosSeeder` los crea en una instalación nueva, donde
+     * `shield:generate` ya no los generaría.
+     */
+    'custom_permissions' => [
+        'ViewAny:Cargo' => 'Ver los cargos (Consumo de productos)',
+        'View:Cargo'    => 'Ver un cargo',
+        'Create:Cargo'  => 'Cargarle a una cuenta',
+    ],
 
     /*
     |--------------------------------------------------------------------------

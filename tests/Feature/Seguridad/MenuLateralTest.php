@@ -140,7 +140,7 @@ it('el menu entero, grupo por grupo y en orden', function (): void {
     expect($enOrden)->toBe([
         'Cuentas y caja' => [
             'Cuentas abiertas', 'Caja', 'Abonos recibidos', 'Turnos de caja',
-            'Facturas', 'Presupuestos', 'Todas las cuentas', 'Todos los cargos',
+            'Facturas', 'Presupuestos', 'Todas las cuentas',
         ],
         'Pacientes'             => ['Pacientes', 'Encuentros', 'Fusiones de duplicados'],
         'Farmacia e inventario' => [

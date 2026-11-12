@@ -11,8 +11,13 @@
       · En «Ver» de Todas las cuentas, abierto y suelto: es para revisar
         una cuenta que ya se facturó y no se puede abrir en el modal.
 
-    Parámetros: `$cuenta`; `$abierto` (empieza desplegado) y `$suelto`
-    (con su propio borde, fuera de la caja de la lista).
+    Desde el 11-nov-2026 se llama «Bitácora de la cuenta» —la palabra de
+    Mauricio— y se ve también al costado de «Todas las cuentas», con el
+    botón «Bitácora» de cada fila.
+
+    Parámetros: `$cuenta`; `$abierto` (empieza desplegado), `$suelto`
+    (con su propio borde, fuera de la caja de la lista) y `$visibles`
+    (cuántos movimientos antes de «Ver los anteriores»; 8 si no se dice).
 
     Abierto y cerrado viven en Alpine y no en un `<details>`: el morph de
     Livewire le borra el `open` a un `<details>` en cada re-render.
@@ -22,7 +27,7 @@
 
 @php($historial = app(\App\Support\HistorialDeLaCuenta::class))
 @php($movimientos = $historial->de($cuenta))
-@php($visibles = 8)
+@php($visibles = (int) ($visibles ?? 8))
 
 @if ($movimientos !== [])
     @php($ultimo = $movimientos[0])
@@ -37,7 +42,7 @@
             <x-filament::icon icon="heroicon-o-clock" class="sihla-historial-icono" />
 
             <span class="sihla-historial-rotulo">
-                Historial de la cuenta
+                Bitácora de la cuenta
                 <span class="sihla-historial-cuantos">{{ count($movimientos) }}</span>
             </span>
 

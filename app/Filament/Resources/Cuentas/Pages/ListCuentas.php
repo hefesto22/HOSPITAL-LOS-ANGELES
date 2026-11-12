@@ -21,8 +21,8 @@ class ListCuentas extends ListRecords
 
     public function getSubheading(): string
     {
-        return 'Todas las cuentas del hospital, por etapa. Para atender —abrir una cuenta o '
-            .'agregarle cosas— usá Cuentas abiertas.';
+        return 'Todas las cuentas del hospital, por etapa. «Bitácora» muestra todo lo que pasó en cada una; '
+            .'para atender —abrir una cuenta o agregarle cosas— usá Cuentas abiertas.';
     }
 
     /**

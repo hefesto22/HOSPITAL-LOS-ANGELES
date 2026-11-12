@@ -627,6 +627,10 @@ class MatrizDePermisosSeeder extends Seeder
             Permission::findOrCreate($permiso, 'web');
         }
 
+        foreach (self::permisosSinPantalla() as $permiso) {
+            Permission::findOrCreate($permiso, 'web');
+        }
+
         /** @var Collection<int, string> $todos */
         $todos = Permission::query()->where('guard_name', 'web')->pluck('name');
 
@@ -651,6 +655,33 @@ class MatrizDePermisosSeeder extends Seeder
 
         $this->command?->info('✓ Matriz de permisos aplicada a los roles del hospital.');
         $this->command?->comment('  Los roles operativos quedan sin permisos hasta que exista su módulo.');
+    }
+
+    /**
+     * Los permisos que ya no tienen pantalla propia pero siguen decidiendo
+     * (los de cargos, desde que se quitó «Todos los cargos»).
+     *
+     * Viven en `config('filament-shield.custom_permissions')`, que es lo
+     * que los muestra en la pantalla de roles; acá se crean para que una
+     * instalación nueva los tenga sin depender de `shield:generate`, que
+     * solo genera los de los Resources que existen.
+     *
+     * @return list<string>
+     */
+    public static function permisosSinPantalla(): array
+    {
+        /** @var array<array-key, mixed> $propios */
+        $propios = (array) config('filament-shield.custom_permissions', []);
+
+        $permisos = [];
+
+        foreach (array_keys($propios) as $permiso) {
+            if (is_string($permiso)) {
+                $permisos[] = $permiso;
+            }
+        }
+
+        return $permisos;
     }
 
     /**
