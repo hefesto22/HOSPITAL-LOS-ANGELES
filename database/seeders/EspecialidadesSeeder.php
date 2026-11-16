@@ -96,6 +96,16 @@ class EspecialidadesSeeder extends Seeder
         'GASPED' => 'GASTROENTEROLOGIA PEDIATRICA',
         'NEUPED' => 'NEUMOLOGIA PEDIATRICA',
         'INTPED' => 'MEDICINA INTENSIVA PEDIATRICA',
+
+        /*
+         * El personal de quirófano que cobra honorario con nombre propio
+         * (Mauricio, 16-nov-2026: «instrumentistas, esa es la
+         * especialidad, y técnicos en anestesia, a ellos se les da
+         * honorarios»). Como nutrición y psicología, no son médicos: la
+         * tabla modela quién cobra honorario.
+         */
+        'INSTRU' => 'INSTRUMENTISTA',
+        'TECANE' => 'TECNICO EN ANESTESIA',
     ];
 
     /**

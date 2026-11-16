@@ -214,6 +214,31 @@ class MedicosDelHospitalSeeder extends Seeder
         'CARPED' => [
             'DILCIA PAOLA PAGOAGA VASQUEZ',
         ],
+
+        /*
+         * Las listas «Instrumentistas» y «Técnicos en Anestesia» del
+         * hospital (16-nov-2026), en L 0.00 como los médicos: el monto se
+         * pone al cargar el honorario. Sin el «HONORARIOS TECNICO EN
+         * ANESTESIA» del papel: la especialidad la agrega la ficha.
+         */
+        'INSTRU' => [
+            'LESLI OKELY HIDALGO LOPEZ',
+            'CRISTIAN JOSUE PERDOMO PEREZ',
+            'SELVIN ADONAY ALVARENGA HERNANDEZ',
+            'MARIA MARLENIS LEON BAUTISTA',
+            'KARLA PATRICIA LEMUS PEREZ',
+            'FLOR IDALMA FUNEZ SERRANO',
+            'AURA ROSIBEL MONTUFAR GARZA',
+            'BRENDA LISSETH BENITES MORALES',
+        ],
+        'TECANE' => [
+            'JACQUELINE YOLANY RIOS FOLGAR',
+            'FERNANDO JOSUE BARAHONA PUERTO',
+            'CARLOS ALBERTO MEDRANO BURGOS',
+            'BENJAMIN PADILLA COELLO',
+            'LABINIA GESSELLE COELLO NUÑEZ',
+            'DORIAN SUJEY BADOS MEDRANO',
+        ],
     ];
 
     /**
@@ -225,6 +250,16 @@ class MedicosDelHospitalSeeder extends Seeder
     private const PALABRAS_QUE_NO_CUENTAN = ['dr', 'dra', 'doctor', 'doctora', 'de', 'del', 'la', 'las', 'los', 'y'];
 
     private const PALABRAS_EN_COMUN_PARA_SOSPECHAR = 2;
+
+    /**
+     * Comparten dos palabras con alguien que ya está y se sabe que son
+     * otra persona: la instrumentista KARLA PATRICIA LEMUS PEREZ no es la
+     * doctora KARLA PATRICIA ESCOLAN RODEZNO (16-nov-2026). Sin esto el
+     * seeder la dejaría en «revisar» y no la crearía.
+     *
+     * @var list<string>
+     */
+    private const SE_SABE_QUE_SON_OTRAS = ['KARLA PATRICIA LEMUS PEREZ'];
 
     private int $creados = 0;
 
@@ -260,7 +295,9 @@ class MedicosDelHospitalSeeder extends Seeder
                     continue;
                 }
 
-                $parecido = $this->buscarParecido($palabras, $existentes);
+                $parecido = in_array($nombre, self::SE_SABE_QUE_SON_OTRAS, true)
+                    ? null
+                    : $this->buscarParecido($palabras, $existentes);
 
                 if ($parecido !== null) {
                     $this->sospechosos[] = [$nombre, $especialidad->nombre, $parecido];

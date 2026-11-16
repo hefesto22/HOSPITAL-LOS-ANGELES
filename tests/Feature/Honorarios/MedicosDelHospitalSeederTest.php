@@ -18,15 +18,17 @@ function medicoDeLaLista(string $nombre): Medico
     return Medico::query()->with('especialidad')->where('nombre', $nombre)->sole();
 }
 
-it('registra a los 90 medicos de la lista, cada uno con la especialidad de su hoja', function (): void {
+it('registra a los 104 de la lista (90 medicos, 8 instrumentistas y 6 tecnicos en anestesia), cada uno con la especialidad de su hoja', function (): void {
     $this->seed(MedicosDelHospitalSeeder::class);
 
-    expect(Medico::query()->count())->toBe(90)
+    expect(Medico::query()->count())->toBe(104)
         ->and(medicoDeLaLista('KENIA DEL CARMEN ORDOÑEZ')->especialidad->codigo)->toBe('GINECO')
         ->and(medicoDeLaLista('JUAN CARLOS CARDONA CONTRERAS')->especialidad->codigo)->toBe('UROLOG')
         ->and(medicoDeLaLista('JUAN CARLOS CARDONA MEDINA')->especialidad->codigo)->toBe('CIRGEN')
         ->and(medicoDeLaLista('ROBERTO ALVAREZ RODRIGUEZ')->especialidad->nombre)->toBe('NEUROCIRUGIA')
-        ->and(medicoDeLaLista('DILCIA PAOLA PAGOAGA VASQUEZ')->especialidad->nombre)->toBe('CARDIOLOGIA PEDIATRICA');
+        ->and(medicoDeLaLista('DILCIA PAOLA PAGOAGA VASQUEZ')->especialidad->nombre)->toBe('CARDIOLOGIA PEDIATRICA')
+        ->and(medicoDeLaLista('LESLI OKELY HIDALGO LOPEZ')->especialidad->nombre)->toBe('INSTRUMENTISTA')
+        ->and(medicoDeLaLista('JACQUELINE YOLANY RIOS FOLGAR')->especialidad->nombre)->toBe('TECNICO EN ANESTESIA');
 });
 
 it('no guarda el titulo ni la especialidad dentro del nombre', function (): void {
@@ -41,7 +43,7 @@ it('correrlo dos veces no duplica a nadie', function (): void {
     $this->seed(MedicosDelHospitalSeeder::class);
     $this->seed(MedicosDelHospitalSeeder::class);
 
-    expect(Medico::query()->count())->toBe(90);
+    expect(Medico::query()->count())->toBe(104);
 });
 
 it('🔴 no crea al que ya estaba registrado a mano con un nombre parecido', function (): void {
@@ -51,7 +53,7 @@ it('🔴 no crea al que ya estaba registrado a mano con un nombre parecido', fun
 
     expect(Medico::query()->where('nombre', 'JUAN PARODI AMAYA')->exists())->toBeFalse()
         ->and(Medico::query()->where('nombre', 'ilike', '%PARODI%')->count())->toBe(1)
-        ->and(Medico::query()->count())->toBe(90)
+        ->and(Medico::query()->count())->toBe(104)
         ->and($yaEstaba->fresh()?->nombre)->toBe('DR. JUAN PARODI');
 })->note('Dos fichas del mismo doctor parten en dos la liquidación de sus honorarios.');
 
@@ -71,7 +73,7 @@ it('no resucita al medico que el hospital dio de baja', function (): void {
     $this->seed(MedicosDelHospitalSeeder::class);
 
     expect(Medico::query()->where('nombre', 'RONNY CABRERA')->exists())->toBeFalse()
-        ->and(Medico::query()->count())->toBe(89);
+        ->and(Medico::query()->count())->toBe(103);
 });
 
 it('usa la especialidad que el hospital creo a mano con otro codigo en vez de duplicarla', function (): void {
@@ -83,3 +85,12 @@ it('usa la especialidad que el hospital creo a mano con otro codigo en vez de du
         ->and(medicoDeLaLista('ROBERTO ALVAREZ RODRIGUEZ')->especialidad_id)->toBe($aMano->id)
         ->and(medicoDeLaLista('JENNIFER GISSELA TABORA ARITA')->especialidad_id)->toBe($aMano->id);
 })->note('Dos «NEUROCIRUGIA» en el selector reparten a los médicos entre las dos.');
+
+it('crea a la instrumentista aunque comparta dos nombres con una doctora que ya estaba', function (): void {
+    Medico::factory()->create(['nombre' => 'KARLA PATRICIA ESCOLAN RODEZNO']);
+
+    $this->seed(MedicosDelHospitalSeeder::class);
+
+    expect(medicoDeLaLista('KARLA PATRICIA LEMUS PEREZ')->especialidad->nombre)->toBe('INSTRUMENTISTA')
+        ->and(Medico::query()->where('nombre', 'ilike', 'KARLA PATRICIA%')->count())->toBe(2);
+})->note('Son dos personas: la regla de las dos palabras en común la dejaba en «revisar» y no la creaba.');
