@@ -104,7 +104,8 @@ class SembrarDemoDeApendicectomia extends Command
             return self::FAILURE;
         }
 
-        $codigo = mb_strtoupper(trim((string) $this->argument('convenio')));
+        $argumento = $this->argument('convenio');
+        $codigo = mb_strtoupper(trim(is_string($argumento) ? $argumento : ''));
         $convenio = Convenio::query()->where('codigo', $codigo)->first();
 
         if (! $convenio instanceof Convenio) {

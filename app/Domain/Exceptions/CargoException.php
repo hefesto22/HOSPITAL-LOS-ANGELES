@@ -197,6 +197,33 @@ final class CargoException extends SihlaException
     }
 
     /**
+     * El examen de adentro gasta pruebas de un kit y en el laboratorio ya
+     * no hay (Mauricio, 16-nov-2026: «cuando el stock es 0 no se pueden
+     * agregar más de esos exámenes en el hospital, pero sí de laboratorio
+     * externo»).
+     */
+    public static function sinPruebas(string $examen, string $insumo, string $almacen, string $hacen, string $hay): self
+    {
+        return new self(
+            "No quedan pruebas de «{$insumo}» en {$almacen} para «{$examen}»: hacen falta {$hacen} y hay {$hay}. "
+            .'No se cargó. Si la muestra se manda afuera, cargá el examen de laboratorio externo; '
+            .'si llegó un kit nuevo, recibilo primero en Recibir mercadería.'
+        );
+    }
+
+    /**
+     * El examen gasta reactivos y la sede no tiene dónde guardarlos.
+     */
+    public static function sinAlmacenDelLaboratorio(string $examen): self
+    {
+        return new self(
+            "«{$examen}» gasta reactivos, pero esta sede no tiene almacén de laboratorio. Se crea en "
+            .'Hospital → Almacenes (stock del servicio, del servicio de laboratorio), o se le quita lo que '
+            .'gasta en su ficha.'
+        );
+    }
+
+    /**
      * Quien carga tiene permiso para cargar, pero no para cargar ESTO.
      *
      * El caso es el del laboratorio: registra al paciente ambulatorio y

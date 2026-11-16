@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Una línea de la cuenta, congelada (§8.5-5).
@@ -242,6 +243,18 @@ class Cargo extends Model
     public function almacen(): BelongsTo
     {
         return $this->belongsTo(Almacen::class);
+    }
+
+    /**
+     * Lo que gastó este cargo cuando se cargó —las pruebas del kit de un
+     * examen— (16-nov-2026). Vacío en todo lo que no es un examen con
+     * receta.
+     *
+     * @return HasMany<ConsumoDeCargo, $this>
+     */
+    public function gastos(): HasMany
+    {
+        return $this->hasMany(ConsumoDeCargo::class);
     }
 
     /**

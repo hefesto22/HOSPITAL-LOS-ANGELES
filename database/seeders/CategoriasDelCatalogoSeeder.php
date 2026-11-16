@@ -122,6 +122,7 @@ class CategoriasDelCatalogoSeeder extends Seeder
         ['MTC', 'MATERIAL DE CURACION', AmbitoCatalogo::Productos, 20, null],
         ['DES', 'DESCARTABLES', AmbitoCatalogo::Productos, 30, null],
         ['SOL', 'SOLUCIONES Y SUEROS', AmbitoCatalogo::Productos, 40, null],
+        ['REA', 'REACTIVOS DE LABORATORIO', AmbitoCatalogo::Productos, 50, 'REA-'],
         ['INS', 'OTROS INSUMOS', AmbitoCatalogo::Productos, 90, 'INS-'],
     ];
 

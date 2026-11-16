@@ -453,6 +453,18 @@ class Item extends Model
     }
 
     /**
+     * Lo que gasta este examen (o servicio) cada vez que se carga: «1
+     * prueba del kit de glucosa» (16-nov-2026). Vacío en casi todo el
+     * catálogo, y en los exámenes que se mandan afuera.
+     *
+     * @return HasMany<ConsumoDeServicio, $this>
+     */
+    public function gasta(): HasMany
+    {
+        return $this->hasMany(ConsumoDeServicio::class);
+    }
+
+    /**
      * Todas las filas de tarifario del ítem: el precio de lista y los
      * negociados con cada pagador, vigentes y vencidos.
      *

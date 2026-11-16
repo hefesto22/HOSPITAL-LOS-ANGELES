@@ -168,6 +168,16 @@ class Existencias extends Page implements HasTable
     private ?Collection $almacenesPorId = null;
 
     /**
+     * Los almacenes que este usuario ve —laboratorio, solo su estante—, o
+     * null si ve todos. Se lee una vez por pintada.
+     *
+     * @var list<int>|null
+     */
+    private ?array $soloVe = null;
+
+    private bool $soloVeLeido = false;
+
+    /**
      * Lo que hay de cada producto de la página, almacén por almacén. Lo
      * leen las columnas: dos consultas por pintada, no una por renglón.
      *
@@ -553,6 +563,12 @@ class Existencias extends Page implements HasTable
             $cuentas[(int) $fila->almacen_id] = (int) $fila->cuantos;
         }
 
+        $visibles = $this->soloVe();
+
+        if ($visibles !== null) {
+            $cuentas = array_intersect_key($cuentas, array_flip($visibles));
+        }
+
         return $this->productosPorAlmacen = $cuentas;
     }
 
@@ -563,9 +579,36 @@ class Existencias extends Page implements HasTable
      */
     private function almacenElegido(): ?int
     {
+        /*
+         * Quien ve solo su estante —laboratorio— no tiene «todos»: siempre
+         * está en el suyo, aunque esté vacío. Sin estante, el id 0, que no
+         * existe: la tabla sale vacía en vez de mostrar el inventario
+         * entero (16-nov-2026).
+         */
+        $visibles = $this->soloVe();
+
+        if ($visibles !== null) {
+            return $this->almacen !== null && in_array($this->almacen, $visibles, true)
+                ? $this->almacen
+                : ($visibles[0] ?? 0);
+        }
+
         return $this->almacen !== null && array_key_exists($this->almacen, $this->productosPorAlmacen())
             ? $this->almacen
             : null;
+    }
+
+    /**
+     * @return list<int>|null
+     */
+    private function soloVe(): ?array
+    {
+        if (! $this->soloVeLeido) {
+            $this->soloVe = AlmacenesDelUsuario::idsQueVe();
+            $this->soloVeLeido = true;
+        }
+
+        return $this->soloVe;
     }
 
     /**
@@ -573,7 +616,10 @@ class Existencias extends Page implements HasTable
      */
     private function almacenesPorId(): Collection
     {
-        return $this->almacenesPorId ??= Almacen::query()->get()->keyBy('id');
+        return $this->almacenesPorId ??= Almacen::query()
+            ->when($this->soloVe(), fn (Builder $suyos, array $ids): Builder => $suyos->whereIn('almacenes.id', $ids))
+            ->get()
+            ->keyBy('id');
     }
 
     /**
@@ -772,6 +818,15 @@ class Existencias extends Page implements HasTable
             ? ($todos['infinitos'][$item->id] ?? [])
             : ($todos['reales'][$item->id] ?? []);
 
+        $visibles = $this->soloVe();
+
+        if ($visibles !== null) {
+            $lugares = array_values(array_filter(
+                $lugares,
+                fn (array $lugar): bool => in_array($lugar['almacen'], $visibles, true),
+            ));
+        }
+
         $orden = $this->almacenesEnOrden()->pluck('id')->flip()->all();
 
         usort($lugares, fn (array $uno, array $otro): int => ($orden[$uno['almacen']] ?? PHP_INT_MAX) <=> ($orden[$otro['almacen']] ?? PHP_INT_MAX));
@@ -962,6 +1017,7 @@ class Existencias extends Page implements HasTable
         return array_values(Existencia::query()
             ->with(['almacen', 'item.unidadDispensacion', 'lote.presentacion.unidad'])
             ->where('item_id', $item->id)
+            ->when($this->soloVe(), fn (Builder $suyas, array $ids): Builder => $suyas->whereIn('almacen_id', $ids))
             ->conSaldo()
             ->get()
             ->sortBy(fn (Existencia $fila): string => sprintf(

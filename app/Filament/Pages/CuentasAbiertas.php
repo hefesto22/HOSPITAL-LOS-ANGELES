@@ -69,6 +69,7 @@ use App\Services\AplicadorDeDescuentoDeLaCuenta;
 use App\Services\ConsultorDeExistencias;
 use App\Services\EmisorDeFactura;
 use App\Services\FormasDeCobro;
+use App\Services\GastosDelServicio;
 use App\Services\LecturaEnEnvases;
 use App\Services\PoliticaDeDescuentoComercial;
 use App\Services\ProponedorDeHonorario;
@@ -80,6 +81,7 @@ use App\Services\RegistradorDePrestamo;
 use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
+use App\Support\ContextoSede;
 use App\Support\FichaDelPaciente;
 use App\Support\NormalizadorDeTexto;
 use App\Support\NumeroDeFormulario;
@@ -8726,14 +8728,28 @@ class CuentasAbiertas extends Page
             return $this->resultadosDelBuscador[$clave];
         }
 
-        return $this->resultadosDelBuscador[$clave] = Item::buscar(
+        $encontrados = Item::buscar(
             $texto,
             limite: self::resultadosALaVista(),
             soloVigentes: true,
             soloDelRol: true,
         )
-            ->mapWithKeys(fn (Item $item): array => [$item->id => $item->nombre])
+            ->mapWithKeys(fn (Item $item): array => [(int) $item->id => $item->nombre])
             ->all();
+
+        /*
+         * El examen de adentro sin pruebas en el laboratorio se marca: no
+         * se va a poder cargar, y el de afuera sí (16-nov-2026).
+         */
+        $sede = ContextoSede::actualId();
+
+        if ($sede !== null) {
+            foreach (array_keys(app(GastosDelServicio::class)->sinPruebasEntre(array_keys($encontrados), $sede)) as $id) {
+                $encontrados[$id] .= ' · SIN PRUEBAS';
+            }
+        }
+
+        return $this->resultadosDelBuscador[$clave] = $encontrados;
     }
 
     /**

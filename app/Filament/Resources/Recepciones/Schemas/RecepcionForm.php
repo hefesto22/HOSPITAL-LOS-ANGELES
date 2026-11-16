@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\Recepciones\Schemas;
 
-use App\Domain\Enums\TipoAlmacen;
 use App\Domain\ValueObjects\Decimal;
 use App\Filament\Schemas\Components\CampoMayusculas;
 use App\Models\Almacen;
@@ -14,6 +13,7 @@ use App\Models\PrincipioActivo;
 use App\Models\Proveedor;
 use App\Models\Unidad;
 use App\Services\AvisoDeLoQueSeDebe;
+use App\Support\AlmacenesDelUsuario;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
@@ -170,11 +170,20 @@ final class RecepcionForm
                      * builder huérfano y la página revienta al montar con
                      * «Call to a member function hydrate() on null».
                      */
+                    /*
+                     * El estante del laboratorio SÍ recibe del proveedor:
+                     * los kits llegan directo ahí (Mauricio, 16-nov-2026).
+                     * Y laboratorio ve solo el suyo.
+                     */
                     ->relationship(
                         'almacen',
                         'nombre',
                         fn (Builder $query): Builder => $query
-                            ->where('tipo', '!=', TipoAlmacen::StockDeServicio->value),
+                            ->whereIn('almacenes.id', Almacen::query()->queRecibenDelProveedor()->select('almacenes.id'))
+                            ->when(
+                                AlmacenesDelUsuario::idsQueVe(),
+                                fn (Builder $suyos, array $ids): Builder => $suyos->whereIn('almacenes.id', $ids),
+                            ),
                     )
                     ->getOptionLabelFromRecordUsing(
                         fn (Almacen $record): string => $record->nombre.' · '.$record->tipo->etiqueta()
@@ -183,7 +192,7 @@ final class RecepcionForm
                     ->preload()
                     ->required()
                     ->native(false)
-                    ->helperText('Lo del proveedor normalmente entra a BODEGA; de ahí se baja a farmacia.'),
+                    ->helperText('Lo del proveedor normalmente entra a BODEGA; de ahí se baja a farmacia. Los kits de laboratorio entran a LABORATORIO.'),
 
                 DatePicker::make('fecha_recepcion')
                     ->label('¿Cuándo llegó?')

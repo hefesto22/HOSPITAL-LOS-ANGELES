@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Domain\Enums\TipoAlmacen;
+use App\Domain\Enums\TipoServicio;
 use App\Models\Concerns\BelongsToSede;
 use App\Models\Concerns\GuardaEnMayusculas;
 use App\Traits\HasAuditFields;
@@ -174,5 +175,79 @@ class Almacen extends Model
             ->where(fn (Builder $sub): Builder => $sub
                 ->whereNull($consulta->qualifyColumn('vigencia_hasta'))
                 ->orWhereDate($consulta->qualifyColumn('vigencia_hasta'), '>=', $fecha->toDateString()));
+    }
+
+    // ── El laboratorio (16-nov-2026) ──────────────────────────────────
+
+    /**
+     * ¿Es el estante del laboratorio? Un stock de servicio cuyo servicio
+     * es el laboratorio: de ahí salen las pruebas de los kits cuando se
+     * carga un examen, y ahí se reciben del proveedor.
+     *
+     * Se reconoce por el TIPO del servicio y no por el nombre: la clínica
+     * siguiente le pondrá «LAB CLÍNICO» o «LABORATORIO 2» (§1.1).
+     */
+    public function esDelLaboratorio(): bool
+    {
+        if ($this->tipo !== TipoAlmacen::StockDeServicio || $this->servicio_id === null) {
+            return false;
+        }
+
+        $servicio = Servicio::query()->deTodasLasSedes()->find($this->servicio_id);
+
+        return $servicio instanceof Servicio && $servicio->tipo === TipoServicio::Laboratorio;
+    }
+
+    /**
+     * ¿Se le puede recibir mercadería del proveedor?
+     *
+     * Un stock de servicio se surte desde bodega o farmacia —el carrito
+     * rojo no recibe del camión (Mauricio, 2-sep-2026)—, salvo el del
+     * laboratorio: los kits llegan del proveedor directo ahí (Mauricio,
+     * 16-nov-2026).
+     */
+    public function recibeDelProveedor(): bool
+    {
+        return $this->tipo !== TipoAlmacen::StockDeServicio || $this->esDelLaboratorio();
+    }
+
+    /**
+     * Los estantes del laboratorio.
+     *
+     * @param Builder<static> $consulta
+     *
+     * @return Builder<static>
+     */
+    public function scopeDelLaboratorio(Builder $consulta): Builder
+    {
+        return $consulta
+            ->where($consulta->qualifyColumn('tipo'), TipoAlmacen::StockDeServicio->value)
+            ->whereIn($consulta->qualifyColumn('servicio_id'), self::serviciosDelLaboratorio());
+    }
+
+    /**
+     * Los que reciben del proveedor: todos menos los stocks de servicio,
+     * y de esos solo el del laboratorio.
+     *
+     * @param Builder<static> $consulta
+     *
+     * @return Builder<static>
+     */
+    public function scopeQueRecibenDelProveedor(Builder $consulta): Builder
+    {
+        return $consulta->where(fn (Builder $sub): Builder => $sub
+            ->where($consulta->qualifyColumn('tipo'), '!=', TipoAlmacen::StockDeServicio->value)
+            ->orWhereIn($consulta->qualifyColumn('servicio_id'), self::serviciosDelLaboratorio()));
+    }
+
+    /**
+     * @return Builder<Servicio>
+     */
+    private static function serviciosDelLaboratorio(): Builder
+    {
+        return Servicio::query()
+            ->deTodasLasSedes()
+            ->where('tipo', TipoServicio::Laboratorio->value)
+            ->select('id');
     }
 }

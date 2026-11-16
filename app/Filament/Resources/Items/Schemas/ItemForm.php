@@ -31,6 +31,8 @@ use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Repeater\TableColumn;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -104,6 +106,7 @@ final class ItemForm
                 ->tabs(array_values(array_filter([
                     self::identificacion($ambito),
                     self::dineroYLey($ambito),
+                    $ambito === AmbitoCatalogo::Servicios ? self::queGasta() : null,
 
                     /*
                      * Ninguno de los dos lados tiene ya pestaña
@@ -1284,6 +1287,90 @@ final class ItemForm
                     ])
                     ->columns(2),
             ]);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * QUÉ GASTA EL EXAMEN (16-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: «una caja de 25 kits es para 25 exámenes; se usa 1,
+     * quedan 24». Acá se dice qué kit gasta el examen y cuántas pruebas:
+     * al cargarlo en la cuenta salen solas del estante del laboratorio
+     * (`GastosDelServicio`), y si no quedan, el examen de adentro no se
+     * carga. El de laboratorio externo no lleva nada.
+     *
+     * Solo en los exámenes de laboratorio: el estante del que sale es el
+     * del laboratorio.
+     */
+    private static function queGasta(): Tab
+    {
+        return Tab::make('Qué gasta')
+            ->icon('heroicon-o-beaker')
+            ->visible(fn (Get $get): bool => self::tipoElegido($get) === TipoItem::EstudioLaboratorio)
+            ->schema([
+                Repeater::make('gasta')
+                    ->label('Cada vez que se carga, saca del laboratorio')
+                    ->relationship()
+                    ->defaultItems(0)
+                    ->addActionLabel('Agregar un kit')
+                    ->table([
+                        TableColumn::make('Kit')->width('75%')->markAsRequired(),
+                        TableColumn::make('Pruebas')->width('25%')->markAsRequired(),
+                    ])
+                    ->schema([
+                        Select::make('insumo_id')
+                            ->hiddenLabel()
+                            ->placeholder('Buscá el kit: GLUCOSA, PCR, DENGUE…')
+                            ->searchable()
+                            ->required()
+                            ->distinct()
+                            ->getSearchResultsUsing(fn (string $search): array => self::kitsQueSeLlaman($search))
+                            ->getOptionLabelUsing(fn (mixed $value): ?string => self::nombreDelKit($value)),
+
+                        TextInput::make('cantidad')
+                            ->hiddenLabel()
+                            ->required()
+                            ->numeric()
+                            ->inputMode('decimal')
+                            ->step('any')
+                            ->minValue(0.0001)
+                            ->default('1'),
+                    ])
+                    ->helperText('Normalmente una prueba por examen. Sin nada acá, el examen no gasta reactivo: '
+                        .'así quedan los que se mandan a un laboratorio externo. Con el kit en stock infinito '
+                        .'solo se anota cuánto se usó; con existencia real, si no quedan pruebas el examen no '
+                        .'se carga.'),
+            ]);
+    }
+
+    /**
+     * Lo que se puede gastar: lo que se guarda en un estante.
+     *
+     * @return array<int, string>
+     */
+    private static function kitsQueSeLlaman(string $texto): array
+    {
+        $kits = [];
+
+        foreach (Item::buscar($texto, limite: 25, soloVigentes: true) as $item) {
+            if ($item->mueveInventario()) {
+                $kits[(int) $item->id] = $item->nombre;
+            }
+        }
+
+        return $kits;
+    }
+
+    private static function nombreDelKit(mixed $id): ?string
+    {
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        $nombre = Item::query()->withTrashed()->whereKey((int) $id)->value('nombre');
+
+        return is_string($nombre) ? $nombre : null;
     }
 
     private static function vigencia(): Tab

@@ -430,7 +430,20 @@ return [
         'almacenes_por_rol' => [
             'bodega'   => ['almacen_unico', 'bodega_central', 'stock_de_servicio'],
             'farmacia' => ['almacen_unico', 'farmacia_venta', 'farmacia_interna'],
+            /*
+             * Laboratorio: SU estante, el stock de servicio del servicio de
+             * laboratorio. Ahí recibe los kits y de ahí salen las pruebas
+             * (16-nov-2026). `servicio:<tipo>` = el stock de ese servicio.
+             */
+            'laboratorio' => ['servicio:laboratorio'],
         ],
+
+        /*
+         * Los roles que en «Existencias» y «Recibir mercadería» VEN solo su
+         * estante, no todo el inventario. Bodega y farmacia ven todo y
+         * operan lo suyo; laboratorio ve sus kits (16-nov-2026).
+         */
+        'ven_solo_su_almacen' => ['laboratorio'],
     ],
 
     /*

@@ -11,6 +11,7 @@ use App\Filament\Resources\Almacenes\Pages\ListAlmacenes;
 use App\Filament\Resources\Almacenes\Schemas\AlmacenForm;
 use App\Filament\Resources\Almacenes\Tables\AlmacenesTable;
 use App\Models\Almacen;
+use App\Support\AlmacenesDelUsuario;
 use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
@@ -79,6 +80,16 @@ class AlmacenResource extends Resource
     {
         /** @var Builder<Almacen> $consulta */
         $consulta = parent::getEloquentQuery();
+
+        /*
+         * Laboratorio ve solo su estante (16-nov-2026): el permiso de ver
+         * almacenes se lo da «Existencias», no la lista del hospital.
+         */
+        $visibles = AlmacenesDelUsuario::idsQueVe();
+
+        if ($visibles !== null) {
+            $consulta->whereIn($consulta->qualifyColumn('id'), $visibles);
+        }
 
         return $consulta->with(['sede:id,codigo,nombre', 'servicio:id,nombre']);
     }

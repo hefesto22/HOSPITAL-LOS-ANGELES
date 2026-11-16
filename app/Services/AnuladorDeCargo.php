@@ -61,6 +61,7 @@ final class AnuladorDeCargo
     public function __construct(
         private readonly RegistradorDeMovimiento $movimientos,
         private readonly CalculadoraDeCostoPromedio $costos,
+        private readonly GastosDelServicio $gastos,
     ) {}
 
     /**
@@ -109,6 +110,12 @@ final class AnuladorDeCargo
             }
 
             $movimiento = $this->devolverAlEstante($vigente);
+
+            /*
+             * Lo que gastó el examen —las pruebas del kit— vuelve al
+             * estante del laboratorio, del mismo lote (16-nov-2026).
+             */
+            $this->gastos->devolver($vigente);
 
             $reversa = Cargo::query()->forceCreate(
                 array_merge($this->negar($vigente), [

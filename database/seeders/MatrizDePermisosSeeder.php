@@ -518,6 +518,16 @@ class MatrizDePermisosSeeder extends Seeder
          * el de cargos es el libro de todo el hospital, con lo que cargó
          * cada área—. `Cuenta` sí lo ven: es la entrada a «Cuentas
          * abiertas» (`CuentasAbiertas::canAccess()`).
+         *
+         * ─────────────────────────────────────────────────────────────
+         * SUS KITS (16-nov-2026)
+         * ─────────────────────────────────────────────────────────────
+         *
+         * Mauricio: los kits de reactivos se reciben directo en
+         * LABORATORIO, y los recibe laboratorio. `Almacen` es la puerta de
+         * «Existencias»; `Recepcion`, la de «Recibir mercadería». Las dos
+         * le muestran SOLO su estante (`sihla.inventario.ven_solo_su_almacen`).
+         * Sin `Update:Recepcion`: revisar una recepción es de otro.
          */
         'laboratorio' => [
             'Persona'         => ['ViewAny', 'View', 'Create', 'Update'],
@@ -525,6 +535,8 @@ class MatrizDePermisosSeeder extends Seeder
             'Encuentro'       => ['Create'],
             'Cuenta'          => ['ViewAny', 'View', 'Create'],
             'Cargo'           => ['Create'],
+            'Almacen'         => ['ViewAny', 'View'],
+            'Recepcion'       => ['ViewAny', 'View', 'Create'],
         ],
 
         /*

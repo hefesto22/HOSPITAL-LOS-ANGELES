@@ -173,10 +173,10 @@ it('🔴 laboratorio tiene abrir cuenta primero, y no los botones de caja ni de 
     $accesos = (new AccesosDelEscritorio)->accesos();
     $etiquetas = array_column($accesos, 'etiqueta');
 
-    expect($etiquetas)->toBe(['Abrir cuenta', 'Cuentas abiertas', 'Pacientes'])
+    expect($etiquetas)->toBe(['Abrir cuenta', 'Cuentas abiertas', 'Pacientes', 'Existencias', 'Recibir mercadería'])
         ->and($accesos[0]['principal'])->toBeTrue()
         ->and($accesos[0]['url'])->toContain('action=abrirCuenta');
-})->note('Los botones salen del mismo `canAccess()` que decide el menú: si laboratorio no ve Caja en el menú, tampoco tiene el botón.');
+})->note('Los botones salen del mismo `canAccess()` que decide el menú: si laboratorio no ve Caja en el menú, tampoco tiene el botón. Existencias y Recibir mercadería son de sus kits (16-nov-2026): le muestran solo el estante LABORATORIO.');
 
 it('caja tiene su caja y sus facturas', function (): void {
     entraAlEscritorio('caja');

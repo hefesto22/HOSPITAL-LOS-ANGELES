@@ -53,6 +53,15 @@ enum TipoMovimiento: string
     /** Se le entregó a un paciente. */
     case SalidaPorDispensacion = 'salida_por_dispensacion';
 
+    /**
+     * Se gastó haciendo un examen o un servicio que se le cobró a un
+     * paciente: la prueba del kit de glucosa que usó el laboratorio
+     * (16-nov-2026). No es una dispensación —al paciente no se le entregó
+     * el kit— y por eso tiene su propio tipo: el kardex dice «examen» y
+     * no se confunde con lo que se vendió.
+     */
+    case SalidaPorConsumoDeServicio = 'salida_por_consumo_de_servicio';
+
     /** Se rompió, se derramó, se abrió y no se usó. */
     case SalidaPorMerma = 'salida_por_merma';
 
@@ -106,14 +115,15 @@ enum TipoMovimiento: string
     public function etiqueta(): string
     {
         return match ($this) {
-            self::EntradaPorCompra      => 'Entrada por compra',
-            self::EntradaPorDevolucion  => 'Devolución',
-            self::EntradaPorTraslado    => 'Traslado recibido',
-            self::EntradaPorPrestamo    => 'Entrada por préstamo',
-            self::AjustePositivo        => 'Ajuste positivo',
-            self::SalidaPorDispensacion => 'Dispensación',
-            self::SalidaPorMerma        => 'Merma',
-            self::SalidaPorTraslado     => 'Traslado enviado',
+            self::EntradaPorCompra           => 'Entrada por compra',
+            self::EntradaPorDevolucion       => 'Devolución',
+            self::EntradaPorTraslado         => 'Traslado recibido',
+            self::EntradaPorPrestamo         => 'Entrada por préstamo',
+            self::AjustePositivo             => 'Ajuste positivo',
+            self::SalidaPorDispensacion      => 'Dispensación',
+            self::SalidaPorConsumoDeServicio => 'Gastado en un examen',
+            self::SalidaPorMerma             => 'Merma',
+            self::SalidaPorTraslado          => 'Traslado enviado',
 
             self::SalidaPorDevolucionDePrestamo => 'Devolución de préstamo',
             self::SalidaPorVencimiento          => 'Baja por vencimiento',

@@ -41,6 +41,7 @@ class UnidadesSeeder extends Seeder
         'PAR'     => ['PAR', 'par', MagnitudDeMedida::Conteo, false],
         'KIT'     => ['KIT', 'kit', MagnitudDeMedida::Conteo, false],
         'BOLSA'   => ['BOLSA', 'bolsa', MagnitudDeMedida::Conteo, false],
+        'PRUEBA'  => ['PRUEBA', 'prueba', MagnitudDeMedida::Conteo, false],
 
         /*
          * Las que pide la lista de productos de farmacia (14-oct-2026).

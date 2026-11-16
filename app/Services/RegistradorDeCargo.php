@@ -97,6 +97,7 @@ final class RegistradorDeCargo
         private readonly FormasDeCobro $formas,
         private readonly UbicadorDeProducto $ubicaciones,
         private readonly ResolutorDeHonorario $honorarios,
+        private readonly GastosDelServicio $gastos,
     ) {}
 
     /**
@@ -254,6 +255,16 @@ final class RegistradorDeCargo
                 $this->refrescarTotales($bloqueada);
 
                 $indice++;
+            }
+
+            /*
+             * Lo que gasta el examen —las pruebas del kit— sale del estante
+             * del laboratorio en esta misma transacción (16-nov-2026). Si
+             * no quedan, se cae el cargo entero: el examen de adentro no se
+             * carga sin pruebas; el de afuera no gasta nada.
+             */
+            foreach ($cargos as $asentado) {
+                $this->gastos->descontar($asentado, $linea->item, $linea->mismoPrecioQue);
             }
 
             $primero = $cargos->first();

@@ -12,11 +12,13 @@ use App\Filament\Resources\Recepciones\Schemas\RecepcionForm;
 use App\Filament\Resources\Recepciones\Schemas\RecepcionInfolist;
 use App\Filament\Resources\Recepciones\Tables\RecepcionesTable;
 use App\Models\Recepcion;
+use App\Support\AlmacenesDelUsuario;
 use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Recepciones — meter mercadería al estante, rápido.
@@ -78,7 +80,7 @@ class RecepcionResource extends Resource
      */
     public static function getNavigationBadge(): ?string
     {
-        $pendientes = static::getModel()::query()->whereNull('revisada_en')->count();
+        $pendientes = static::getEloquentQuery()->whereNull('revisada_en')->count();
 
         return $pendientes > 0 ? (string) $pendientes : null;
     }
@@ -91,6 +93,27 @@ class RecepcionResource extends Resource
     public static function getNavigationBadgeTooltip(): ?string
     {
         return 'Recepciones que todavía no revisó nadie. La mercadería ya está en el kardex.';
+    }
+
+    /**
+     * Laboratorio ve solo lo que entró a su estante (16-nov-2026). Va en la
+     * consulta y no fila por fila (§9.L5): así tampoco abre por URL una
+     * recepción de bodega, y el número del menú cuenta lo mismo que la
+     * lista.
+     *
+     * @return Builder<Recepcion>
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        /** @var Builder<Recepcion> $consulta */
+        $consulta = parent::getEloquentQuery();
+        $visibles = AlmacenesDelUsuario::idsQueVe();
+
+        if ($visibles !== null) {
+            $consulta->whereIn($consulta->qualifyColumn('almacen_id'), $visibles);
+        }
+
+        return $consulta;
     }
 
     /**
