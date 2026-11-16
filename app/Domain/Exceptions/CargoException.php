@@ -36,6 +36,19 @@ final class CargoException extends SihlaException
     }
 
     /**
+     * El precio de lista que se puede subir al cargar se sube, no se baja
+     * (Mauricio, 16-nov-2026): cobrar menos es un descuento, y el
+     * descuento va con su motivo en la banda de arriba.
+     */
+    public static function debajoDeLaLista(string $item, string $lista): self
+    {
+        return new self(
+            "«{$item}» se puede cobrar a más de {$lista}, no a menos. Si va con rebaja, ponele el "
+            .'descuento con su motivo.'
+        );
+    }
+
+    /**
      * El honorario médico sin médico no le dice a nadie de quién es: ni
      * al paciente en la factura ni a la liquidación de fin de mes.
      */

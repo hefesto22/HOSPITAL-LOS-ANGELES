@@ -27,6 +27,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\TextInputColumn;
+use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
@@ -496,6 +497,19 @@ class BasesDePrecios extends Page implements HasTable
                     ->extraInputAttributes(['step' => '0.0001', 'min' => '0', 'class' => 'text-right'])
                     ->updateStateUsing(fn (Item $record, mixed $state): mixed => $this->guardar($record, $state)),
 
+                /*
+                 * Mauricio (16-nov-2026): «un check, precio modificable al
+                 * agregar a cuenta… solo en precios de lista, en lo de los
+                 * seguros no». Marcado, quien carga puede cobrar MÁS que
+                 * la lista —el RECARGO EXAMEN DE LABORATORIO de L 250—,
+                 * nunca menos: rebajar es un descuento, con su motivo.
+                 */
+                ToggleColumn::make('precio_modificable')
+                    ->label('Se puede subir')
+                    ->tooltip('Al agregarlo a una cuenta se puede cobrar más que el precio de lista, nunca menos. Lo pactado con un seguro no se cambia.')
+                    ->visible(fn (): bool => $this->convenioId === null)
+                    ->updateStateUsing(fn (Item $record, mixed $state): bool => $this->marcarModificable($record, (bool) $state)),
+
                 TextColumn::make('precio_de_lista')
                     ->label('Precio de lista')
                     ->alignEnd()
@@ -780,6 +794,23 @@ class BasesDePrecios extends Page implements HasTable
             ->send();
 
         return $numero->redondeado(4);
+    }
+
+    private function marcarModificable(Item $item, bool $modificable): bool
+    {
+        abort_unless(Gate::allows('update', $item), 403);
+
+        $item->forceFill(['precio_modificable' => $modificable])->save();
+
+        Notification::make()
+            ->success()
+            ->title($modificable
+                ? '✓ '.$item->codigo.': se puede subir al cargarlo'
+                : '✓ '.$item->codigo.': se cobra al precio de lista')
+            ->duration(1500)
+            ->send();
+
+        return $modificable;
     }
 
     private function diferencia(Item $item): string

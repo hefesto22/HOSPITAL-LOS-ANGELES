@@ -12,6 +12,7 @@ use App\Domain\Enums\FormaDePago;
 use App\Domain\Enums\FormaDeSaldo;
 use App\Domain\Enums\MomentoDiagnostico;
 use App\Domain\Enums\MotivoDeAnulacionDeCuenta;
+use App\Domain\Enums\OrigenDelPrecio;
 use App\Domain\Enums\PoliticaCargo;
 use App\Domain\Enums\QuienPresta;
 use App\Domain\Enums\RangoEdad;
@@ -27,6 +28,7 @@ use App\Domain\Exceptions\DiagnosticoException;
 use App\Domain\Exceptions\EncuentroException;
 use App\Domain\Exceptions\ExistenciaInsuficienteException;
 use App\Domain\Exceptions\FacturaException;
+use App\Domain\Exceptions\PrecioNoDefinidoException;
 use App\Domain\Exceptions\PrestamoException;
 use App\Domain\Exceptions\SihlaException;
 use App\Domain\ValueObjects\ClienteDeFactura;
@@ -35,6 +37,7 @@ use App\Domain\ValueObjects\HonorarioPropuesto;
 use App\Domain\ValueObjects\LineaDeCargo;
 use App\Domain\ValueObjects\MedioDePago;
 use App\Domain\ValueObjects\Monto;
+use App\Domain\ValueObjects\PrecioResuelto;
 use App\Filament\Concerns\OperaElTurnoDeCaja;
 use App\Filament\Navegacion\GrupoDelMenu;
 use App\Filament\Schemas\Components\CampoMayusculas;
@@ -78,6 +81,7 @@ use App\Services\RegistradorDeAutorizacion;
 use App\Services\RegistradorDeCargo;
 use App\Services\RegistradorDeDiagnostico;
 use App\Services\RegistradorDePrestamo;
+use App\Services\ResolutorDePrecio;
 use App\Services\UbicadorDeProducto;
 use App\Support\AlmacenesDelUsuario;
 use App\Support\CatalogoDelRol;
@@ -410,6 +414,14 @@ class CuentasAbiertas extends Page
      * @var array<string, HonorarioPropuesto>
      */
     private array $honorarioPropuestoPor = [];
+
+    /**
+     * Memoria por pintada del precio de lista que se puede subir —por
+     * cuenta y por ítem—, nulo cuando no se puede.
+     *
+     * @var array<string, PrecioResuelto|null>
+     */
+    private array $listaQueSeSubePor = [];
 
     /**
      * El ítem «HONORARIO MÉDICO» de esta petición: nulo = no se buscó
@@ -1510,9 +1522,19 @@ class CuentasAbiertas extends Page
                          * contra lo que dice el sistema.
                          */
                         TextInput::make('precio_acordado')
-                            ->label('Precio del honorario')
+                            ->label(fn (Get $get): string => $this->esHonorario($this->itemDe($get('item_id')))
+                                ? 'Precio del honorario'
+                                : 'Precio (se puede subir)')
                             ->numeric()
-                            ->minValue(0)
+                            /*
+                             * El precio de lista que se puede subir
+                             * (16-nov-2026): el piso es la lista. Lo
+                             * verifica también la acción, con bcmath.
+                             */
+                            ->minValue(fn (Get $get): string => $this->precioDeListaQueSeSube($this->itemDe($get('item_id')))?->precio->valor() ?? '0')
+                            ->helperText(fn (Get $get): ?string => ($lista = $this->precioDeListaQueSeSube($this->itemDe($get('item_id')))) instanceof PrecioResuelto
+                                ? 'Precio de lista '.$lista->precio->formateado().': se puede cobrar más, no menos.'
+                                : null)
                             ->step('0.01')
                             ->prefix('L')
                             /*
@@ -1524,7 +1546,8 @@ class CuentasAbiertas extends Page
                                 'default' => 1,
                                 'lg'      => $this->esHonorarioDeMedico($this->itemDe($get('item_id'))) ? 4 : 10,
                             ])
-                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id'))))
+                            ->visible(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id')))
+                                || $this->precioDeListaQueSeSube($this->itemDe($get('item_id'))) instanceof PrecioResuelto)
                             /*
                              * 🔴 SEGURO CON PRECIO PACTADO: BLOQUEADO
                              * (Mauricio, 6-nov-2026: «lo que cobran al
@@ -1543,8 +1566,9 @@ class CuentasAbiertas extends Page
                              * honorario que cobrar.
                              */
                             ->disabled(fn (Get $get): bool => $this->honorarioDeLaLinea($get)?->fijo === true)
-                            ->required(fn (Get $get): bool => $this->esHonorario($this->itemDe($get('item_id')))
-                                && $this->honorarioDeLaLinea($get)?->fijo !== true),
+                            ->required(fn (Get $get): bool => ($this->esHonorario($this->itemDe($get('item_id')))
+                                && $this->honorarioDeLaLinea($get)?->fijo !== true)
+                                || $this->precioDeListaQueSeSube($this->itemDe($get('item_id'))) instanceof PrecioResuelto),
 
                         TextInput::make('cantidad')
                             ->label('Cantidad')
@@ -1827,7 +1851,7 @@ class CuentasAbiertas extends Page
                     'almacen_id'      => $this->estanteSugerido($puesto, $forma)?->id,
                     'precio_acordado' => $this->esHonorario($puesto)
                         ? $this->precioPropuesto($puesto)
-                        : null,
+                        : $this->precioDeListaQueSeSube($puesto)?->precio->valor(),
                     'medico_id'           => null,
                     'referencia_acordada' => null,
                 ];
@@ -2156,7 +2180,8 @@ class CuentasAbiertas extends Page
                      * Nulo = el cargo sigue el camino de siempre y el
                      * precio sale del tarifario con su vigencia (ADR-0003).
                      */
-                    precioAcordado: $this->honorarioAcordado($item, $cuenta, $data),
+                    precioAcordado: $this->honorarioAcordado($item, $cuenta, $data)
+                        ?? $this->precioSubido($item, $cuenta, $data),
                     referenciaAcordada: $this->deQuienEsElHonorario($item, $data),
 
                     /*
@@ -3367,7 +3392,9 @@ class CuentasAbiertas extends Page
          * de siempre, y eso convierte un campo de excepción en un campo
          * obligatorio.
          */
-        $set('precio_acordado', $this->esHonorario($item) ? $this->precioPropuesto($item) : null);
+        $set('precio_acordado', $this->esHonorario($item)
+            ? $this->precioPropuesto($item)
+            : $this->precioDeListaQueSeSube($item)?->precio->valor());
 
         /*
          * 🔴 El médico se limpia SIEMPRE al cambiar de producto. Dejarlo
@@ -3683,6 +3710,86 @@ class CuentasAbiertas extends Page
         $clave = $item->id.':'.($medico instanceof Medico ? $medico->id : 'ninguno');
 
         return $this->honorarioPropuestoPor[$clave] ??= app(ProponedorDeHonorario::class)->para($item, $cuenta, $medico, now());
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * EL PRECIO DE LISTA QUE SE PUEDE SUBIR (16-nov-2026)
+     * ─────────────────────────────────────────────────────────────────
+     *
+     * Mauricio: el RECARGO EXAMEN DE LABORATORIO «su precio base es de
+     * 250 pero puede cambiarse a más». Solo si en «Bases de precios» está
+     * marcado «Se puede subir», y solo si el precio que le toca a ESTA
+     * cuenta es el de lista: lo pactado con un seguro no se toca.
+     *
+     * Nulo = no hay campo de precio para este ítem en esta cuenta.
+     */
+    private function precioDeListaQueSeSube(?Item $item, ?Cuenta $cuenta = null): ?PrecioResuelto
+    {
+        if (! $item instanceof Item || ! $item->precio_modificable || $this->esHonorario($item)) {
+            return null;
+        }
+
+        $cuenta ??= $this->cuentaEnCurso();
+
+        if (! $cuenta instanceof Cuenta) {
+            return null;
+        }
+
+        $clave = $cuenta->id.':'.$item->id;
+
+        if (array_key_exists($clave, $this->listaQueSeSubePor)) {
+            return $this->listaQueSeSubePor[$clave];
+        }
+
+        $cuenta->loadMissing(['convenio', 'sede']);
+
+        try {
+            $precio = app(ResolutorDePrecio::class)->para(
+                item: $item,
+                convenio: $cuenta->convenio,
+                fechaServicio: now(),
+                sede: $cuenta->sede,
+            );
+        } catch (PrecioNoDefinidoException) {
+            $precio = null;
+        }
+
+        return $this->listaQueSeSubePor[$clave] = $precio instanceof PrecioResuelto
+            && $precio->origen === OrigenDelPrecio::PrecioDeLista
+                ? $precio
+                : null;
+    }
+
+    /**
+     * Lo que se cobra cuando quien carga subió el precio de lista. Nulo
+     * si no lo cambió —el cargo sale del tarifario, como siempre— o si
+     * el ítem no se puede subir en esta cuenta: lo que llegue del
+     * navegador para un ítem cerrado se ignora (§9.M30).
+     *
+     * @param array<string, mixed> $data
+     *
+     * @throws CargoException
+     */
+    private function precioSubido(Item $item, Cuenta $cuenta, array $data): ?Monto
+    {
+        $lista = $this->precioDeListaQueSeSube($item, $cuenta);
+
+        if (! $lista instanceof PrecioResuelto) {
+            return null;
+        }
+
+        $tecleado = NumeroDeFormulario::aDecimal($data['precio_acordado'] ?? null);
+
+        if (! $tecleado instanceof Decimal || $tecleado->igualA($lista->precio->valor())) {
+            return null;
+        }
+
+        if ($tecleado->menorQue($lista->precio->valor())) {
+            throw CargoException::debajoDeLaLista($item->nombre, $lista->precio->formateado());
+        }
+
+        return Monto::de($tecleado->redondeado(2));
     }
 
     /**

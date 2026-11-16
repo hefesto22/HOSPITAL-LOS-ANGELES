@@ -44,6 +44,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property TipoItem $tipo
  * @property bool $se_almacena
  * @property bool $stock_infinito
+ * @property bool $precio_modificable
  * @property bool $factura_envase_entero
  * @property int|null $categoria_id
  * @property AmbitoCatalogo|null $categoria_ambito
@@ -115,6 +116,7 @@ class Item extends Model
         'tipo',
         'se_almacena',
         'stock_infinito',
+        'precio_modificable',
         'factura_envase_entero',
         'categoria_id',
         'regimen_isv',
@@ -395,6 +397,7 @@ class Item extends Model
             'tipo'                      => TipoItem::class,
             'se_almacena'               => 'boolean',
             'stock_infinito'            => 'boolean',
+            'precio_modificable'        => 'boolean',
             'factura_envase_entero'     => 'boolean',
             'categoria_ambito'          => AmbitoCatalogo::class,
             'regimen_isv'               => RegimenIsv::class,
